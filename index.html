@@ -3540,15 +3540,28 @@ function fromDatetimeLocalValue(val){
   return val ? new Date(val).toISOString() : null;
 }
 function openManualTimeEntry(){
-  state.modal = { type:"manualTimeEntry" };
+  const now = toDatetimeLocalValue(new Date().toISOString());
+  state.modal = { type:"manualTimeEntry", rows: [{ id:newId("row"), clockIn: now, clockOut: now, note:"" }] };
   render();
 }
-function renderManualTimeEntryModal(){
+function addManualEntryRow(){
   const now = toDatetimeLocalValue(new Date().toISOString());
+  state.modal.rows.push({ id:newId("row"), clockIn: now, clockOut: now, note:"" });
+  render();
+}
+function removeManualEntryRow(rowId){
+  state.modal.rows = state.modal.rows.filter(r=>r.id!==rowId);
+  render();
+}
+function updateManualEntryRow(rowId, field, value){
+  state.modal.rows = state.modal.rows.map(r=>r.id===rowId ? {...r, [field]:value} : r);
+}
+function renderManualTimeEntryModal(){
+  const rows = state.modal.rows;
   return `
     <div class="modal">
       <h3>Log time manually</h3>
-      <div class="small" style="margin-bottom:8px;">For a task you already finished without clocking in live — enter the real clock-in and clock-out times.</div>
+      <div class="small" style="margin-bottom:8px;">For time already worked without clocking in live — enter the real clock-in/out times. Add multiple blocks below if this task had more than one session.</div>
       ${state.role==='admin' ? `
       <div class="row">
         <div><label class="small">Assistant</label>
@@ -3563,13 +3576,17 @@ function renderManualTimeEntryModal(){
           <datalist id="mte_task_list">${taskSearchOptions(state.tasks)}</datalist>
         </div>
       </div>
-      <div class="row" style="margin-top:8px;">
-        <div><label class="small">Clock in</label><input type="datetime-local" id="mte_in" value="${now}"></div>
-        <div><label class="small">Clock out</label><input type="datetime-local" id="mte_out" value="${now}"></div>
-      </div>
-      <div style="margin-top:8px;">
-        <label class="small">Note (optional)</label>
-        <input id="mte_note" placeholder="What this entry covers">
+      <div style="margin-top:10px;">
+        <label class="small">Time blocks for this task</label>
+        ${rows.map((r,i)=>`
+          <div class="row" style="margin-top:6px;align-items:flex-end;">
+            <div><label class="small">Clock in</label><input type="datetime-local" id="mte_in_${r.id}" value="${r.clockIn}" onchange="updateManualEntryRow('${r.id}','clockIn',this.value)"></div>
+            <div><label class="small">Clock out</label><input type="datetime-local" id="mte_out_${r.id}" value="${r.clockOut}" onchange="updateManualEntryRow('${r.id}','clockOut',this.value)"></div>
+            <div><label class="small">Note (optional)</label><input id="mte_note_${r.id}" value="${(r.note||'').replace(/"/g,'&quot;')}" oninput="updateManualEntryRow('${r.id}','note',this.value)"></div>
+            ${rows.length>1 ? `<button class="danger" style="padding:8px;" onclick="removeManualEntryRow('${r.id}')">✕</button>` : ""}
+          </div>
+        `).join("")}
+        <button class="secondary" style="margin-top:8px;" onclick="addManualEntryRow()">+ Add another time block</button>
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
@@ -3580,20 +3597,23 @@ function renderManualTimeEntryModal(){
 }
 function saveManualTimeEntry(){
   const task = resolveTaskFromSearch(document.getElementById("mte_task").value);
-  const clockIn = fromDatetimeLocalValue(document.getElementById("mte_in").value);
-  const clockOut = fromDatetimeLocalValue(document.getElementById("mte_out").value);
   const assistantId = state.role==='admin' ? document.getElementById("mte_assistant").value : state.currentAssistant.id;
   if(!task){ alert("Pick a task from the list first — search by its # or title."); return; }
-  if(!clockIn || !clockOut){ alert("Both clock in and clock out are required."); return; }
-  if(new Date(clockOut) <= new Date(clockIn)){ alert("Clock out has to be after clock in."); return; }
-  const entry = {
-    id: newId("te"),
-    taskId: task.id, assistantId,
-    clientId: task.clientId || INTERNAL_CLIENT_ID,
-    clockIn, clockOut, clockOutManual: true,
-    note: document.getElementById("mte_note").value.trim(),
-  };
-  upsert("timeEntries", entry.id, entry);
+  const rows = state.modal.rows;
+  for(const r of rows){
+    if(!r.clockIn || !r.clockOut){ alert("Every time block needs both a clock in and clock out."); return; }
+    if(new Date(r.clockOut) <= new Date(r.clockIn)){ alert("Clock out has to be after clock in on every time block."); return; }
+  }
+  rows.forEach(r=>{
+    const entry = {
+      id: newId("te"),
+      taskId: task.id, assistantId,
+      clientId: task.clientId || INTERNAL_CLIENT_ID,
+      clockIn: fromDatetimeLocalValue(r.clockIn), clockOut: fromDatetimeLocalValue(r.clockOut), clockOutManual: true,
+      note: (r.note||"").trim(),
+    };
+    upsert("timeEntries", entry.id, entry);
+  });
   closeModal();
 }
 function openTimeEntryEditor(entryId){
