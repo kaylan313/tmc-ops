@@ -1543,12 +1543,23 @@ function renderTeamDashboard(){
     </div>
     <div class="card">
       <h3>Recent comments on your tasks</h3>
-      ${recentComments.length===0 ? `<div class="small">No comments yet.</div>` : recentComments.map(d=>`
-        <div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${d.task.id}',null)">
-          <div><strong>${d.author}</strong> on ${d.task.title}: ${d.text.length>90 ? d.text.slice(0,90)+"…" : d.text}</div>
-          <span class="small">${new Date(d.date).toLocaleString()}</span>
-        </div>
-      `).join("")}
+      ${recentComments.length===0 ? `<div class="small">No comments yet.</div>` : recentComments.map(d=>{
+        const seenBy = d.seenBy || [];
+        const iSeenIt = state.currentAssistant && seenBy.some(s=>s.assistantId===state.currentAssistant.id);
+        const isMine = state.currentAssistant && d.author===state.currentAssistant.name;
+        return `
+        <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
+          <div class="flex-between" style="cursor:pointer;" onclick="openTaskEditor('${d.task.id}',null)">
+            <div><strong>${d.author}</strong> on ${d.task.title}: ${d.text.length>90 ? d.text.slice(0,90)+"…" : d.text}</div>
+            <span class="small">${new Date(d.date).toLocaleString()}</span>
+          </div>
+          ${!isMine ? `
+          <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
+            <span>${iSeenIt ? "✓ You saw this" : "Not seen yet"}</span>
+            ${!iSeenIt ? `<button class="secondary" style="padding:2px 8px;" onclick="markCommentSeen('${d.task.id}','${d.id}')">Mark as seen</button>` : ""}
+          </div>` : ""}
+        </div>`;
+      }).join("")}
     </div>
     <div class="card">
       <h3>My open tasks</h3>
@@ -3293,11 +3304,22 @@ function renderTaskEditorModal(task){
       <div style="margin-top:14px;">
         <label class="small">Discussion — visible to everyone assigned to this task</label>
         <div style="max-height:180px;overflow-y:auto;margin:6px 0;">
-          ${(task.discussion||[]).length ? (task.discussion||[]).map(d=>`
-            <div class="list-item">
-              <div><strong>${d.author}</strong>: ${d.text}</div>
-              <span class="small">${new Date(d.date).toLocaleString()}</span>
-            </div>`).join("") : `<div class="small">No comments yet.</div>`}
+          ${(task.discussion||[]).length ? (task.discussion||[]).map(d=>{
+            const seenBy = d.seenBy || [];
+            const iSeenIt = state.currentAssistant && seenBy.some(s=>s.assistantId===state.currentAssistant.id);
+            const isMine = state.currentAssistant && d.author===state.currentAssistant.name;
+            return `
+            <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
+              <div class="flex-between">
+                <div><strong>${d.author}</strong>: ${d.text}</div>
+                <span class="small">${new Date(d.date).toLocaleString()}</span>
+              </div>
+              <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
+                <span>${seenBy.length ? "Seen by " + seenBy.map(s=>`${s.name} (${new Date(s.seenAt).toLocaleString()})`).join(", ") : "Not seen yet"}</span>
+                ${state.currentAssistant && !isMine && !iSeenIt ? `<button class="secondary" style="padding:2px 8px;" onclick="markCommentSeen('${task.id}','${d.id}')">Mark as seen</button>` : ""}
+              </div>
+            </div>`;
+          }).join("") : `<div class="small">No comments yet.</div>`}
         </div>
         <div style="display:flex;gap:6px;">
           <input id="tf_new_comment" placeholder="Add a comment...">
@@ -3339,6 +3361,20 @@ function addTaskComment(taskId){
   const author = state.currentAssistant ? state.currentAssistant.name : "Admin";
   const task = state.modal.task;
   const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
+  task.discussion = discussion;
+  upsert("tasks", taskId, { discussion });
+  render();
+}
+function markCommentSeen(taskId, commentId){
+  if(!state.currentAssistant) return;
+  const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
+  if(!task) return;
+  const discussion = (task.discussion||[]).map(d=>{
+    if(d.id!==commentId) return d;
+    const seenBy = d.seenBy||[];
+    if(seenBy.some(s=>s.assistantId===state.currentAssistant.id)) return d;
+    return { ...d, seenBy: [...seenBy, { assistantId: state.currentAssistant.id, name: state.currentAssistant.name, seenAt: new Date().toISOString() }] };
+  });
   task.discussion = discussion;
   upsert("tasks", taskId, { discussion });
   render();
