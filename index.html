@@ -142,6 +142,7 @@
   .stat-tile.status-warn .stat-value{color:var(--warn);}
   .stat-tile.status-danger .stat-value{color:var(--danger);}
   .stat-tile .stat-sub{font-size:12px;color:#8a7a72;margin-top:4px;}
+  .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   table.data-table{width:100%;border-collapse:collapse;font-size:13px;}
   table.data-table th{text-align:left;font-size:11px;color:#8a7a72;font-weight:500;padding:6px 8px;border-bottom:1px solid var(--cream-dark);}
   table.data-table td{padding:8px;border-bottom:1px solid var(--cream-dark);vertical-align:top;}
@@ -161,8 +162,10 @@
     .nav-links{display:none;margin-top:12px;flex:none;}
     .sidebar.nav-open .nav-links{display:flex;}
     .main{padding:16px;overflow-x:hidden;}
-    .row > *{min-width:140px;}
+    .row{flex-direction:column;}
+    .row > *{min-width:0;width:100%;}
     .stat-tile{min-width:140px;}
+    .modal{padding:18px;}
   }
 </style>
 </head>
@@ -1336,7 +1339,7 @@ function renderAdminDashboard(){
 
     <div class="card">
       <h3>Assistants — this payroll period</h3>
-      <table class="data-table">
+      <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Assistant</th><th>Hours</th><th>Status</th></tr></thead>
         <tbody>
           ${assistantRows.map(r=>`
@@ -1348,13 +1351,13 @@ function renderAdminDashboard(){
                 : `<span class="small">off the clock</span>`}</td>
             </tr>`).join("")}
         </tbody>
-      </table>
+      </table></div>
     </div>
 
     <div class="card">
       <h3>Tasks open 7+ days</h3>
       ${overdue.length===0 ? `<div class="small">Nothing's been sitting open longer than a week.</div>` : `
-      <table class="data-table">
+      <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Task</th><th>Client</th><th>Assignees</th><th>Status</th><th>Days open</th></tr></thead>
         <tbody>
           ${overdue.map(({task:t,days})=>{
@@ -1369,13 +1372,13 @@ function renderAdminDashboard(){
             </tr>`;
           }).join("")}
         </tbody>
-      </table>`}
+      </table></div>`}
     </div>
 
     <div class="card">
       <h3>Tasks past their due date</h3>
       ${pastDue.length===0 ? `<div class="small">Nothing's missed its deadline.</div>` : `
-      <table class="data-table">
+      <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Task</th><th>Client</th><th>Assignees</th><th>Due date</th><th>Days late</th></tr></thead>
         <tbody>
           ${pastDue.map(({task:t,daysLate})=>{
@@ -1390,13 +1393,13 @@ function renderAdminDashboard(){
             </tr>`;
           }).join("")}
         </tbody>
-      </table>`}
+      </table></div>`}
     </div>
 
     <div class="card">
       <h3>Upcoming &amp; overdue reminders</h3>
       ${reminders.length===0 ? `<div class="small">Nothing due in the next 14 days.</div>` : `
-      <table class="data-table">
+      <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Client</th><th>Type</th><th>What</th><th>Date</th><th>Status</th></tr></thead>
         <tbody>
           ${reminders.map(r=>`
@@ -1408,14 +1411,14 @@ function renderAdminDashboard(){
               <td>${r.days<0 ? `<span style="color:var(--danger);">overdue ${Math.abs(r.days)}d</span>` : r.days===0 ? `<span style="color:var(--warn);">today</span>` : `in ${r.days}d`}</td>
             </tr>`).join("")}
         </tbody>
-      </table>`}
+      </table></div>`}
     </div>
 
     <div class="card">
       <h3>Renewal &amp; cancellation notice deadlines</h3>
       <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged.</div>
       ${noticeDeadlines.length===0 ? `<div class="small">Nothing coming up in the next 14 days.</div>` : `
-      <table class="data-table">
+      <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Client</th><th>Term</th><th>Term ends</th><th>Notice deadline</th><th>Status</th></tr></thead>
         <tbody>
           ${noticeDeadlines.map(n=>`
@@ -1427,7 +1430,7 @@ function renderAdminDashboard(){
               <td>${n.days<0 ? `<span style="color:var(--danger);">deadline passed — will auto-renew</span>` : n.days===0 ? `<span style="color:var(--warn);">today</span>` : `${n.days}d left`}</td>
             </tr>`).join("")}
         </tbody>
-      </table>`}
+      </table></div>`}
     </div>
 
     ${renderClientRequestsCard(pending, { title: "Client requests awaiting assistant review", showAssistant: true })}
@@ -2211,7 +2214,7 @@ function renderTimeTracking(){
     <div class="card">
       <h3>Hours by assistant</h3>
       <div class="small" style="margin-bottom:8px;">${timeFilterLabel(period)} — "Admin hours" is time clocked to Internal / Modern Co. work. "Manual" counts clock-outs where a time was typed in instead of captured live.</div>
-      <table class="data-table">
+      <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Assistant</th><th>Total hours</th><th>Admin hours</th><th>Manual clock-outs</th></tr></thead>
         <tbody>
           ${assistantSummary.map(r=>`
@@ -2222,7 +2225,7 @@ function renderTimeTracking(){
               <td>${r.manual>0 ? `<span style="color:var(--warn);font-weight:600;">${r.manual}</span>` : "0"}</td>
             </tr>`).join("") || `<tr><td colspan="4" class="small">No entries in this range.</td></tr>`}
         </tbody>
-      </table>
+      </table></div>
     </div>` : ""}
     <div class="card">
       <div class="flex-between">
@@ -2328,7 +2331,7 @@ function renderPayrollTool(){
         <button class="secondary" onclick="exportPayrollCsv()">Export CSV</button>
       </div>
       <div class="small" style="margin-bottom:8px;">Every assistant, including any former employee still owed hours from this period. Rates are editable on the Team tab.</div>
-      <table class="data-table">
+      <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Assistant</th><th>Hours worked</th><th>Rate</th><th>$ owed</th><th>Status</th></tr></thead>
         <tbody>
           ${state.settings.assistants.map(a=>{
@@ -2354,7 +2357,7 @@ function renderPayrollTool(){
             <td></td>
           </tr>
         </tbody>
-      </table>
+      </table></div>
     </div>
 
     <div class="card">
@@ -2370,7 +2373,7 @@ function renderPayrollTool(){
       <div class="small" style="margin-bottom:8px;">
         "Paid for" is each client's package prorated to a half-month rate (their own billing cycle rarely lines up with the 1st–14th / 15th–end payroll calendar), so treat it as an estimate to sanity-check against, not their exact contracted usage.
       </div>
-      <table class="data-table">
+      <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Client</th><th>Paid for</th><th>Clocked</th><th>Variance</th></tr></thead>
         <tbody>
           ${rows.map(r=>`
@@ -2381,7 +2384,7 @@ function renderPayrollTool(){
               <td>${Math.abs(r.variance)>=2?'<span class="alert warn" style="display:inline-block;margin:0;padding:2px 8px;">':''}${r.variance>=0?'+':''}${r.variance.toFixed(1)}${Math.abs(r.variance)>=2?'</span>':''}</td>
             </tr>`).join("") || `<tr><td colspan="4" class="small">No clients yet.</td></tr>`}
         </tbody>
-      </table>
+      </table></div>
     </div>
 
     <div class="card">
@@ -2390,7 +2393,7 @@ function renderPayrollTool(){
       ${(()=>{
         const referred = realClients.filter(c=>c.referredBy).map(c=>({ client:c, status: referralPayoutStatus(c) })).filter(x=>x.status && x.status.eligible && x.status.owed>0);
         if(referred.length===0) return `<div class="small">Nothing owed right now.</div>`;
-        return `<table class="data-table">
+        return `<div class="table-scroll"><table class="data-table">
           <thead><tr><th>Client</th><th>Referred by</th><th>Progress</th><th>Owed now</th><th></th></tr></thead>
           <tbody>
             ${referred.map(({client:c,status})=>`
@@ -2402,7 +2405,7 @@ function renderPayrollTool(){
                 <td><button class="secondary" onclick="markReferralPayoutPaid('${c.id}')">Mark $${status.monthlyAmount} paid</button></td>
               </tr>`).join("")}
           </tbody>
-        </table>`;
+        </table></div>`;
       })()}
     </div>
   `;
