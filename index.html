@@ -1120,6 +1120,7 @@ function tryTeamLogin(code){
   if(match){
     state.role = "team"; state.currentAssistant = match; state.view="app"; state.activeTab="dashboard";
     if(!match.agreementSigned){ state.modal = { type:"agreementGate", assistant: match }; }
+    else if(!match.hasSeenAppGuide){ state.modal = { type:"appGuide", assistant: match }; }
     render();
   } else alert("Access code not recognized.");
 }
@@ -2494,6 +2495,13 @@ function renderOnboarding(){
   return `
     <h2>Onboarding</h2>
     <div class="card">
+      <div class="flex-between">
+        <h3>How to use this app</h3>
+        <button class="secondary" onclick="openAppGuide()">View app guide</button>
+      </div>
+      <div class="small">A step-by-step tour of the Dashboard, Task Board, Time Tracking, and client pages.</div>
+    </div>
+    <div class="card">
       <h3>New team member checklist</h3>
       ${ONBOARDING_CHECKLIST.map((item,i)=>`
         <div class="checklist-item">
@@ -2764,8 +2772,75 @@ function signAgreement(assistantId){
   });
   state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
   upsert("settings","access", { assistants: state.settings.assistants });
+  state.modal = state.currentAssistant && !state.currentAssistant.hasSeenAppGuide
+    ? { type:"appGuide", assistant: state.currentAssistant } : null;
+  render();
+}
+
+// --- App guide (shown once per assistant on first login after this was added; re-openable anytime from the Onboarding tab) ---
+function appGuideHtml(){
+  return `
+    <p><strong>Dashboard</strong> — your homepage. Shows your open tasks, a live clock-in timer if you're currently working, and any overdue/upcoming reminders across your clients.</p>
+    <p><strong>Task Board</strong> — every task moves through 5 columns: To do → Researching → In progress → Pending approval → Done.</p>
+    <ul>
+      <li>Click any task card to open it — add subtasks, leave a comment for whoever else is assigned, or attach a file/photo.</li>
+      <li>"Pending approval" is used for tasks a client submitted themselves — accept or decline it from there.</li>
+      <li>Completed tasks are hidden from the board by default now (there's a "Hide completed" checkbox at the top) so your board doesn't fill up forever — nothing is deleted, you can always click "Show them" to see history.</li>
+      <li>Use "My tasks only" to filter to just what's assigned to you.</li>
+    </ul>
+    <p><strong>Time Tracking</strong> — clock in from a task's card, or from the Time Tracking tab.</p>
+    <ul>
+      <li>Clock in on the specific task you're working — this is what makes the client's weekly report and hours-remaining accurate.</li>
+      <li>"Clock in for Admin Work" is for anything that isn't tied to one client (team meetings, general to-dos) — it'll ask you to type what you're clocking in for first, so Kaylan knows what the time covers.</li>
+      <li>Forgot to clock out? Edit the clock-out time right on the entry — it'll just get flagged as manually edited, that's fine.</li>
+      <li>Clocked into the wrong thing by accident? There's a ✕ next to every entry to delete it.</li>
+    </ul>
+    <p><strong>Client pages</strong> — open a client from the Clients tab to see three sub-tabs:</p>
+    <ul>
+      <li><strong>Tasks</strong> — that client's open work.</li>
+      <li><strong>Notes</strong> — a running log, plus "Important info" (IDs, alarm codes, membership numbers) and "Website logins" (site logins with the password hidden by default — click Show to reveal).</li>
+      <li><strong>Membership</strong> — their package, hours used/remaining this period, and renewal/term info.</li>
+    </ul>
+    <p><strong>On your phone:</strong> the app works the same, just tap the ☰ menu (top left) to get to the other tabs.</p>
+  `;
+}
+function renderAppGuideModal(assistant){
+  return `
+    <div class="modal" style="width:560px;">
+      <h3>Welcome, ${assistant.name} 🤍</h3>
+      <div class="small" style="margin-bottom:10px;">Quick tour of how everything works before you dive in — you can always pull this back up from the Onboarding tab.</div>
+      <div class="agreement-text" style="max-height:400px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px;font-size:13px;background:var(--cream);">
+        ${appGuideHtml()}
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button onclick="dismissAppGuide('${assistant.id}')">Got it — take me in</button>
+      </div>
+    </div>
+  `;
+}
+function dismissAppGuide(assistantId){
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===assistantId ? { ...a, hasSeenAppGuide:true } : a);
+  state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
+  upsert("settings","access", { assistants: state.settings.assistants });
   state.modal = null;
   render();
+}
+function openAppGuide(){
+  state.modal = { type:"appGuideReadOnly" };
+  render();
+}
+function renderAppGuideReadOnlyModal(){
+  return `
+    <div class="modal" style="width:560px;">
+      <h3>App guide</h3>
+      <div class="agreement-text" style="max-height:400px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px;font-size:13px;background:var(--cream);">
+        ${appGuideHtml()}
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button class="secondary" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  `;
 }
 
 // No file-storage backend here (Firestore only), so a client photo gets
@@ -3335,8 +3410,10 @@ function renderModal(){
     : state.modal.type==="agreementGate" ? renderAgreementGateModal(state.modal.assistant)
     : state.modal.type==="reassignClient" ? renderReassignModal(state.modal.client)
     : state.modal.type==="timeEntryEditor" ? renderTimeEntryEditorModal(state.modal.entry)
+    : state.modal.type==="appGuide" ? renderAppGuideModal(state.modal.assistant)
+    : state.modal.type==="appGuideReadOnly" ? renderAppGuideReadOnlyModal()
     : "";
-  const dismissable = state.modal.type !== "agreementGate";
+  const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
 }
 function closeModal(){ state.modal = null; render(); }
