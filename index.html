@@ -1860,14 +1860,14 @@ function renderClientNotes(client){
     </div>
     <div class="card">
       <h3>Important info</h3>
-      <div class="small" style="margin-bottom:8px;">IDs, membership numbers, alarm codes, anything reference-worthy that isn't a running note.</div>
+      <div class="small" style="margin-bottom:8px;">IDs, membership numbers, card numbers, alarm codes, anything reference-worthy that isn't a running note — add as many rows as you need, any label.</div>
       ${(client.importantInfo||[]).map((info,i)=>`
         <div class="list-item">
           <div><strong>${info.label}</strong>: ${info.value}</div>
           <button class="danger" onclick="removeImportantInfo('${client.id}',${i})">Remove</button>
         </div>`).join("") || `<div class="small">Nothing on file.</div>`}
       <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-        <input id="info_label_${client.id}" placeholder="Label (e.g. Driver's License #)" style="max-width:220px;">
+        <input id="info_label_${client.id}" placeholder="Label (e.g. Card Number, Driver's License #)" style="max-width:220px;">
         <input id="info_value_${client.id}" placeholder="Value">
         <button class="secondary" onclick="addImportantInfo('${client.id}')">Add</button>
       </div>
@@ -3233,6 +3233,18 @@ function renderClientPortal(){
 }
 
 // --- Task editor modal ---
+function openImageViewer(dataUrl){
+  state.modal = { type:"imageViewer", dataUrl };
+  render();
+}
+function renderImageViewerModal(dataUrl){
+  return `
+    <div class="modal" style="width:auto;max-width:95vw;text-align:center;">
+      <img src="${dataUrl}" style="max-width:100%;max-height:80vh;border-radius:8px;display:block;margin:0 auto;">
+      <button class="secondary" style="margin-top:12px;" onclick="closeModal()">Close</button>
+    </div>
+  `;
+}
 function nextTaskNumber(){
   return state.tasks.reduce((max,t)=>Math.max(max, t.taskNumber||0), 0) + 1;
 }
@@ -3250,7 +3262,7 @@ function renderTaskEditorModal(task){
     <div class="modal">
       <h3>${task.title ? "Edit task" : "New task"}${task.taskNumber ? ` <span class="small">#${task.taskNumber}</span>` : ''}</h3>
       ${task.requestedByClient && task.clientRequestNote ? `<div class="alert warn">Client's original request: &ldquo;${task.clientRequestNote}&rdquo;</div>` : ""}
-      ${task.requestImage ? `<img src="${task.requestImage}" style="max-width:100%;max-height:280px;border-radius:8px;margin-bottom:10px;display:block;">` : ""}
+      ${task.requestImage ? `<img src="${task.requestImage}" style="max-width:100%;max-height:280px;border-radius:8px;margin-bottom:10px;display:block;cursor:pointer;" onclick="openImageViewer('${task.requestImage}')">` : ""}
       <div class="row"><div><label class="small">Title</label><input id="tf_title" value="${task.title||''}" oninput="state.modal.task.title=this.value"></div></div>
       <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;">
         <input type="checkbox" id="tf_priority" ${task.priority?'checked':''} onchange="state.modal.task.priority=this.checked"> Mark as priority — surfaces on the assignee's dashboard
@@ -3290,6 +3302,10 @@ function renderTaskEditorModal(task){
         <textarea id="tf_description" placeholder="e.g. Handled guest messaging across platforms." oninput="state.modal.task.description=this.value">${task.description||''}</textarea>
       </div>
       <div style="margin-top:10px;">
+        <label class="small">Private notes — never shown to the client, not on any report</label>
+        <textarea id="tf_private_notes" placeholder="Internal context, vendor details, anything the client shouldn't see." oninput="state.modal.task.privateNotes=this.value">${task.privateNotes||''}</textarea>
+      </div>
+      <div style="margin-top:10px;">
         <label class="small">Subtasks</label>
         <div id="tf_subtasks">
           ${(task.subtasks||[]).map((s,i)=>`
@@ -3308,7 +3324,9 @@ function renderTaskEditorModal(task){
         <div>
           ${(task.attachments||[]).length ? (task.attachments||[]).map(a=>`
             <div class="list-item">
-              <div>${a.type && a.type.startsWith("image/") ? `<img src="${a.dataUrl}" style="max-width:60px;max-height:60px;border-radius:6px;vertical-align:middle;margin-right:8px;">` : "📎 "}<a href="${a.dataUrl}" download="${a.name}" target="_blank">${a.name}</a></div>
+              <div>${a.type && a.type.startsWith("image/")
+                ? `<img src="${a.dataUrl}" style="max-width:60px;max-height:60px;border-radius:6px;vertical-align:middle;margin-right:8px;cursor:pointer;" onclick="openImageViewer('${a.dataUrl}')"><a href="#" onclick="openImageViewer('${a.dataUrl}');return false;">${a.name}</a>`
+                : `📎 <a href="${a.dataUrl}" download="${a.name}">${a.name}</a>`}</div>
               <button class="danger" style="padding:2px 8px;" onclick="removeTaskAttachment('${task.id}','${a.id}')">Remove</button>
             </div>`).join("") : `<div class="small">No attachments.</div>`}
         </div>
@@ -3431,6 +3449,7 @@ function saveTask(taskId){
     category: document.getElementById("tf_category").value,
     status: newStatus,
     description: document.getElementById("tf_description").value.trim(),
+    privateNotes: document.getElementById("tf_private_notes").value.trim(),
     dueDate: document.getElementById("tf_due").value,
     priority: document.getElementById("tf_priority").checked,
     taskNumber: task.taskNumber || nextTaskNumber(),
@@ -3644,6 +3663,7 @@ function renderModal(){
     : state.modal.type==="appGuide" ? renderAppGuideModal(state.modal.assistant)
     : state.modal.type==="appGuideReadOnly" ? renderAppGuideReadOnlyModal()
     : state.modal.type==="manualTimeEntry" ? renderManualTimeEntryModal()
+    : state.modal.type==="imageViewer" ? renderImageViewerModal(state.modal.dataUrl)
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
