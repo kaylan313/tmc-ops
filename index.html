@@ -2499,10 +2499,36 @@ function renderReportsTab(){
               ` : ""}
             </div>
           </div>
+          <div>
+            <button class="secondary" style="padding:4px 10px;font-size:12px;" onclick="toggleReportReview('${client.id}')">${state.reportsExpanded && state.reportsExpanded.has(client.id) ? 'Hide' : 'Review'} tasks on this week's report</button>
+          </div>
+          ${state.reportsExpanded && state.reportsExpanded.has(client.id) ? `
+          <div style="border-top:1px solid var(--cream-dark);padding-top:10px;">
+            <div class="small" style="margin-bottom:6px;">These are exactly the tasks this week's report will include. Wrong status, wrong completed date, or shouldn't exist at all? Fix or remove it right here.</div>
+            ${[...weekReport.inProgress.map(t=>({t,label:'In progress'})), ...weekReport.completed.map(t=>({t,label:'Completed '+(t.completedAt?new Date(t.completedAt).toLocaleDateString():'')}))].map(({t,label})=>`
+              <div class="list-item">
+                <div>${t.title} <span class="small">· ${label}</span></div>
+                <div style="display:flex;gap:6px;">
+                  <button class="secondary" style="padding:2px 8px;" onclick="openTaskEditor('${t.id}',null)">Edit</button>
+                  <button class="danger" style="padding:2px 8px;" onclick="deleteTaskFromReports('${t.id}')">Delete</button>
+                </div>
+              </div>
+            `).join("") || `<div class="small">Nothing on this report.</div>`}
+          </div>` : ""}
         </div>
       `).join("")}
     </div>
   `;
+}
+function toggleReportReview(clientId){
+  if(!state.reportsExpanded) state.reportsExpanded = new Set();
+  if(state.reportsExpanded.has(clientId)) state.reportsExpanded.delete(clientId);
+  else state.reportsExpanded.add(clientId);
+  render();
+}
+function deleteTaskFromReports(taskId){
+  if(!confirm("Delete this task? This can't be undone.")) return;
+  remove("tasks", taskId);
 }
 
 // --- Onboarding ---
@@ -3162,7 +3188,9 @@ function renderTaskEditorModal(task){
           </select>
         </div>
         <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}"></div>
+        <div><label class="small">Completed date${task.status==='Done'?'':' (only applies once status is Done)'}</label><input type="date" id="tf_completed" value="${task.completedAt ? task.completedAt.slice(0,10) : ''}"></div>
       </div>
+      <div class="small" style="margin-top:2px;">Reports pull "completed this period" straight off this date — if a task was actually finished earlier and just had its status corrected today, set the real date here so it doesn't show up on a report it doesn't belong on.</div>
       <div style="margin-top:8px;">
         <label class="small">Assignees</label>
         ${assignableAssistants(task.assignees).map(a=>`
@@ -3274,10 +3302,18 @@ function saveTask(taskId){
   const newStatus = document.getElementById("tf_status").value;
   // Stamp completedAt the moment a task lands on Done, and clear it if it's
   // reopened — the weekly client report needs to know WHEN a task finished,
-  // not just that it's currently sitting in Done.
+  // not just that it's currently sitting in Done. A manually-set completed
+  // date (e.g. correcting a status today for a task actually finished weeks
+  // ago) always wins over the auto-stamp, so it doesn't wrongly land on a
+  // report it doesn't belong on.
+  const completedField = document.getElementById("tf_completed").value;
   let completedAt = task.completedAt || null;
-  if(newStatus === "Done" && task.status !== "Done") completedAt = new Date().toISOString();
-  else if(newStatus !== "Done") completedAt = null;
+  if(newStatus === "Done"){
+    if(completedField) completedAt = new Date(completedField + "T12:00:00").toISOString();
+    else if(task.status !== "Done") completedAt = new Date().toISOString();
+  } else {
+    completedAt = null;
+  }
   const payload = {
     title: document.getElementById("tf_title").value.trim(),
     clientId: document.getElementById("tf_client").value,
