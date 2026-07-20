@@ -2212,7 +2212,7 @@ function renderKanbanCard(t){
         <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
         ${t.priority ? '<span class="badge" style="background:var(--danger);">⚑ Priority</span>' : ''}
         ${t.requestedByClient ? '<span class="badge" style="background:var(--rose-dark);">Client request</span>' : ''}
-        <strong>${t.title}</strong>
+        <strong>${t.taskNumber ? `#${t.taskNumber} — ` : ''}${t.title}</strong>
         <div class="meta">${client?client.name:'Internal'} ${ (t.assignees||[]).length ? '· '+t.assignees.map(id=>{const a=state.settings.assistants.find(x=>x.id===id);return a?a.name:id;}).join(", ") : ''}</div>
         ${(t.subtasks||[]).length ? `<div class="meta">${(t.subtasks||[]).filter(s=>s.done).length}/${(t.subtasks||[]).length} subtasks</div>` : ""}
         ${(t.discussion||[]).length ? `<div class="meta">💬 ${(t.discussion||[]).length} comment${(t.discussion||[]).length===1?'':'s'}</div>` : ""}
@@ -2299,10 +2299,8 @@ function renderTimeTracking(){
     ${!active && state.currentAssistant ? `
       <div class="card">
         <h3>Clock in</h3>
-        <select id="clockInTaskSelect">
-          <option value="">Choose a task...</option>
-          ${state.tasks.filter(t=>t.status!=="Done").map(t=>`<option value="${t.id}">${t.title}</option>`).join("")}
-        </select>
+        <input id="clockInTaskSelect" list="clockInTaskList" placeholder="Search by # or title...">
+        <datalist id="clockInTaskList">${taskSearchOptions(state.tasks.filter(t=>t.status!=="Done"))}</datalist>
         <button style="margin-top:8px;" onclick="doClockIn()">Clock in</button>
         <div class="small" style="margin:10px 0 6px;">Or for general admin work not tied to a specific task:</div>
         <button class="secondary" onclick="clockInAdminWork(state.currentAssistant.id)">Clock in for Admin Work</button>
@@ -2367,10 +2365,23 @@ function renderTimeTracking(){
     </div>
   `;
 }
+function taskSearchOptions(tasks){
+  return tasks.map(t=>`<option value="#${t.taskNumber||'?'} — ${(t.title||'').replace(/"/g,'&quot;')}">`).join("");
+}
+function resolveTaskFromSearch(value){
+  const v = (value||"").trim();
+  const m = v.match(/^#(\d+)/);
+  if(m){
+    const t = state.tasks.find(t=>t.taskNumber===parseInt(m[1],10));
+    if(t) return t;
+  }
+  return state.tasks.find(t=>t.title===v) || null;
+}
 function doClockIn(){
   const sel = document.getElementById("clockInTaskSelect");
-  if(!sel.value){ alert("Pick a task first."); return; }
-  clockIn(sel.value, state.currentAssistant.id);
+  const task = resolveTaskFromSearch(sel.value);
+  if(!task){ alert("Pick a task from the list first — search by its # or title."); return; }
+  clockIn(task.id, state.currentAssistant.id);
 }
 function doClockOut(entryId){
   clockOut(entryId, null);
@@ -3064,6 +3075,7 @@ async function submitClientTaskRequest(clientId){
     clientId,
     status: "Pending approval",
     category: categoryEl.value,
+    taskNumber: nextTaskNumber(),
     assignees: (client && client.assistantIds) || [],
     subtasks: [],
     discussion: [],
@@ -3221,10 +3233,14 @@ function renderClientPortal(){
 }
 
 // --- Task editor modal ---
+function nextTaskNumber(){
+  return state.tasks.reduce((max,t)=>Math.max(max, t.taskNumber||0), 0) + 1;
+}
 function openTaskEditor(taskId, defaultClientId){
   const task = taskId ? state.tasks.find(t=>t.id===taskId) : {
     id: newId("task"), title:"", clientId: defaultClientId || INTERNAL_CLIENT_ID,
-    status:"To do", category:"Business", assignees:[], subtasks:[], discussion:[], description:"", dueDate:""
+    status:"To do", category:"Business", assignees:[], subtasks:[], discussion:[], description:"", dueDate:"",
+    taskNumber: nextTaskNumber()
   };
   state.modal = { type:"taskEditor", task };
   render();
@@ -3232,7 +3248,7 @@ function openTaskEditor(taskId, defaultClientId){
 function renderTaskEditorModal(task){
   return `
     <div class="modal">
-      <h3>${task.title ? "Edit task" : "New task"}</h3>
+      <h3>${task.title ? "Edit task" : "New task"}${task.taskNumber ? ` <span class="small">#${task.taskNumber}</span>` : ''}</h3>
       ${task.requestedByClient && task.clientRequestNote ? `<div class="alert warn">Client's original request: &ldquo;${task.clientRequestNote}&rdquo;</div>` : ""}
       ${task.requestImage ? `<img src="${task.requestImage}" style="max-width:100%;max-height:280px;border-radius:8px;margin-bottom:10px;display:block;">` : ""}
       <div class="row"><div><label class="small">Title</label><input id="tf_title" value="${task.title||''}" oninput="state.modal.task.title=this.value"></div></div>
@@ -3417,6 +3433,7 @@ function saveTask(taskId){
     description: document.getElementById("tf_description").value.trim(),
     dueDate: document.getElementById("tf_due").value,
     priority: document.getElementById("tf_priority").checked,
+    taskNumber: task.taskNumber || nextTaskNumber(),
     assignees,
     subtasks: task.subtasks || [],
     discussion: task.discussion || [],
@@ -3510,10 +3527,8 @@ function renderManualTimeEntryModal(){
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Task</label>
-          <select id="mte_task">
-            <option value="">Choose a task...</option>
-            ${state.tasks.map(t=>`<option value="${t.id}">${t.title}</option>`).join("")}
-          </select>
+          <input id="mte_task" list="mte_task_list" placeholder="Search by # or title...">
+          <datalist id="mte_task_list">${taskSearchOptions(state.tasks)}</datalist>
         </div>
       </div>
       <div class="row" style="margin-top:8px;">
@@ -3532,18 +3547,17 @@ function renderManualTimeEntryModal(){
   `;
 }
 function saveManualTimeEntry(){
-  const taskId = document.getElementById("mte_task").value;
+  const task = resolveTaskFromSearch(document.getElementById("mte_task").value);
   const clockIn = fromDatetimeLocalValue(document.getElementById("mte_in").value);
   const clockOut = fromDatetimeLocalValue(document.getElementById("mte_out").value);
   const assistantId = state.role==='admin' ? document.getElementById("mte_assistant").value : state.currentAssistant.id;
-  if(!taskId){ alert("Pick a task first."); return; }
+  if(!task){ alert("Pick a task from the list first — search by its # or title."); return; }
   if(!clockIn || !clockOut){ alert("Both clock in and clock out are required."); return; }
   if(new Date(clockOut) <= new Date(clockIn)){ alert("Clock out has to be after clock in."); return; }
-  const task = state.tasks.find(t=>t.id===taskId);
   const entry = {
     id: newId("te"),
-    taskId, assistantId,
-    clientId: task ? task.clientId : INTERNAL_CLIENT_ID,
+    taskId: task.id, assistantId,
+    clientId: task.clientId || INTERNAL_CLIENT_ID,
     clockIn, clockOut, clockOutManual: true,
     note: document.getElementById("mte_note").value.trim(),
   };
