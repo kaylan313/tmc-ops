@@ -1138,9 +1138,28 @@ function logout(){
 const app = document.getElementById("app");
 
 function render(){
-  if(state.view === "login") return renderLogin();
-  if(state.role === "client") return renderClientPortal();
-  return renderAppShell();
+  // A full re-render happens constantly in the background (the 60s live-timer
+  // tick, any Firestore snapshot from anyone's activity) and always rebuilds
+  // the whole page from `state`. Since a text field's typed characters don't
+  // land in `state` until it's blurred (onchange), a refresh mid-keystroke
+  // would otherwise wipe back to the last-saved value. Capture + restore
+  // whatever's actively focused so typing survives a background refresh.
+  const active = document.activeElement;
+  const preserving = active && (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && (active.type === "text" || active.type === "number" || active.type === "email" || active.type === "search")));
+  const preserved = preserving ? { id: active.id, value: active.value, selStart: active.selectionStart, selEnd: active.selectionEnd } : null;
+
+  if(state.view === "login") renderLogin();
+  else if(state.role === "client") renderClientPortal();
+  else renderAppShell();
+
+  if(preserved && preserved.id){
+    const el = document.getElementById(preserved.id);
+    if(el){
+      el.value = preserved.value;
+      el.focus();
+      try{ el.setSelectionRange(preserved.selStart, preserved.selEnd); }catch(e){}
+    }
+  }
 }
 
 function renderLogin(){
