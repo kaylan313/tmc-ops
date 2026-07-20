@@ -601,6 +601,18 @@ function currentBillingPeriod(client){
   const periodEnd = advance(periodStart);
   return { start: periodStart, end: periodEnd };
 }
+// A one-off grant of extra hours into a specific upcoming period (e.g. "let
+// this client carry over 6.5 unused hours into their period starting 7/18")
+// — tied to that exact period's start date so it doesn't silently keep
+// applying to every period after that one.
+function effectivePackageHours(client){
+  const base = client.packageHours || 0;
+  if(!client.rolloverHours || !client.rolloverPeriodStart) return base;
+  const period = currentBillingPeriod(client);
+  if(!period) return base;
+  const periodStartDate = period.start.toISOString().slice(0,10);
+  return periodStartDate === client.rolloverPeriodStart ? base + client.rolloverHours : base;
+}
 function hoursUsed(clientId){
   const client = state.clients.find(c=>c.id===clientId);
   const period = client ? currentBillingPeriod(client) : null;
@@ -611,7 +623,7 @@ function hoursUsed(clientId){
 }
 function tierAlert(client){
   const used = hoursUsed(client.id);
-  const pkg = client.packageHours || 0;
+  const pkg = effectivePackageHours(client);
   if(!pkg) return null;
   const pct = (used / pkg) * 100;
   const hit = TIER_THRESHOLDS.filter(t=>pct>=t).pop();
@@ -638,7 +650,7 @@ function redeemClientReferralDiscount(clientId){
 }
 function overageFor(client){
   const used = hoursUsed(client.id);
-  const pkg = client.packageHours || 0;
+  const pkg = effectivePackageHours(client);
   const overHours = Math.max(0, used - pkg);
   return { overHours, amount: overHours * OVERAGE_RATE };
 }
@@ -699,7 +711,7 @@ function buildClientReport(client, window, kind){
     return d >= window.start && d < window.end;
   });
   const used = hoursUsed(client.id);
-  const pkg = client.packageHours || 0;
+  const pkg = effectivePackageHours(client);
   return {
     kind, client, week: window, inProgress, completed,
     hoursUsed: used, packageHours: pkg,
@@ -1241,10 +1253,14 @@ const TERM_LENGTH_DAYS = { pilot:30, "3month":90, "12month_new":365, "12month_re
 const TERM_NOTICE_DAYS = { pilot:7, "3month":30, "12month_new":60, "12month_renewal":60 };
 const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "12month_new":"Twelve Month Term (New)", "12month_renewal":"Twelve Month Term (Renewal)" };
 function termEndDate(client){
+  // A manual override always wins — the 30/90/365-day formula is a default,
+  // not every real contract lines up with it exactly.
+  if(client.termEndOverride) return new Date(client.termEndOverride);
   if(!client.termStartDate || !client.termType || !TERM_LENGTH_DAYS[client.termType]) return null;
   return new Date(new Date(client.termStartDate).getTime() + TERM_LENGTH_DAYS[client.termType]*24*3600000);
 }
 function noticeDeadline(client){
+  if(client.noticeDeadlineOverride) return new Date(client.noticeDeadlineOverride);
   const end = termEndDate(client);
   if(!end) return null;
   return new Date(end.getTime() - (TERM_NOTICE_DAYS[client.termType]||0)*24*3600000);
@@ -2154,8 +2170,11 @@ function removeInspection(clientId, index){
 function renderClientMembership(client){
   const used = hoursUsed(client.id);
   const overage = overageFor(client);
+  const pkg = effectivePackageHours(client);
+  const rolloverActive = pkg > (client.packageHours||0);
   const currentTier = PACKAGE_TIERS.find(t=>t.hours===client.packageHours && t.price===client.packagePrice);
   const isHomeReset = currentTier && currentTier.key.startsWith("reset_");
+  const period = currentBillingPeriod(client);
   return `
     <div class="card">
       <h3>Package</h3>
@@ -2178,9 +2197,18 @@ function renderClientMembership(client){
         <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
         <div><label class="small">Package price ($/month) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
       </div>
-      <div class="progress-bar" style="margin-top:10px;"><div style="width:${Math.min(100,(used/(client.packageHours||1))*100)}%;"></div></div>
-      <div class="small">${used.toFixed(1)} / ${client.packageHours||0} hrs used this ${isHomeReset?'30-day cycle':'period'}</div>
+      <div class="progress-bar" style="margin-top:10px;"><div style="width:${Math.min(100,(used/(pkg||1))*100)}%;"></div></div>
+      <div class="small">${used.toFixed(1)} / ${pkg} hrs used this ${isHomeReset?'30-day cycle':'period'}${rolloverActive ? ` (includes +${client.rolloverHours} rolled over)` : ''}</div>
       ${overage.overHours>0 ? `<div class="alert warn" style="margin-top:6px;">${overage.overHours.toFixed(1)} hrs over package — $${overage.amount.toFixed(2)} overage at $${OVERAGE_RATE}/hr, due by the 1st of next month.</div>` : ""}
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small">Hour rollover — one-time extra hours for a specific upcoming/current period</label>
+        ${client.rolloverHours && client.rolloverPeriodStart ? `<div class="small" style="margin:4px 0;">Currently: +${client.rolloverHours} hrs for the period starting ${new Date(client.rolloverPeriodStart).toLocaleDateString()}${rolloverActive ? ' (active now)' : ' (not this period)'}. <a href="#" onclick="clearRollover('${client.id}');return false;">Clear</a></div>` : ""}
+        <div class="row" style="margin-top:6px;">
+          <div><label class="small">Hours to add</label><input type="number" step="0.25" id="rollover_hrs_${client.id}" placeholder="e.g. 6.5"></div>
+          <div><label class="small">Applies to period starting</label><input type="date" id="rollover_start_${client.id}" value="${period?period.start.toISOString().slice(0,10):''}"></div>
+          <button class="secondary" onclick="setRollover('${client.id}')">Set rollover</button>
+        </div>
+      </div>
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Client portal code</label><input value="${client.portalCode||''}" onchange="updateClientField('${client.id}','portalCode',this.value)"></div>
         <div><label class="small">Client email (for weekly reports)</label><input type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
@@ -2210,6 +2238,11 @@ function renderClientMembership(client){
       <div class="row" style="margin-top:10px;">
         <div><label class="small">${client.clientStatus==='paused'?'Paused since':'Cancelled date'}</label><input type="date" value="${client.cancelledDate?client.cancelledDate.slice(0,10):''}" onchange="updateClientField('${client.id}','cancelledDate',this.value)"></div>
       </div>` : ""}
+      <div class="small" style="margin-top:12px;">Computed from term type + start date: term ends ${termEndDate(client)?termEndDate(client).toLocaleDateString():'—'}, notice deadline ${noticeDeadline(client)?noticeDeadline(client).toLocaleDateString():'—'}. If either is wrong for this client's actual contract, override it directly below — leave blank to go back to the computed value.</div>
+      <div class="row" style="margin-top:8px;">
+        <div><label class="small">Term end override (optional)</label><input type="date" value="${client.termEndOverride?client.termEndOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','termEndOverride',this.value)"></div>
+        <div><label class="small">Cancellation deadline override (optional)</label><input type="date" value="${client.noticeDeadlineOverride?client.noticeDeadlineOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','noticeDeadlineOverride',this.value)"></div>
+      </div>
     </div>
     <div class="card">
       <div class="flex-between">
@@ -2221,6 +2254,16 @@ function renderClientMembership(client){
   `;
 }
 function updateClientField(id, field, value){ upsert("clients", id, { [field]: value }); }
+function setRollover(clientId){
+  const hrs = parseFloat(document.getElementById("rollover_hrs_"+clientId).value);
+  const periodStart = document.getElementById("rollover_start_"+clientId).value;
+  if(!hrs || hrs<=0){ alert("Enter a positive number of hours to roll over."); return; }
+  if(!periodStart){ alert("Pick which period this rollover applies to."); return; }
+  upsert("clients", clientId, { rolloverHours: hrs, rolloverPeriodStart: periodStart });
+}
+function clearRollover(clientId){
+  upsert("clients", clientId, { rolloverHours: null, rolloverPeriodStart: null });
+}
 function selectPackageTier(clientId, val){
   if(val==="custom") return;
   const tier = PACKAGE_TIERS.find(t=>t.key===val);
@@ -3277,7 +3320,8 @@ function renderClientPortal(){
   if(!client){ app.innerHTML = `<div class="center-screen"><div class="login-box">Client not found. <button onclick="logout()">Back</button></div></div>`; return; }
   const used = hoursUsed(client.id);
   const overage = overageFor(client);
-  const usagePct = client.packageHours ? (used/client.packageHours)*100 : 0;
+  const effectivePkg = effectivePackageHours(client);
+  const usagePct = effectivePkg ? (used/effectivePkg)*100 : 0;
   const tasks = state.tasks.filter(t=>t.clientId===client.id && t.status!=="Done");
   const weekReport = buildClientReport(client, currentReportWeek(), "week");
   const tierInfo = PACKAGE_TIERS.find(t=>t.hours===client.packageHours && t.price===client.packagePrice);
@@ -3327,7 +3371,7 @@ function renderClientPortal(){
         <div class="card">
           <h3>Hours used this period</h3>
           <div class="progress-bar"><div style="width:${Math.min(100,usagePct)}%;"></div></div>
-          <div class="small">${used.toFixed(1)} / ${client.packageHours||0} hrs</div>
+          <div class="small">${used.toFixed(1)} / ${effectivePkg} hrs</div>
           ${overage.overHours>0
             ? `<div class="alert danger" style="margin-top:8px;">You're ${overage.overHours.toFixed(1)} hrs over your package this period — $${overage.amount.toFixed(2)} in overage at $${OVERAGE_RATE}/hr will be invoiced.</div>`
             : usagePct>=90 ? `<div class="alert warn" style="margin-top:8px;">You're at ${Math.round(usagePct)}% of your package hours this period.</div>` : ""}
