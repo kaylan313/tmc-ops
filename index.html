@@ -700,13 +700,12 @@ function buildClientReport(client, window, kind){
   });
   const used = hoursUsed(client.id);
   const pkg = client.packageHours || 0;
-  const primaryAssistantId = (client.assistantIds||[])[0];
   return {
     kind, client, week: window, inProgress, completed,
     hoursUsed: used, packageHours: pkg,
     hoursRemaining: Math.max(0, pkg - used),
     billingPeriod: currentBillingPeriod(client),
-    signerName: primaryAssistantId ? assistantName(primaryAssistantId).split(" ")[0] : "The Modern Concierge Team"
+    signerName: "The Modern Concierge Team"
   };
 }
 function clientReportHtml(report){
@@ -937,6 +936,154 @@ function emailClientReport(clientId, kind){
   const body = encodeURIComponent(clientReportPlainText(report));
   window.location.href = "mailto:" + client.email + "?subject=" + subject + "&body=" + body;
 }
+
+// ---- 8e. Payroll report (per assistant, same branded format) ----
+function buildPayrollReport(assistant, period){
+  const entries = state.timeEntries.filter(e=>e.assistantId===assistant.id);
+  const inPeriod = entries.filter(e => new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end);
+  const totalHours = inPeriod.reduce((s,e)=>s+entryDurationHours(e),0);
+  const byClientMap = {};
+  inPeriod.forEach(e=>{
+    const name = e.clientId===INTERNAL_CLIENT_ID ? "Internal / Modern Co." : (state.clients.find(c=>c.id===e.clientId)?.name || "Unknown client");
+    byClientMap[name] = (byClientMap[name]||0) + entryDurationHours(e);
+  });
+  const byClient = Object.entries(byClientMap).map(([name,hours])=>({name,hours})).sort((a,b)=>b.hours-a.hours);
+  const rate = assistant.hourlyRate || 0;
+  return { assistant, period, totalHours, byClient, rate, amountOwed: totalHours*rate };
+}
+function payrollReportHtml(report){
+  const { assistant, period, byClient } = report;
+  const fmt = d => new Date(d).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const dateRange = fmt(period.start) + " – " + fmt(new Date(period.end.getTime()-1));
+  const item = (c) => `
+    <div class="item">
+      <div class="item-label">${c.name.toUpperCase()}</div>
+      <div class="item-body">${formatHoursMinutes(c.hours)} worked</div>
+    </div>`;
+  return `<!doctype html><html><head><meta charset="UTF-8"><title>${assistant.name} — Payroll Recap</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root{ --brown:#3b2b26; --brown-dark:#241a17; --cream:#f6efe6; --cream-dark:#ece2d3; --rose:#c9a3a0; --rose-dark:#a97f7c; --ok:#4c7a5e; --text:#2c211d; }
+    *{box-sizing:border-box;}
+    body{margin:0;background:#fff;font-family:'Jost',Arial,sans-serif;color:var(--text);}
+    .wrap{max-width:640px;margin:0 auto;}
+    .header{background:var(--brown-dark);color:var(--cream);padding:26px 32px;display:flex;justify-content:space-between;align-items:flex-start;}
+    .header .brand-mc{font-family:'Playfair Display',serif;font-size:30px;font-weight:700;line-height:1;}
+    .header .brand-sub{font-size:11px;letter-spacing:2px;margin-top:6px;opacity:.85;}
+    .header .recap-label{font-size:11px;letter-spacing:2px;text-align:right;opacity:.85;}
+    .header .recap-date{font-family:'Playfair Display',serif;font-size:22px;font-weight:600;text-align:right;margin-top:4px;white-space:nowrap;}
+    .body{padding:30px 32px;}
+    .eyebrow{font-size:11px;letter-spacing:2px;color:var(--rose-dark);font-weight:600;margin-bottom:8px;}
+    .client-name{font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:var(--brown-dark);margin:0 0 12px 0;}
+    .divider-accent{width:60px;height:3px;background:var(--rose-dark);margin-bottom:12px;}
+    .sub-meta{color:#8a7a72;font-size:14px;margin-bottom:20px;}
+    hr{border:none;border-top:1px solid var(--cream-dark);margin:24px 0;}
+    .section-label{font-size:11px;letter-spacing:2px;color:var(--rose-dark);font-weight:600;margin-bottom:12px;text-transform:uppercase;}
+    .item{background:var(--cream);border-left:4px solid var(--ok);padding:14px 16px;margin-bottom:10px;}
+    .item-label{font-size:12px;letter-spacing:1px;font-weight:600;color:var(--ok);margin-bottom:4px;}
+    .item-body{font-size:15px;color:var(--text);}
+    .hours-box{background:var(--brown-dark);color:var(--cream);border-radius:4px;padding:24px 28px;}
+    .hours-box .caption{font-size:11px;letter-spacing:2px;opacity:.85;margin-bottom:16px;text-transform:uppercase;}
+    .hours-row{display:flex;}
+    .hours-stat{flex:1;text-align:center;}
+    .hours-stat + .hours-stat{border-left:1px solid rgba(246,239,230,0.25);}
+    .hours-stat .num{font-family:'Playfair Display',serif;font-size:26px;font-weight:600;}
+    .hours-stat .label{font-size:10px;letter-spacing:1.5px;opacity:.8;margin-top:4px;}
+    .closing{padding:0 32px 30px;font-size:15px;line-height:1.6;}
+    .sig-name{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;margin-top:20px;}
+    .sig-rule{width:50px;border-top:2px dashed var(--rose-dark);margin:6px 0;}
+    .sig-sub{font-size:11px;letter-spacing:1.5px;color:#8a7a72;}
+    .footer{background:var(--brown-dark);color:var(--cream);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;}
+    .footer .foot-brand{font-family:'Playfair Display',serif;font-size:17px;font-weight:600;}
+    .footer .foot-tag{font-size:11px;letter-spacing:2px;opacity:.85;}
+  </style></head>
+  <body>
+  <div class="wrap">
+    <div class="header">
+      <div><div class="brand-mc">MC</div><div class="brand-sub">MODERN CO.</div></div>
+      <div><div class="recap-label">PAYROLL RECAP</div><div class="recap-date">${dateRange}</div></div>
+    </div>
+    <div class="body">
+      <div class="eyebrow">PREPARED FOR</div>
+      <div class="client-name">${assistant.name}</div>
+      <div class="divider-accent"></div>
+      <div class="sub-meta">Payroll Recap &middot; ${dateRange}</div>
+      <hr>
+
+      <div class="section-label">Hours By Client</div>
+      ${byClient.length ? byClient.map(item).join("") : `<div class="item-body" style="margin-bottom:16px;">No hours logged this period.</div>`}
+
+      <hr>
+
+      <div class="section-label">Pay Summary</div>
+      <div class="hours-box">
+        <div class="caption">This Pay Period</div>
+        <div class="hours-row">
+          <div class="hours-stat"><div class="num">${formatHoursMinutes(report.totalHours)}</div><div class="label">HOURS WORKED</div></div>
+          <div class="hours-stat"><div class="num">$${report.rate.toFixed(2)}</div><div class="label">HOURLY RATE</div></div>
+          <div class="hours-stat"><div class="num">$${report.amountOwed.toFixed(2)}</div><div class="label">TOTAL PAY</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="closing">
+      <p>Questions about your hours or pay this period, just ask.</p>
+      <div class="sig-name">The Modern Concierge</div>
+      <div class="sig-rule"></div>
+      <div class="sig-sub">PAYROLL</div>
+    </div>
+    <div class="footer">
+      <div class="foot-brand">The Modern Concierge</div>
+      <div class="foot-tag">PAYROLL REPORT</div>
+    </div>
+  </div>
+  </body></html>`;
+}
+function payrollReportPlainText(report){
+  const { assistant, period, byClient } = report;
+  const fmt = d => new Date(d).toLocaleDateString();
+  const lines = [];
+  lines.push("Payroll Recap — " + assistant.name);
+  lines.push(fmt(period.start) + " – " + fmt(new Date(period.end.getTime()-1)));
+  lines.push("");
+  lines.push("HOURS BY CLIENT:");
+  lines.push(...(byClient.length ? byClient.map(c=>"- "+c.name+": "+formatHoursMinutes(c.hours)) : ["(no hours logged this period)"]));
+  lines.push("");
+  lines.push("HOURS WORKED: " + formatHoursMinutes(report.totalHours));
+  lines.push("HOURLY RATE: $" + report.rate.toFixed(2));
+  lines.push("TOTAL PAY: $" + report.amountOwed.toFixed(2));
+  lines.push("");
+  lines.push("Questions about your hours or pay this period, just ask.");
+  lines.push("");
+  lines.push("The Modern Concierge");
+  return lines.join("\n");
+}
+function downloadPayrollReport(assistantId){
+  const assistant = state.settings.assistants.find(a=>a.id===assistantId);
+  if(!assistant) return;
+  const period = currentPayrollPeriod();
+  const report = buildPayrollReport(assistant, period);
+  const blob = new Blob([payrollReportHtml(report)], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function emailPayrollReport(assistantId){
+  const assistant = state.settings.assistants.find(a=>a.id===assistantId);
+  if(!assistant) return;
+  if(!assistant.email){ alert(assistant.name + " doesn't have an email on file yet — add one on the Team tab first."); return; }
+  const period = currentPayrollPeriod();
+  const report = buildPayrollReport(assistant, period);
+  const subject = encodeURIComponent("Your Payroll Recap — " + formatPeriodRange(period));
+  const body = encodeURIComponent(payrollReportPlainText(report));
+  window.location.href = "mailto:" + assistant.email + "?subject=" + subject + "&body=" + body;
+}
+
 // Active assistants, plus any former employee already tied to this record —
 // so an existing assignment to someone who's left stays visible for context.
 function assignableAssistants(alreadyIds){
@@ -2478,6 +2625,25 @@ function renderPayrollTool(){
     </div>
 
     <div class="card">
+      <div class="flex-between">
+        <h3>Payroll reports</h3>
+      </div>
+      <div class="small" style="margin-bottom:12px;">Same branded format as the client weekly reports — download or email each assistant their hours/pay for this period. Add an email on the Team tab for anyone missing one below.</div>
+      ${state.settings.assistants.filter(a=>a.active!==false).map(a=>{
+        const hrs = hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period);
+        return `
+        <div class="list-item">
+          <div>${a.name}${a.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="small">${hrs.toFixed(1)} hrs · $${(hrs*(a.hourlyRate||0)).toFixed(2)}</span>
+            <button class="secondary" onclick="downloadPayrollReport('${a.id}')">Download</button>
+            <button onclick="emailPayrollReport('${a.id}')">Email</button>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>
+
+    <div class="card">
       <h3>Admin/internal hours budget</h3>
       <div class="small">Set the max hours per payroll period the team should spend on "Internal / Modern Co." work before it eats into margin.</div>
       <div class="row" style="margin-top:8px;">
@@ -2690,6 +2856,7 @@ function renderAssistantRow(a){
       <div class="row">
         <div><label class="small">Hourly rate ($)</label><input type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
+        <div><label class="small">Email (for payroll reports)</label><input type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
       </div>
       ${onboarding.length ? `
         <div>
