@@ -327,6 +327,7 @@ function upsert(name, id, data){
   }
   return col(name).doc(id).set(data, { merge:true }).catch(err=>{
     console.warn("Write to '" + name + "' failed:", err);
+    alert("This didn't save — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
   });
 }
 function remove(name, id){
@@ -2996,8 +2997,13 @@ function readAndCompressImage(file, maxDim, quality){
 }
 // Non-image files (PDFs, docs) can't be resized like a photo, so they're
 // capped hard — there's no cloud storage wired up, everything lives inline
-// on the Firestore doc, which tops out around 1MB total.
-const MAX_ATTACHMENT_BYTES = 700000;
+// on the Firestore doc, which tops out around 1MB total. Attachments share
+// a combined budget well under that ceiling so title/subtasks/discussion
+// always have room too — otherwise a doc can quietly exceed Firestore's
+// limit and the write just fails (silently, before the fix that now alerts
+// on a failed save).
+const MAX_ATTACHMENT_BYTES = 400000;
+const MAX_ATTACHMENTS_TOTAL_BYTES = 650000;
 function readFileAsDataURL(file){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
@@ -3005,6 +3011,9 @@ function readFileAsDataURL(file){
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+function currentAttachmentsBytes(task){
+  return (task.attachments||[]).reduce((s,a)=>s+(a.dataUrl?a.dataUrl.length:0),0) + (task.requestImage?task.requestImage.length:0);
 }
 async function addTaskAttachment(taskId){
   const input = document.getElementById("tf_attachment");
@@ -3026,6 +3035,10 @@ async function addTaskAttachment(taskId){
   }catch(e){
     console.warn("Attachment read failed:", e);
     alert("Couldn't read that file.");
+    return;
+  }
+  if(currentAttachmentsBytes(task) + dataUrl.length > MAX_ATTACHMENTS_TOTAL_BYTES){
+    alert("This task's attachments are getting too large to save reliably. Remove an existing attachment before adding another, or attach fewer/smaller files.");
     return;
   }
   const attachments = [...(task.attachments||[]), {
