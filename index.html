@@ -1,0 +1,3330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Modern Concierge — Ops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+
+<!-- Firebase (compat SDK, single-file friendly) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+
+<style>
+  :root{
+    --brown:#3b2b26;
+    --brown-dark:#241a17;
+    --cream:#f6efe6;
+    --cream-dark:#ece2d3;
+    --rose:#c9a3a0;
+    --rose-dark:#a97f7c;
+    --text:#2c211d;
+    --danger:#b23a3a;
+    --warn:#c98a2c;
+    --ok:#4c7a5e;
+    --radius:10px;
+    --shadow:0 2px 10px rgba(36,26,23,0.08);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    font-family:'Jost',sans-serif;
+    background:var(--cream);
+    color:var(--text);
+  }
+  h1,h2,h3,h4{
+    font-family:'Playfair Display',serif;
+    color:var(--brown-dark);
+    margin:0 0 .4em 0;
+  }
+  button{
+    font-family:'Jost',sans-serif;
+    cursor:pointer;
+    border:none;
+    border-radius:8px;
+    padding:8px 14px;
+    background:var(--brown);
+    color:var(--cream);
+    font-size:14px;
+  }
+  button.secondary{background:var(--cream-dark);color:var(--brown-dark);}
+  button.danger{background:var(--danger);color:#fff;}
+  button:hover{opacity:.9;}
+  input:not([type="checkbox"]):not([type="radio"]),select,textarea{
+    font-family:'Jost',sans-serif;
+    padding:8px 10px;
+    border:1px solid #d8cabf;
+    border-radius:8px;
+    font-size:14px;
+    width:100%;
+  }
+  input[type="checkbox"],input[type="radio"]{
+    width:15px;height:15px;flex-shrink:0;accent-color:var(--rose-dark);
+  }
+  a{color:var(--rose-dark);}
+  .app-shell{display:flex;min-height:100vh;}
+  .sidebar{
+    width:220px;background:var(--brown-dark);color:var(--cream);
+    padding:20px 14px;display:flex;flex-direction:column;gap:6px;flex-shrink:0;
+  }
+  .sidebar .logo{font-family:'Playfair Display',serif;font-size:20px;margin-bottom:18px;color:var(--cream);}
+  .sidebar button{
+    background:transparent;color:var(--cream);text-align:left;padding:10px 12px;border-radius:8px;
+  }
+  .sidebar button.active,.sidebar button:hover{background:rgba(255,255,255,0.12);}
+  .sidebar .who{margin-top:auto;font-size:12px;opacity:.7;padding:10px 12px;}
+  .main{flex:1;padding:26px 32px;overflow-y:auto;}
+  .card{
+    background:#fff;border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);margin-bottom:16px;
+  }
+  .row{display:flex;gap:12px;flex-wrap:wrap;}
+  .row > *{flex:1;min-width:180px;}
+  .center-screen{
+    min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--cream);
+  }
+  .login-box{
+    background:#fff;padding:36px;border-radius:14px;box-shadow:var(--shadow);width:360px;max-width:92vw;text-align:center;box-sizing:border-box;
+  }
+  .login-box .logo{font-family:'Playfair Display',serif;font-size:26px;color:var(--brown-dark);margin-bottom:6px;}
+  .login-box .tagline{font-size:13px;color:#8a7a72;margin-bottom:24px;}
+  .role-btns{display:flex;flex-direction:column;gap:10px;margin-top:16px;}
+  .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--cream-dark);}
+  .tabs button{
+    background:transparent;color:var(--brown);border-radius:8px 8px 0 0;padding:8px 16px;
+  }
+  .tabs button.active{background:var(--rose);color:#fff;}
+  .kanban{display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;}
+  .kanban-col{
+    background:var(--cream-dark);border-radius:var(--radius);min-width:230px;flex:1;padding:10px;
+  }
+  .kanban-col h4{font-size:14px;margin-bottom:8px;color:var(--brown-dark);}
+  .task-card{
+    background:#fff;border-radius:8px;padding:10px;margin-bottom:8px;box-shadow:var(--shadow);cursor:pointer;
+  }
+  .task-card .meta{font-size:11px;color:#8a7a72;margin-top:4px;}
+  .badge{
+    display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;background:var(--rose);color:#fff;margin-right:4px;
+  }
+  .badge.home{background:#8ba888;}
+  .badge.business{background:#7c93b0;}
+  .alert{
+    padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:8px;
+  }
+  .alert.warn{background:#fbe8cc;color:#7a5312;}
+  .alert.danger{background:#f6d2d2;color:#7a2020;}
+  .alert.ok{background:#dcead9;color:#28502f;}
+  .progress-bar{
+    background:var(--cream-dark);border-radius:20px;height:10px;overflow:hidden;margin:6px 0;
+  }
+  .progress-bar > div{height:100%;background:var(--rose-dark);}
+  .list-item{
+    display:flex;justify-content:space-between;align-items:center;padding:10px;border-bottom:1px solid var(--cream-dark);
+  }
+  .list-item:last-child{border-bottom:none;}
+  .modal-bg{
+    position:fixed;inset:0;background:rgba(36,26,23,0.5);display:flex;align-items:center;justify-content:center;z-index:50;
+  }
+  .modal{
+    background:#fff;border-radius:12px;padding:24px;width:460px;max-width:92vw;max-height:86vh;overflow-y:auto;
+  }
+  .timer-pill{
+    background:var(--rose);color:#fff;padding:8px 14px;border-radius:20px;font-size:13px;display:flex;align-items:center;gap:8px;
+  }
+  .subtask{padding:4px 0 4px 14px;font-size:13px;color:#5a4a44;}
+  .checklist-item{display:flex;align-items:center;gap:8px;padding:6px 0;}
+  .small{font-size:12px;color:#8a7a72;}
+  .flex-between{display:flex;justify-content:space-between;align-items:center;}
+  .stat-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
+  .stat-tile{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;flex:1;min-width:170px;}
+  .stat-tile .stat-label{font-size:12px;color:#8a7a72;margin-bottom:6px;}
+  .stat-tile .stat-value{font-weight:600;font-size:28px;color:var(--brown-dark);}
+  .stat-tile.status-warn .stat-value{color:var(--warn);}
+  .stat-tile.status-danger .stat-value{color:var(--danger);}
+  .stat-tile .stat-sub{font-size:12px;color:#8a7a72;margin-top:4px;}
+  table.data-table{width:100%;border-collapse:collapse;font-size:13px;}
+  table.data-table th{text-align:left;font-size:11px;color:#8a7a72;font-weight:500;padding:6px 8px;border-bottom:1px solid var(--cream-dark);}
+  table.data-table td{padding:8px;border-bottom:1px solid var(--cream-dark);vertical-align:top;}
+  table.data-table tr:last-child td{border-bottom:none;}
+  .dot-live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:5px;}
+  .dot-live.stale{background:var(--danger);}
+  .agreement-text p{margin:0 0 10px 0;}
+  .agreement-text ul{margin:2px 0 10px 18px;padding:0;}
+  .agreement-text li{margin-bottom:2px;}
+  .sidebar-top{display:flex;align-items:center;justify-content:space-between;width:100%;}
+  .nav-toggle{display:none;background:transparent;border:none;color:var(--cream);font-size:22px;line-height:1;cursor:pointer;padding:4px 8px;}
+  .nav-links{display:flex;flex-direction:column;gap:6px;flex:1;width:100%;}
+  @media (max-width:768px){
+    .app-shell{flex-direction:column;}
+    .sidebar{width:100%;padding:12px 16px;}
+    .nav-toggle{display:inline-block;}
+    .nav-links{display:none;margin-top:12px;flex:none;}
+    .sidebar.nav-open .nav-links{display:flex;}
+    .main{padding:16px;overflow-x:hidden;}
+    .row > *{min-width:140px;}
+    .stat-tile{min-width:140px;}
+  }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* =========================================================================
+   THE MODERN CONCIERGE — INTERNAL OPS PLATFORM
+   Single-file HTML/vanilla JS, Firestore-backed.
+
+   SETUP REQUIRED:
+   1. Replace `firebaseConfig` below with your project's config (same
+      Firebase project already used for the orientation-sync integration).
+   2. In Firestore, create a `settings/access` document (see SEED_SETTINGS
+      below for shape) with your real admin passcode, assistant access
+      codes, and client portal codes — this file seeds it automatically
+      on first run if it doesn't exist yet.
+   3. Set Firestore security rules appropriately before going to
+      production — this app currently assumes rules are permissive for
+      the passcode-gated collections. Tightening this is a good first
+      task to hand to Claude Code.
+
+   RESILIENCE NOTE: Firebase init is wrapped in try/catch and the UI
+   renders before any Firestore call is attempted, so a missing/blocked
+   SDK or bad config degrades to a local-only demo mode with a visible
+   warning banner, instead of a blank page.
+   ========================================================================= */
+
+// ---- 1. Firebase config ----
+const firebaseConfig = {
+  apiKey: "AIzaSyCCLskIvVB40GjB9bXEG2GdMSSBRjvc6-0",
+  authDomain: "modern-co-dashboard.firebaseapp.com",
+  projectId: "modern-co-dashboard",
+  storageBucket: "modern-co-dashboard.firebasestorage.app",
+  messagingSenderId: "263317275120",
+  appId: "1:263317275120:web:d72654132e07434c155d35"
+};
+const FIREBASE_CONFIGURED = firebaseConfig.apiKey !== "YOUR_API_KEY";
+let db = null;
+let FIREBASE_AVAILABLE = false;
+try{
+  if(typeof firebase === "undefined") throw new Error("Firebase SDK did not load (blocked script or no network).");
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.firestore();
+  FIREBASE_AVAILABLE = true;
+}catch(e){
+  console.warn("Firebase failed to initialize — running in local-only mode:", e);
+}
+
+// ---- 2. Seed data (used only if Firestore collections are empty) ----
+const SEED_ASSISTANTS = [
+  { name:"Alex", active:false },
+  { name:"Victoria Haas" },
+  { name:"Heidi Jo Peaden", hireDate:"2026-04-15" },
+  { name:"Cherish Campbell" },
+  { name:"Livia Goree" },
+  { name:"Shae Trahan" },
+  { name:"Victoria Oser" },
+  { name:"Olivia Vanderhoeven" },
+  { name:"Rachel Morvant" }
+].map((a,i)=>({ id:"asst_"+(i+1), accessCode:"", active:true, agreementSigned:true, hourlyRate:22, hireDate:"", ...a }));
+
+const SEED_SETTINGS = {
+  adminPasscode: "melain10",
+  assistants: SEED_ASSISTANTS,
+  internalHoursBudget: 0
+};
+
+const INTERNAL_CLIENT_ID = "internal";
+const STATUSES = ["To do","Researching","In progress","Pending approval","Done"];
+const TIER_THRESHOLDS = [50,75,90,100];
+// Real rate card from the Personal Assistant Services Agreement — same
+// pricing regardless of term type (pilot / 3-month / 12-month). A client
+// picks ONE package tier — Home Reset is an alternative tier, not an add-on
+// stacked on top of an hourly membership — so it shares the exact same
+// packageHours/packagePrice/cycle machinery as the hourly tiers below.
+const PACKAGE_TIERS = [
+  { key:"m20", label:"Membership — 20 hrs/mo", hours:20, price:950 },
+  { key:"m40", label:"Membership — 40 hrs/mo", hours:40, price:1700 },
+  { key:"m60", label:"Membership — 60 hrs/mo", hours:60, price:2400 },
+  { key:"m80", label:"Membership — 80 hrs/mo", hours:80, price:3200 },
+  { key:"reset_refresh", label:"Home Reset — The Refresh", hours:6, price:325 },
+  { key:"reset_restore", label:"Home Reset — The Restore", hours:12, price:575 }
+];
+const OVERAGE_RATE = 50; // $/hr beyond the package
+
+// ---- 3. App state ----
+let state = {
+  view: "login",
+  role: null,            // 'admin' | 'team' | 'client'
+  currentAssistant: null,
+  currentClientId: null,
+  settings: SEED_SETTINGS,
+  firebaseError: null,
+  clients: [],
+  tasks: [],
+  timeEntries: [],
+  activeTab: "dashboard",
+  crmSubTab: "tasks",
+  selectedClientId: null,
+  modal: null,
+  timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all" },
+  kanbanFilter: { clientId: "all", category: "all", onlyMine: false }
+};
+
+// ---- 4. Firestore helpers ----
+function col(name){
+  if(!db) throw new Error("Firebase is not connected.");
+  return db.collection(name);
+}
+
+async function ensureSettings(){
+  const ref = col("settings").doc("access");
+  const snap = await ref.get();
+  if(!snap.exists){
+    await ref.set(SEED_SETTINGS);
+    return SEED_SETTINGS;
+  }
+  return snap.data();
+}
+
+function subscribe(name, onChange){
+  return col(name).onSnapshot(snap=>{
+    const items = [];
+    snap.forEach(d=>items.push({ id:d.id, ...d.data() }));
+    onChange(items);
+  }, err=>{
+    console.warn("Firestore subscription failed for '" + name + "':", err);
+    state.firebaseError = state.firebaseError || err.message;
+    render();
+  });
+}
+
+// Without Firebase connected, `state.clients`/`tasks`/`timeEntries` would
+// otherwise never change (they're normally only ever updated by the Firestore
+// onSnapshot listeners in boot()), so every write would silently vanish and
+// e.g. a freshly-created client could never be found. Mirror the write into
+// the matching in-memory array so local/demo mode is actually usable —
+// it still won't survive a page reload until real Firebase config is in place.
+function upsertLocal(name, id, data){
+  const arr = state[name];
+  if(!Array.isArray(arr)) return;
+  const idx = arr.findIndex(x=>x.id===id);
+  if(idx>=0) arr[idx] = { ...arr[idx], ...data, id };
+  else arr.push({ id, ...data });
+}
+function removeLocal(name, id){
+  const arr = state[name];
+  if(!Array.isArray(arr)) return;
+  state[name] = arr.filter(x=>x.id!==id);
+}
+function upsert(name, id, data){
+  if(!db){
+    console.warn("Firebase not connected — saving locally only (won't survive a reload):", name, id, data);
+    upsertLocal(name, id, data);
+    render();
+    return Promise.resolve();
+  }
+  return col(name).doc(id).set(data, { merge:true }).catch(err=>{
+    console.warn("Write to '" + name + "' failed:", err);
+  });
+}
+function remove(name, id){
+  if(!db){
+    console.warn("Firebase not connected — deleting locally only:", name, id);
+    removeLocal(name, id);
+    render();
+    return Promise.resolve();
+  }
+  return col(name).doc(id).delete().catch(err=>{
+    console.warn("Delete from '" + name + "' failed:", err);
+  });
+}
+function newId(prefix){
+  return prefix + "_" + Date.now() + "_" + Math.random().toString(36).slice(2,7);
+}
+
+// ---- 5. Boot ----
+// Demo/test data for local-only mode (no Firebase configured yet) — lets you
+// click through every feature (tasks, time entries, hours-used tiers, the
+// weekly/period reports, the client portal) without hand-building a client
+// first. Timestamps are relative to "now" so it always lands inside the
+// current week/pay period/billing month, whenever it's actually opened.
+// Only ever runs when Firebase isn't connected, so it can never touch real data.
+function seedDemoData(){
+  const now = Date.now();
+  const hoursAgo = h => new Date(now - h*3600000).toISOString();
+  const clientId = "client_demo_1";
+  const heidiId = "asst_3"; // Heidi Jo Peaden
+
+  const client = {
+    id: clientId,
+    name: "Test Client (Demo)",
+    packageHours: 20,
+    packagePrice: 900,
+    cycleType: "monthly",
+    renewalDate: "2026-01-01",
+    assistantIds: [heidiId],
+    email: "test.client@example.com",
+    portalCode: "demo123",
+    referredBy: heidiId,
+    termType: "3month",
+    termStartDate: new Date(now - 24*60*3600000).toISOString().slice(0,10),
+    clientStatus: "active",
+    referralPayoutsPaidCount: 1,
+    createdAt: hoursAgo(24*30),
+    notes: [
+      { id:"note_demo_1", text:"Great first onboarding call — very organized already.", date: hoursAgo(72), source:"manual" }
+    ],
+    specialDates: [
+      { label:"Client's birthday", date:"1990-07-25" },
+      { label:"Anniversary", date:"2015-09-10" }
+    ],
+    vendors: [ { name:"Green Clean Co.", service:"House cleaning", lastService: hoursAgo(9*24).slice(0,10), frequencyDays:30 } ],
+    inspections: [ { name:"HVAC inspection", nextDue: new Date(now + 10*24*3600000).toISOString().slice(0,10) } ],
+    profile: {
+      serviceType: "both",
+      phone: "555-123-4567",
+      emergencyContact: "Jamie Doe — 555-987-6543",
+      homeAddress: "123 Demo Lane, Austin, TX",
+      familyMembers: [ { name:"Alex Jr.", age:"8" }, { name:"Riley", age:"5" } ],
+      homeAccess: "Hidden key under the third flowerpot on the porch. Alarm code: 4821.",
+      topPriorities: ["Weekly grocery restock","Inbox triage","Vendor coordination"],
+      weeklySchedule: "Mon/Wed/Fri mornings preferred for home visits.",
+      petInfo: "One dog (Biscuit) — feed 2x daily, leash walks only.",
+      specialPreferences: "Prefers text over email. Organic groceries only.",
+      communicationPreference: "Text — responds fastest 9am–5pm.",
+      budgetNotes: "Pre-approved up to $150/week for groceries without checking in.",
+      offLimits: "Do not rearrange the home office.",
+      officeAddress: "456 Business Blvd, Austin, TX",
+      officeHours: "9am–5pm, Mon–Fri",
+      teamMembers: "Jordan (Ops), Casey (Sales)",
+      businessTools: "Gmail, Asana, QuickBooks",
+      businessNeeds: "Inbox management and light bookkeeping support."
+    }
+  };
+
+  const tasks = [
+    { id:"task_demo_1", title:"Guest messaging", clientId, status:"Done", category:"Home",
+      assignees:[heidiId], subtasks:[{text:"Reply to guest inquiries",done:true},{text:"Update FAQ doc",done:true}],
+      discussion:[], description:"Handled guest messaging across platforms.", completedAt: hoursAgo(48) },
+    { id:"task_demo_2", title:"Website — Creation", clientId, status:"Done", category:"Business",
+      assignees:[heidiId], subtasks:[], discussion:[], description:"Worked on website creation.", completedAt: hoursAgo(60) },
+    { id:"task_demo_3", title:"Handyman — Phone call", clientId, status:"Done", category:"Home",
+      assignees:[heidiId], subtasks:[], discussion:[], description:"Phone call with handyman.", completedAt: hoursAgo(30) },
+    { id:"task_demo_4", title:"Ongoing — Platform familiarization & value add", clientId, status:"In progress", category:"Business",
+      assignees:[heidiId], subtasks:[{text:"Shadow onboarding call",done:true},{text:"Document new SOP",done:false}],
+      discussion:[], description:"Continuing to deepen knowledge of the guest messaging platform and actively identifying additional ways to support operations and add value where possible.",
+      createdAt: new Date(now - 12*24*3600000).toISOString() },
+    { id:"task_demo_5", title:"Grocery restock", clientId, status:"To do", category:"Home",
+      assignees:[heidiId], subtasks:[], discussion:[], description:"",
+      dueDate: new Date(now - 2*24*3600000).toISOString().slice(0,10) },
+    { id:"task_demo_6", title:"Schedule the vet appointment", clientId, status:"Pending approval", category:"Home",
+      assignees:[heidiId], subtasks:[], discussion:[], description:"",
+      clientRequestNote:"Biscuit is due for shots — could someone call and get him booked in the next couple weeks?",
+      requestedByClient:true, createdAt: new Date(now - 9*24*3600000).toISOString() },
+    { id:"task_demo_internal", title:"Team meeting", clientId: INTERNAL_CLIENT_ID, status:"Done", category:"Business",
+      assignees:[heidiId], subtasks:[], discussion:[], description:"Weekly team sync.", completedAt: hoursAgo(20) },
+    { id:"task_demo_reset", title:"Home reset — beds, kitchen, laundry", clientId, status:"Done", category:"Home",
+      assignees:[heidiId], subtasks:[], discussion:[], description:"Full home reset — beds, kitchen, laundry, groceries.",
+      completedAt: hoursAgo(18) }
+  ];
+
+  const timeEntries = [
+    { id:"te_demo_1", taskId:"task_demo_1", assistantId:heidiId, clientId, clockIn: hoursAgo(50), clockOut: hoursAgo(48) },
+    { id:"te_demo_2", taskId:"task_demo_2", assistantId:heidiId, clientId, clockIn: hoursAgo(63.5), clockOut: hoursAgo(60) },
+    { id:"te_demo_3", taskId:"task_demo_3", assistantId:heidiId, clientId, clockIn: hoursAgo(32.5), clockOut: hoursAgo(30) },
+    { id:"te_demo_4", taskId:"task_demo_4", assistantId:heidiId, clientId, clockIn: hoursAgo(24), clockOut: hoursAgo(21.5) },
+    { id:"te_demo_5", taskId:"task_demo_internal", assistantId:heidiId, clientId:INTERNAL_CLIENT_ID, clockIn: hoursAgo(21), clockOut: hoursAgo(20) },
+    { id:"te_demo_6", taskId:"task_demo_reset", assistantId:heidiId, clientId, clockIn: hoursAgo(20), clockOut: hoursAgo(15) }
+  ];
+
+  return { clients:[client], tasks, timeEntries };
+}
+
+async function boot(){
+  // Render immediately so the UI is never blank while Firestore connects
+  // (or fails to, if firebaseConfig hasn't been filled in yet, or the SDK
+  // couldn't load at all).
+  render();
+
+  if(!FIREBASE_AVAILABLE || !FIREBASE_CONFIGURED){
+    console.warn("Running with local seed data only — Firebase is either unavailable or still using placeholder config. Nothing will persist.");
+    if(state.clients.length===0){
+      const demo = seedDemoData();
+      state.clients = demo.clients;
+      state.tasks = demo.tasks;
+      state.timeEntries = demo.timeEntries;
+    }
+  } else {
+    try{
+      state.settings = await ensureSettings();
+    }catch(err){
+      console.warn("Could not load settings from Firestore, using local seed data:", err);
+      state.firebaseError = state.firebaseError || err.message;
+    }
+    subscribe("clients", items=>{ state.clients = items; render(); });
+    subscribe("tasks", items=>{ state.tasks = items; render(); });
+    subscribe("timeEntries", items=>{ state.timeEntries = items; render(); });
+    watchOrientationSync();
+  }
+
+  render();
+  setInterval(()=>render(), 60000); // refresh live timers every minute
+  setInterval(checkClockReminders, 30*60*1000); // 30-min reminder
+}
+
+// ---- 6. Orientation sync (existing integration, preserved) ----
+function watchOrientationSync(){
+  db.collection("orientationClients").where("done.visit","==",true)
+    .onSnapshot(snap=>{
+      snap.docChanges().forEach(change=>{
+        if(change.type === "added" || change.type === "modified"){
+          const data = change.doc.data();
+          const clientName = data.clientName || data.name;
+          const match = state.clients.find(c => c.name && clientName &&
+            c.name.toLowerCase() === clientName.toLowerCase());
+          if(match){
+            const note = {
+              id: newId("note"),
+              text: "Home orientation completed (synced from onboarding dashboard).",
+              date: new Date().toISOString(),
+              source: "orientation-sync"
+            };
+            const notes = match.notes || [];
+            if(!notes.some(n=>n.source==="orientation-sync")){
+              upsert("clients", match.id, { notes: [...notes, note] });
+            }
+          }
+        }
+      });
+    }, err=>console.warn("orientation sync listener error", err));
+}
+
+// ---- 7. Time tracking ----
+function activeEntryFor(assistantId){
+  return state.timeEntries.find(t => t.assistantId === assistantId && !t.clockOut);
+}
+function clockIn(taskId, assistantId, note){
+  const existing = activeEntryFor(assistantId);
+  if(existing){ alert("You're already clocked in on another task. Clock out first."); return; }
+  const task = state.tasks.find(t=>t.id===taskId);
+  const entry = {
+    id: newId("te"),
+    taskId, assistantId,
+    clientId: task ? task.clientId : INTERNAL_CLIENT_ID,
+    clockIn: new Date().toISOString(),
+    clockOut: null,
+    note: note || ""
+  };
+  upsert("timeEntries", entry.id, entry);
+}
+// A standing task under Internal / Modern Co. so anyone can clock straight
+// into general admin work without first creating a one-off task for it.
+const GENERAL_ADMIN_TASK_ID = "task_general_admin";
+function clockInAdminWork(assistantId){
+  const note = prompt("What are you clocking in for? (required so Kaylan knows what this admin time covers)", "");
+  if(!note || !note.trim()){ alert("You need to enter a description before clocking in for admin work."); return; }
+  if(!state.tasks.find(t=>t.id===GENERAL_ADMIN_TASK_ID)){
+    upsert("tasks", GENERAL_ADMIN_TASK_ID, {
+      title: "General Admin Work", clientId: INTERNAL_CLIENT_ID, status: "In progress",
+      category: "Business", assignees: [], subtasks: [], discussion: [], description: ""
+    });
+  }
+  clockIn(GENERAL_ADMIN_TASK_ID, assistantId, note.trim());
+}
+function deleteTimeEntry(entryId){
+  if(!confirm("Delete this time entry? This can't be undone.")) return;
+  remove("timeEntries", entryId);
+}
+function toggleFlagTimeEntry(entryId){
+  const entry = state.timeEntries.find(e=>e.id===entryId);
+  if(!entry) return;
+  if(entry.flagged){
+    upsert("timeEntries", entryId, { flagged:false, flagNote:"" });
+    return;
+  }
+  const reason = prompt("Why are you flagging this entry for review? (optional)", "");
+  upsert("timeEntries", entryId, { flagged:true, flagNote: reason ? reason.trim() : "" });
+}
+function clockOut(entryId, editedTime){
+  // Flag whenever a clock-out time was typed in rather than captured live —
+  // clocking in is always real-time already (see clockIn()), so this is the
+  // only point a manually-entered time can slip in, and admin wants visibility
+  // into that rather than it blending in with real-time clock-outs.
+  upsert("timeEntries", entryId, { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime });
+}
+function entryDurationHours(entry){
+  const start = new Date(entry.clockIn);
+  const end = entry.clockOut ? new Date(entry.clockOut) : new Date();
+  return (end - start) / 3600000;
+}
+function hoursForTask(taskId){
+  return state.timeEntries.filter(e=>e.taskId===taskId).reduce((s,e)=>s+entryDurationHours(e),0);
+}
+function isStale(entry){
+  return !entry.clockOut && entryDurationHours(entry) > 8;
+}
+function checkClockReminders(){
+  if(!("Notification" in window)) return;
+  const entry = state.currentAssistant && activeEntryFor(state.currentAssistant.id);
+  if(entry && Notification.permission === "granted"){
+    new Notification("Still clocked in", {
+      body: "You've been clocked in for " + entryDurationHours(entry).toFixed(1) + " hours."
+    });
+  }
+}
+
+// ---- 8. Billing period + tier alerts ----
+function currentBillingPeriod(client){
+  if(!client.renewalDate) return null;
+  const anchor = new Date(client.renewalDate);
+  const cycle = client.cycleType || "monthly";
+  const now = new Date();
+  let periodStart = new Date(anchor);
+  const advance = (d)=>{
+    const nd = new Date(d);
+    if(cycle==="biweekly") nd.setDate(nd.getDate()+14);
+    else if(cycle==="quarterly") nd.setMonth(nd.getMonth()+3);
+    else if(cycle==="annual") nd.setFullYear(nd.getFullYear()+1);
+    else nd.setMonth(nd.getMonth()+1); // monthly (default)
+    return nd;
+  };
+  while(advance(periodStart) <= now) periodStart = advance(periodStart);
+  const periodEnd = advance(periodStart);
+  return { start: periodStart, end: periodEnd };
+}
+function hoursUsed(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  const period = client ? currentBillingPeriod(client) : null;
+  return state.timeEntries
+    .filter(t=>t.clientId===clientId)
+    .filter(t=> !period || (new Date(t.clockIn) >= period.start && new Date(t.clockIn) < period.end))
+    .reduce((sum,t)=> sum + entryDurationHours(t), 0);
+}
+function tierAlert(client){
+  const used = hoursUsed(client.id);
+  const pkg = client.packageHours || 0;
+  if(!pkg) return null;
+  const pct = (used / pkg) * 100;
+  const hit = TIER_THRESHOLDS.filter(t=>pct>=t).pop();
+  if(!hit) return null;
+  const level = hit>=100 ? "danger" : hit>=90 ? "danger" : hit>=75 ? "warn" : "warn";
+  const overage = overageFor(client);
+  return { pct: Math.round(pct), used: used.toFixed(1), pkg, level,
+    text: client.name + " is at " + Math.round(pct) + "% of package (" + used.toFixed(1) + "/" + pkg + " hrs)" +
+      (overage.overHours>0 ? " — $" + overage.amount.toFixed(2) + " overage" : "") };
+}
+// Client-to-client referral program (distinct from the assistant referral
+// payout above): a client who refers another client earns 20% off one month
+// once that referral signs a 3-month+ term (not still in the pilot).
+function clientReferralDiscountStatus(client){
+  const referredClients = state.clients.filter(c=>c.referredByClientId===client.id);
+  const qualified = referredClients.filter(c=>c.termType && c.termType!=="pilot");
+  const redeemed = client.referralDiscountsRedeemed || 0;
+  return { referredClients, earned: qualified.length, redeemed, available: Math.max(0, qualified.length - redeemed) };
+}
+function redeemClientReferralDiscount(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  upsert("clients", clientId, { referralDiscountsRedeemed: (client.referralDiscountsRedeemed||0) + 1 });
+}
+function overageFor(client){
+  const used = hoursUsed(client.id);
+  const pkg = client.packageHours || 0;
+  const overHours = Math.max(0, used - pkg);
+  return { overHours, amount: overHours * OVERAGE_RATE };
+}
+
+// ---- 8b. Payroll period + dashboard helpers ----
+// Payroll runs semi-monthly: the 1st–14th, and the 15th–end of month.
+function currentPayrollPeriod(refDate){
+  const now = refDate || new Date();
+  const year = now.getFullYear(), month = now.getMonth();
+  if(now.getDate() <= 14){
+    return { start: new Date(year, month, 1), end: new Date(year, month, 15) };
+  }
+  return { start: new Date(year, month, 15), end: new Date(year, month+1, 1) };
+}
+function hoursInPeriod(entries, period){
+  return entries
+    .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
+    .reduce((sum,e)=> sum + entryDurationHours(e), 0);
+}
+function hoursForClientInPeriod(clientId, period){
+  return hoursInPeriod(state.timeEntries.filter(t=>t.clientId===clientId), period);
+}
+// period.end is an exclusive boundary (midnight of the day AFTER the period)
+// so it's one day past the period's actual last day — always subtract 1ms
+// before formatting for display, or "7/15–7/31" reads as "7/15–8/1".
+function formatPeriodRange(period){
+  if(!period) return "";
+  const displayEnd = new Date(period.end.getTime()-1);
+  return period.start.toLocaleDateString() + " – " + displayEnd.toLocaleDateString();
+}
+function assistantName(id){
+  const a = state.settings.assistants.find(x=>x.id===id);
+  return a ? a.name : id;
+}
+
+// ---- 8c. Weekly client report (Saturday through Friday) ----
+function currentReportWeek(refDate){
+  const now = refDate || new Date();
+  const daysSinceFriday = (now.getDay() - 5 + 7) % 7; // Friday = 5
+  const friday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceFriday);
+  const start = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() - 6); // Saturday before
+  const end = new Date(friday.getFullYear(), friday.getMonth(), friday.getDate() + 1); // exclusive, midnight after Friday
+  return { start, end, friday };
+}
+function formatHoursMinutes(hrs){
+  const totalMinutes = Math.round(Math.max(0,hrs) * 60);
+  return Math.floor(totalMinutes/60) + "h " + (totalMinutes % 60) + "m";
+}
+// kind: "week" (the Friday recap, Saturday–Friday) or "period" (the client's
+// full current billing cycle, e.g. their 30-day membership period) — both
+// share the same layout, just a different task-completion window and labels.
+function buildClientReport(client, window, kind){
+  const tasks = state.tasks.filter(t=>t.clientId===client.id);
+  const inProgress = tasks.filter(t=>t.status==="In progress");
+  const completed = tasks.filter(t=>{
+    if(t.status!=="Done" || !t.completedAt) return false;
+    const d = new Date(t.completedAt);
+    return d >= window.start && d < window.end;
+  });
+  const used = hoursUsed(client.id);
+  const pkg = client.packageHours || 0;
+  const primaryAssistantId = (client.assistantIds||[])[0];
+  return {
+    kind, client, week: window, inProgress, completed,
+    hoursUsed: used, packageHours: pkg,
+    hoursRemaining: Math.max(0, pkg - used),
+    billingPeriod: currentBillingPeriod(client),
+    signerName: primaryAssistantId ? assistantName(primaryAssistantId).split(" ")[0] : "The Modern Concierge Team"
+  };
+}
+function clientReportHtml(report){
+  const { client, week, inProgress, completed } = report;
+  const isPeriod = report.kind === "period";
+  const recapLabel = isPeriod ? "END-OF-PERIOD RECAP" : "END-OF-WEEK RECAP";
+  const recapNoun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
+  const completedLabel = isPeriod ? "Completed This Period" : "Completed This Week";
+  const completedEmpty = isPeriod ? "No tasks completed this period." : "No tasks completed this week.";
+  const footerTag = isPeriod ? "MEMBERSHIP PERIOD REPORT" : "WEEKLY RECAP REPORT";
+  const fmt = d => new Date(d).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
+  const fmtShort = d => (d.getMonth()+1) + "/" + d.getDate();
+  const dateRange = fmt(week.start) + " – " + fmt(new Date(week.end.getTime()-1));
+  const pkg = report.packageHours || 0;
+  const pct = pkg ? Math.min(100, Math.round((report.hoursUsed/pkg)*100)) : 0;
+
+  const item = (t, itemKind) => `
+    <div class="item ${itemKind==='progress'?'progress':''}">
+      <div class="item-label">${(t.title||'').toUpperCase()}</div>
+      <div class="item-body">${(t.description||t.title||'').trim()}</div>
+    </div>`;
+
+  return `<!doctype html><html><head><meta charset="UTF-8"><title>${client.name} — ${isPeriod ? 'Period' : 'Weekly'} Recap</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root{ --brown:#3b2b26; --brown-dark:#241a17; --cream:#f6efe6; --cream-dark:#ece2d3; --rose:#c9a3a0; --rose-dark:#a97f7c; --ok:#4c7a5e; --text:#2c211d; }
+    *{box-sizing:border-box;}
+    body{margin:0;background:#fff;font-family:'Jost',Arial,sans-serif;color:var(--text);}
+    .wrap{max-width:640px;margin:0 auto;}
+    .header{background:var(--brown-dark);color:var(--cream);padding:26px 32px;display:flex;justify-content:space-between;align-items:flex-start;}
+    .header .brand-mc{font-family:'Playfair Display',serif;font-size:30px;font-weight:700;line-height:1;}
+    .header .brand-sub{font-size:11px;letter-spacing:2px;margin-top:6px;opacity:.85;}
+    .header .recap-label{font-size:11px;letter-spacing:2px;text-align:right;opacity:.85;}
+    .header .recap-date{font-family:'Playfair Display',serif;font-size:22px;font-weight:600;text-align:right;margin-top:4px;white-space:nowrap;}
+    .body{padding:30px 32px;}
+    .eyebrow{font-size:11px;letter-spacing:2px;color:var(--rose-dark);font-weight:600;margin-bottom:8px;}
+    .client-name{font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:var(--brown-dark);margin:0 0 12px 0;}
+    .divider-accent{width:60px;height:3px;background:var(--rose-dark);margin-bottom:12px;}
+    .sub-meta{color:#8a7a72;font-size:14px;margin-bottom:20px;}
+    hr{border:none;border-top:1px solid var(--cream-dark);margin:24px 0;}
+    .section-label{font-size:11px;letter-spacing:2px;color:var(--rose-dark);font-weight:600;margin-bottom:12px;text-transform:uppercase;}
+    .item{background:var(--cream);border-left:4px solid var(--ok);padding:14px 16px;margin-bottom:10px;}
+    .item.progress{border-left-color:var(--rose-dark);}
+    .item-label{font-size:12px;letter-spacing:1px;font-weight:600;color:var(--ok);margin-bottom:4px;}
+    .item.progress .item-label{color:var(--rose-dark);}
+    .item-body{font-size:15px;color:var(--text);}
+    .hours-box{background:var(--brown-dark);color:var(--cream);border-radius:4px;padding:24px 28px;}
+    .hours-box .caption{font-size:11px;letter-spacing:2px;opacity:.85;margin-bottom:16px;text-transform:uppercase;}
+    .hours-row{display:flex;}
+    .hours-stat{flex:1;text-align:center;}
+    .hours-stat + .hours-stat{border-left:1px solid rgba(246,239,230,0.25);}
+    .hours-stat .num{font-family:'Playfair Display',serif;font-size:26px;font-weight:600;}
+    .hours-stat .label{font-size:10px;letter-spacing:1.5px;opacity:.8;margin-top:4px;}
+    .bar-track{background:rgba(246,239,230,0.2);height:6px;border-radius:3px;margin:20px 0 8px;overflow:hidden;}
+    .bar-fill{background:var(--rose);height:100%;}
+    .bar-ends{display:flex;justify-content:space-between;font-size:11px;opacity:.75;}
+    .bar-pct{text-align:center;font-size:12px;opacity:.85;margin-top:6px;}
+    .renews{text-align:center;font-style:italic;font-size:13px;opacity:.85;margin-top:14px;}
+    .closing{padding:0 32px 30px;font-size:15px;line-height:1.6;}
+    .sig-name{font-family:'Playfair Display',serif;font-size:20px;font-weight:700;margin-top:20px;}
+    .sig-rule{width:50px;border-top:2px dashed var(--rose-dark);margin:6px 0;}
+    .sig-sub{font-size:11px;letter-spacing:1.5px;color:#8a7a72;}
+    .footer{background:var(--brown-dark);color:var(--cream);padding:18px 32px;display:flex;justify-content:space-between;align-items:center;}
+    .footer .foot-brand{font-family:'Playfair Display',serif;font-size:17px;font-weight:600;}
+    .footer .foot-tag{font-size:11px;letter-spacing:2px;opacity:.85;}
+  </style></head>
+  <body>
+  <div class="wrap">
+    <div class="header">
+      <div><div class="brand-mc">MC</div><div class="brand-sub">MODERN CO.</div></div>
+      <div><div class="recap-label">${recapLabel}</div><div class="recap-date">${dateRange}</div></div>
+    </div>
+    <div class="body">
+      <div class="eyebrow">PREPARED FOR</div>
+      <div class="client-name">${client.name}</div>
+      <div class="divider-accent"></div>
+      <div class="sub-meta">${recapNoun} &middot; ${dateRange}</div>
+      <hr>
+
+      <div class="section-label">${completedLabel}</div>
+      ${completed.length ? completed.map(t=>item(t,'done')).join("") : `<div class="item-body" style="margin-bottom:16px;">${completedEmpty}</div>`}
+
+      <hr>
+
+      <div class="section-label">In Progress</div>
+      ${inProgress.length ? inProgress.map(t=>item(t,'progress')).join("") : `<div class="item-body" style="margin-bottom:16px;">Nothing in progress right now.</div>`}
+
+      <hr>
+
+      <div class="section-label">Membership Hours — Billing Period</div>
+      <div class="hours-box">
+        <div class="caption">${pkg}-Hour Membership — Current Usage</div>
+        <div class="hours-row">
+          <div class="hours-stat"><div class="num">${formatHoursMinutes(report.hoursUsed)}</div><div class="label">HOURS USED</div></div>
+          <div class="hours-stat"><div class="num">${formatHoursMinutes(report.hoursRemaining)}</div><div class="label">HOURS REMAINING</div></div>
+          <div class="hours-stat"><div class="num">${pkg}h</div><div class="label">TOTAL INCLUDED</div></div>
+        </div>
+        <div class="bar-track"><div class="bar-fill" style="width:${pct}%;"></div></div>
+        <div class="bar-ends"><span>0h</span><span>${pkg}h</span></div>
+        <div class="bar-pct">${pct}% used</div>
+        ${report.billingPeriod ? `<div class="renews">Billing period ends ${fmtShort(report.billingPeriod.end)}</div>` : ""}
+      </div>
+    </div>
+    <div class="closing">
+      <p>Please don't hesitate to reach out should you have any questions or require additional information. We appreciate your continued trust and partnership.</p>
+      <div class="sig-name">${report.signerName}</div>
+      <div class="sig-rule"></div>
+      <div class="sig-sub">THE MODERN CONCIERGE</div>
+    </div>
+    <div class="footer">
+      <div class="foot-brand">The Modern Concierge</div>
+      <div class="foot-tag">${footerTag}</div>
+    </div>
+  </div>
+  </body></html>`;
+}
+function clientReportPlainText(report){
+  const { client, week, inProgress, completed } = report;
+  const isPeriod = report.kind === "period";
+  const fmt = d => new Date(d).toLocaleDateString();
+  const fmtShort = d => (d.getMonth()+1) + "/" + d.getDate();
+  const noun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
+  const completedWord = isPeriod ? "this period" : "this week";
+  const lines = [];
+  lines.push(noun + " — " + client.name);
+  lines.push(fmt(week.start) + " – " + fmt(new Date(week.end.getTime()-1)));
+  lines.push("");
+  lines.push(("COMPLETED " + completedWord).toUpperCase() + ":");
+  lines.push(...(completed.length ? completed.map(t=>"- "+t.title+": "+(t.description||t.title)) : ["(nothing completed " + completedWord + ")"]));
+  lines.push("");
+  lines.push("IN PROGRESS:");
+  lines.push(...(inProgress.length ? inProgress.map(t=>"- "+t.title+": "+(t.description||t.title)) : ["(nothing in progress)"]));
+  lines.push("");
+  lines.push("MEMBERSHIP HOURS: " + formatHoursMinutes(report.hoursUsed) + " used / " + formatHoursMinutes(report.hoursRemaining) + " remaining / " + report.packageHours + "h total.");
+  if(report.billingPeriod) lines.push("Billing period ends " + fmtShort(report.billingPeriod.end) + ".");
+  lines.push("");
+  lines.push("Please don't hesitate to reach out should you have any questions or require additional information. We appreciate your continued trust and partnership.");
+  lines.push("");
+  lines.push(report.signerName);
+  lines.push("The Modern Concierge");
+  return lines.join("\n");
+}
+// ---- 8d. CSV export ----
+function csvEscape(val){
+  const s = String(val==null ? "" : val);
+  return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
+}
+function downloadCsv(filename, rows){
+  const csv = rows.map(row=>row.map(csvEscape).join(",")).join("\n");
+  const blob = new Blob([csv], { type:"text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function exportPayrollCsv(){
+  const period = currentPayrollPeriod();
+  const rows = [["Assistant","Hours worked","Hourly rate","Amount owed","Status","Payroll period"]];
+  state.settings.assistants.forEach(a=>{
+    const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
+    const hrs = hoursInPeriod(entries, period);
+    const rate = a.hourlyRate || 0;
+    rows.push([
+      a.name + (a.active===false ? " (former)" : ""),
+      hrs.toFixed(2), rate.toFixed(2), (hrs*rate).toFixed(2),
+      a.active===false ? "former employee" : "active",
+      formatPeriodRange(period)
+    ]);
+  });
+  downloadCsv("payroll-" + new Date().toISOString().slice(0,10) + ".csv", rows);
+}
+function exportTimeEntriesCsv(){
+  const mineAll = state.currentAssistant ? state.timeEntries.filter(t=>t.assistantId===state.currentAssistant.id) : state.timeEntries;
+  const period = timeFilterPeriod();
+  const assistantFilterId = state.role==="admin" ? state.timeFilter.assistantId : "all";
+  const filtered = mineAll
+    .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
+    .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
+  const rows = [["Assistant","Task","Client","Clock in","Clock out","Hours","Manual clock-out","Admin work"]];
+  filtered.slice().reverse().forEach(e=>{
+    const task = state.tasks.find(t=>t.id===e.taskId);
+    const client = state.clients.find(c=>c.id===e.clientId);
+    rows.push([
+      assistantName(e.assistantId),
+      task ? task.title : "(deleted task)",
+      e.clientId===INTERNAL_CLIENT_ID ? "Internal / Modern Co." : (client ? client.name : ""),
+      new Date(e.clockIn).toLocaleString(),
+      e.clockOut ? new Date(e.clockOut).toLocaleString() : "(still clocked in)",
+      e.clockOut ? entryDurationHours(e).toFixed(2) : "",
+      e.clockOutManual ? "yes" : "no",
+      e.clientId===INTERNAL_CLIENT_ID ? "yes" : "no"
+    ]);
+  });
+  downloadCsv("time-entries-" + new Date().toISOString().slice(0,10) + ".csv", rows);
+}
+function reportWindowFor(client, kind){
+  return kind === "period" ? currentBillingPeriod(client) : currentReportWeek();
+}
+function downloadClientReport(clientId, kind){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const reportWindow = reportWindowFor(client, kind);
+  if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
+  const report = buildClientReport(client, reportWindow, kind);
+  const blob = new Blob([clientReportHtml(report)], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kind + "-report-" + new Date().toISOString().slice(0,10) + ".html";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function emailClientReport(clientId, kind){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!client.email){ alert(client.name + " doesn't have an email on file yet — add one on their Membership tab first."); return; }
+  const reportWindow = reportWindowFor(client, kind);
+  if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
+  const report = buildClientReport(client, reportWindow, kind);
+  const subject = encodeURIComponent((kind==="period" ? "Your Membership Period Recap — " : "Your Weekly Update — ") + client.name);
+  const body = encodeURIComponent(clientReportPlainText(report));
+  window.location.href = "mailto:" + client.email + "?subject=" + subject + "&body=" + body;
+}
+// Active assistants, plus any former employee already tied to this record —
+// so an existing assignment to someone who's left stays visible for context.
+function assignableAssistants(alreadyIds){
+  const already = new Set(alreadyIds||[]);
+  return state.settings.assistants.filter(a=>a.active!==false || already.has(a.id));
+}
+// A client's package hours are quoted on their own (monthly/quarterly/annual)
+// billing cycle, not on the semi-monthly payroll calendar. To compare what a
+// client paid for against what got clocked in a given payroll period, prorate
+// their package down to a per-payroll-period rate (2 payroll periods/month).
+// A biweekly cycle (14 days) is roughly the same length as one payroll
+// period already, so it needs no further proration (divisor 1).
+function payrollProrationDivisor(cycle){
+  if(cycle === "biweekly") return 1;
+  if(cycle === "quarterly") return 6;
+  if(cycle === "annual") return 24;
+  return 2; // monthly (default)
+}
+function expectedHoursPerPayrollPeriod(client){
+  const pkg = client.packageHours || 0;
+  return pkg / payrollProrationDivisor(client.cycleType || "monthly");
+}
+// Same proration logic as hours, applied to package price — packagePrice is
+// quoted on the client's own billing cycle, not the payroll calendar.
+function expectedRevenuePerPayrollPeriod(client){
+  const price = client.packagePrice || 0;
+  const divisor = payrollProrationDivisor(client.cycleType || "monthly");
+  // Overage billing is real revenue too — this also covers as-needed clients
+  // (packagePrice 0, packageHours 0) whose entire usage bills as "overage."
+  return (price / divisor) + (overageFor(client).amount / divisor);
+}
+function internalHoursStatus(period){
+  const used = hoursForClientInPeriod(INTERNAL_CLIENT_ID, period);
+  const budget = state.settings.internalHoursBudget || 0;
+  if(!budget) return { used, budget:0, pct:null, level:null };
+  const pct = (used/budget)*100;
+  const hit = TIER_THRESHOLDS.filter(t=>pct>=t).pop();
+  const level = !hit ? "ok" : hit>=90 ? "danger" : "warn";
+  return { used, budget, pct: Math.round(pct), level };
+}
+function taskCreatedDate(task){
+  if(task.createdAt){
+    const d = new Date(task.createdAt);
+    if(!isNaN(d.getTime())) return d;
+  }
+  const m = /_(\d{10,})_/.exec(task.id||"");
+  return m ? new Date(parseInt(m[1],10)) : null;
+}
+// ---- Referral tracking ----
+// Current program: $100/month to the referring assistant for up to 12
+// months, but only once the client signs on past their 30-day pilot into a
+// paid term — and it stops accruing the moment the client cancels, even if
+// that's mid-year.
+function referralPayoutStatus(client){
+  if(!client.referredBy) return null;
+  const assistant = state.settings.assistants.find(a=>a.id===client.referredBy);
+  if(!assistant) return null;
+  if(!client.termType || client.termType==="pilot"){
+    return { assistant, eligible:false, reason:"Still in the 30-day pilot — payouts start once they sign on past it." };
+  }
+  if(!client.termStartDate){
+    return { assistant, eligible:false, reason:"Set a term start date on the Membership tab to calculate payout months." };
+  }
+  const start = new Date(client.termStartDate);
+  const stoppedAccruing = client.clientStatus && client.clientStatus!=="active";
+  const asOf = (stoppedAccruing && client.cancelledDate) ? new Date(client.cancelledDate) : new Date();
+  let monthsElapsed = (asOf.getFullYear()-start.getFullYear())*12 + (asOf.getMonth()-start.getMonth()) + 1;
+  if(asOf.getDate() < start.getDate()) monthsElapsed--;
+  monthsElapsed = Math.max(0, Math.min(12, monthsElapsed));
+  const paid = client.referralPayoutsPaidCount || 0;
+  return {
+    assistant, eligible:true, monthsElapsed, paid,
+    owed: Math.max(0, monthsElapsed - paid),
+    stoppedEarly: stoppedAccruing,
+    monthlyAmount: 100
+  };
+}
+function daysOpen(task){
+  const created = taskCreatedDate(task);
+  return created ? (Date.now() - created.getTime())/86400000 : null;
+}
+function overdueTasks(){
+  return state.tasks
+    .filter(t=>t.status!=="Done")
+    .map(t=>({ task:t, days: daysOpen(t) }))
+    .filter(x=>x.days!==null && x.days>=7)
+    .sort((a,b)=>b.days-a.days);
+}
+// Distinct from overdueTasks() above: that's "been sitting open a while"
+// (staleness); this is "missed an actual deadline" — different signals.
+// At-risk: no billable hours this period AND no completed task in the last
+// 30 days. Either alone can be normal (a slow week); both together suggests
+// the client's quietly gone dormant.
+function isAtRiskClient(client){
+  if(client.clientStatus && client.clientStatus!=="active") return false; // already known-paused/cancelled, not a surprise risk
+  const used = hoursUsed(client.id);
+  if(used > 0) return false;
+  const thirtyDaysAgo = Date.now() - 30*24*3600000;
+  const recentCompleted = state.tasks.some(t=>t.clientId===client.id && t.status==="Done" && t.completedAt && new Date(t.completedAt).getTime() >= thirtyDaysAgo);
+  return !recentCompleted;
+}
+function tasksPastDueDate(){
+  const now = new Date();
+  return state.tasks
+    .filter(t=>t.status!=="Done" && t.dueDate)
+    .map(t=>({ task:t, daysLate: -daysUntil(new Date(t.dueDate), now) }))
+    .filter(x=>x.daysLate > 0)
+    .sort((a,b)=>b.daysLate-a.daysLate);
+}
+
+// ---- 8e. Upcoming/overdue reminders (special dates, vendors, inspections) ----
+function nextYearlyOccurrence(dateStr, now){
+  const d = new Date(dateStr);
+  if(isNaN(d.getTime())) return null;
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let next = new Date(now.getFullYear(), d.getMonth(), d.getDate());
+  if(next < todayMid) next = new Date(now.getFullYear()+1, d.getMonth(), d.getDate());
+  return next;
+}
+function daysUntil(date, now){
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((date.getTime() - todayMid.getTime())/86400000);
+}
+function upcomingReminders(windowDays){
+  windowDays = windowDays || 14;
+  const now = new Date();
+  const results = [];
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).forEach(client=>{
+    (client.specialDates||[]).forEach(d=>{
+      const next = nextYearlyOccurrence(d.date, now);
+      if(!next) return;
+      const days = daysUntil(next, now);
+      if(days <= windowDays) results.push({ client, type:"Special date", label:d.label, date:next, days });
+    });
+    (client.vendors||[]).forEach(v=>{
+      if(!v.lastService || !v.frequencyDays) return;
+      const due = new Date(new Date(v.lastService).getTime() + v.frequencyDays*86400000);
+      const days = daysUntil(due, now);
+      if(days <= windowDays) results.push({ client, type:"Vendor service", label: v.name + " — " + v.service, date:due, days });
+    });
+    (client.inspections||[]).forEach(ins=>{
+      if(!ins.nextDue) return;
+      const due = new Date(ins.nextDue);
+      const days = daysUntil(due, now);
+      if(days <= windowDays) results.push({ client, type:"Inspection", label: ins.name, date:due, days });
+    });
+  });
+  return results.sort((a,b)=>a.days-b.days);
+}
+
+// ---- Term end + cancellation notice deadlines ----
+// Per the Services Agreement §2: written notice is required this many days
+// before the term ends, or it auto-renews and the card on file gets charged.
+const TERM_LENGTH_DAYS = { pilot:30, "3month":90, "12month_new":365, "12month_renewal":365 };
+const TERM_NOTICE_DAYS = { pilot:7, "3month":30, "12month_new":60, "12month_renewal":60 };
+const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "12month_new":"Twelve Month Term (New)", "12month_renewal":"Twelve Month Term (Renewal)" };
+function termEndDate(client){
+  if(!client.termStartDate || !client.termType || !TERM_LENGTH_DAYS[client.termType]) return null;
+  return new Date(new Date(client.termStartDate).getTime() + TERM_LENGTH_DAYS[client.termType]*24*3600000);
+}
+function noticeDeadline(client){
+  const end = termEndDate(client);
+  if(!end) return null;
+  return new Date(end.getTime() - (TERM_NOTICE_DAYS[client.termType]||0)*24*3600000);
+}
+function upcomingNoticeDeadlines(windowDays){
+  windowDays = windowDays || 14;
+  const now = new Date();
+  return state.clients
+    .filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"))
+    .map(client=>{
+      const deadline = noticeDeadline(client);
+      if(!deadline) return null;
+      return { client, deadline, termEnd: termEndDate(client), days: daysUntil(deadline, now) };
+    })
+    .filter(x=>x && x.days<=windowDays)
+    .sort((a,b)=>a.days-b.days);
+}
+
+// ---- 9. Auth ----
+function tryAdminLogin(code){
+  if(code === state.settings.adminPasscode){
+    state.role = "admin"; state.view = "app"; state.activeTab="dashboard"; render();
+  } else alert("Incorrect passcode.");
+}
+function tryTeamLogin(code){
+  const match = state.settings.assistants.find(a=>a.active!==false && a.accessCode && a.accessCode===code);
+  if(match){
+    state.role = "team"; state.currentAssistant = match; state.view="app"; state.activeTab="dashboard";
+    if(!match.agreementSigned){ state.modal = { type:"agreementGate", assistant: match }; }
+    render();
+  } else alert("Access code not recognized.");
+}
+function tryClientLogin(code){
+  const match = state.clients.find(c=>c.portalCode && c.portalCode===code);
+  if(match){
+    state.role="client"; state.currentClientId = match.id; state.view="app"; state.activeTab="portal"; render();
+  } else alert("Client code not recognized.");
+}
+function logout(){
+  state.role=null; state.currentAssistant=null; state.currentClientId=null; state.view="login"; render();
+}
+
+// ---- 10. Rendering ----
+const app = document.getElementById("app");
+
+function render(){
+  if(state.view === "login") return renderLogin();
+  if(state.role === "client") return renderClientPortal();
+  return renderAppShell();
+}
+
+function renderLogin(){
+  app.innerHTML = `
+    <div class="center-screen">
+      <div class="login-box">
+        <div class="logo">The Modern Concierge</div>
+        <div class="tagline">Internal Operations</div>
+        ${!FIREBASE_AVAILABLE ? `
+          <div class="alert danger" style="text-align:left;">
+            Firebase SDK didn't load or failed to initialize — running on
+            local seed data only, nothing will save. Check your network/CSP
+            and that the firebase-app / firebase-firestore script tags loaded.
+          </div>` : !FIREBASE_CONFIGURED ? `
+          <div class="alert warn" style="text-align:left;">
+            Firebase isn't configured yet — running on local seed data only,
+            nothing will save. Replace <code>firebaseConfig</code> near the
+            top of the script with your project's real keys.
+          </div>` : state.firebaseError ? `
+          <div class="alert danger" style="text-align:left;">
+            Couldn't reach Firestore: ${state.firebaseError}
+          </div>` : ""}
+        <div class="role-btns">
+          <button onclick="promptLogin('admin')">Admin</button>
+          <button class="secondary" onclick="promptLogin('team')">Team Member</button>
+          <button class="secondary" onclick="promptLogin('client')">Client Portal</button>
+        </div>
+      </div>
+    </div>`;
+}
+function promptLogin(kind){
+  const code = prompt(kind==="admin" ? "Admin passcode:" : kind==="team" ? "Your access code:" : "Your client portal code:");
+  if(code===null) return;
+  if(kind==="admin") tryAdminLogin(code.trim());
+  else if(kind==="team") tryTeamLogin(code.trim());
+  else tryClientLogin(code.trim());
+}
+
+function renderAppShell(){
+  const tabs = state.role==="admin"
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["onboarding","Onboarding"],["team","Team"]]
+    : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
+
+  app.innerHTML = `
+    <div class="app-shell">
+      <div class="sidebar ${state.mobileNavOpen?'nav-open':''}">
+        <div class="sidebar-top">
+          <div class="logo">TMC Ops</div>
+          <button class="nav-toggle" onclick="toggleMobileNav()">☰</button>
+        </div>
+        <div class="nav-links">
+          ${tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("")}
+          <div class="who">
+            ${state.role==="admin" ? "Admin" : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
+            <div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div>
+          </div>
+        </div>
+      </div>
+      <div class="main" id="main">${renderMain()}</div>
+    </div>
+    ${state.modal ? renderModal() : ""}
+  `;
+}
+function toggleMobileNav(){ state.mobileNavOpen = !state.mobileNavOpen; render(); }
+function setTab(t){ state.activeTab = t; state.selectedClientId=null; state.mobileNavOpen=false; render(); }
+
+function renderMain(){
+  switch(state.activeTab){
+    case "dashboard": return renderDashboard();
+    case "clients": return state.selectedClientId ? renderClientCRM(state.selectedClientId) : renderClientsList();
+    case "kanban": return renderKanban();
+    case "time": return renderTimeTracking();
+    case "payroll": return state.role==="admin" ? renderPayrollTool() : "";
+    case "reports": return state.role==="admin" ? renderReportsTab() : "";
+    case "onboarding": return renderOnboarding();
+    case "team": return renderTeamAdmin();
+    default: return "";
+  }
+}
+
+// --- Dashboard ---
+function renderDashboard(){
+  return state.role==="admin" ? renderAdminDashboard() : renderTeamDashboard();
+}
+
+// A "Pending approval" task is a client's request that a specific assistant
+// needs to look at and accept or decline — it is NOT an admin sign-off queue.
+// This card is shared by the admin dashboard (sees every pending request) and
+// the team dashboard (sees only requests assigned to that assistant).
+function renderClientRequestsCard(tasks, opts){
+  opts = opts || {};
+  if(!tasks.length) return "";
+  return `
+    <div class="card">
+      <h3>${opts.title || "Client requests awaiting review"}</h3>
+      ${tasks.map(t=>{
+        const client = state.clients.find(c=>c.id===t.clientId);
+        return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+          <div class="flex-between">
+            <div>
+              <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
+              <strong>${t.title}</strong>
+              <span class="small">(${client?client.name:'Internal'})</span>
+              ${opts.showAssistant ? `<span class="small"> · ${(t.assignees||[]).map(assistantName).join(', ') || 'unassigned'}</span>` : ""}
+            </div>
+            <div style="display:flex;gap:6px;">
+              <button onclick="acceptClientRequest('${t.id}')">Accept</button>
+              <button class="danger" onclick="declineClientRequest('${t.id}')">Decline</button>
+            </div>
+          </div>
+          ${t.clientRequestNote ? `<div class="small">&ldquo;${t.clientRequestNote}&rdquo;</div>` : ""}
+          ${t.requestImage ? `<img src="${t.requestImage}" style="max-width:160px;max-height:160px;border-radius:8px;cursor:pointer;" onclick="openTaskEditor('${t.id}',null)">` : ""}
+        </div>`;
+      }).join("")}
+    </div>
+  `;
+}
+function acceptClientRequest(taskId){
+  upsert("tasks", taskId, { status: "To do" });
+}
+function declineClientRequest(taskId){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const reason = prompt("Reason for declining (shared with the client in their activity log):", "");
+  if(reason === null) return;
+  const client = state.clients.find(c=>c.id===task.clientId);
+  if(client){
+    const notes = client.notes || [];
+    upsert("clients", client.id, { notes: [...notes, {
+      id: newId("note"),
+      text: "Your request \"" + task.title + "\" couldn't be taken on" + (reason.trim() ? ": " + reason.trim() : "."),
+      date: new Date().toISOString(),
+      source: "task-declined"
+    }] });
+  }
+  remove("tasks", taskId);
+}
+function renderAdminDashboard(){
+  const period = currentPayrollPeriod();
+  const totalPayrollHours = hoursInPeriod(state.timeEntries, period);
+  const overdue = overdueTasks();
+  const pastDue = tasksPastDueDate();
+  const openTasks = state.tasks.filter(t=>t.status!=="Done");
+  const pending = state.tasks.filter(t=>t.status==="Pending approval");
+  const clientAlerts = state.clients.map(tierAlert).filter(Boolean);
+  const atRiskClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c));
+  const internalStatus = internalHoursStatus(period);
+  const reminders = upcomingReminders(14);
+  const noticeDeadlines = upcomingNoticeDeadlines(14);
+
+  const assistantRows = state.settings.assistants.map(a=>{
+    const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
+    return { assistant:a, hrs: hoursInPeriod(entries, period), active: activeEntryFor(a.id) };
+  }).filter(r=>r.assistant.active!==false || r.hrs>0)
+    .sort((a,b)=>b.hrs-a.hrs);
+
+  return `
+    <h2>Dashboard</h2>
+
+    <div class="stat-row">
+      <div class="stat-tile">
+        <div class="stat-label">Hours clocked — payroll period</div>
+        <div class="stat-value">${totalPayrollHours.toFixed(1)}</div>
+        <div class="stat-sub">${formatPeriodRange(period)}</div>
+      </div>
+      <div class="stat-tile ${overdue.length?'status-danger':''}">
+        <div class="stat-label">Tasks open 7+ days</div>
+        <div class="stat-value">${overdue.length}</div>
+        <div class="stat-sub">of ${openTasks.length} open total</div>
+      </div>
+      <div class="stat-tile ${pending.length?'status-warn':''}">
+        <div class="stat-label">Client requests pending</div>
+        <div class="stat-value">${pending.length}</div>
+        <div class="stat-sub">awaiting assistant review</div>
+      </div>
+      <div class="stat-tile ${clientAlerts.some(a=>a.level==='danger')?'status-danger':clientAlerts.length?'status-warn':''}">
+        <div class="stat-label">Clients near/over package</div>
+        <div class="stat-value">${clientAlerts.length}</div>
+        <div class="stat-sub">of ${state.clients.length} clients</div>
+      </div>
+      <div class="stat-tile ${internalStatus.level==='danger'?'status-danger':internalStatus.level==='warn'?'status-warn':''}" style="cursor:pointer;" onclick="setTab('payroll')">
+        <div class="stat-label">Internal/admin hours</div>
+        <div class="stat-value">${internalStatus.used.toFixed(1)}</div>
+        <div class="stat-sub">${internalStatus.budget ? "of "+internalStatus.budget+" hr budget" : "set a budget on the Payroll tab"}</div>
+      </div>
+      <div class="stat-tile ${reminders.some(r=>r.days<=7)?'status-warn':''}">
+        <div class="stat-label">Reminders due soon</div>
+        <div class="stat-value">${reminders.filter(r=>r.days<=7).length}</div>
+        <div class="stat-sub">${reminders.length} within 14 days</div>
+      </div>
+      <div class="stat-tile ${atRiskClients.length?'status-warn':''}">
+        <div class="stat-label">At-risk clients</div>
+        <div class="stat-value">${atRiskClients.length}</div>
+        <div class="stat-sub">0 hrs this period &amp; nothing completed in 30d</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Assistants — this payroll period</h3>
+      <table class="data-table">
+        <thead><tr><th>Assistant</th><th>Hours</th><th>Status</th></tr></thead>
+        <tbody>
+          ${assistantRows.map(r=>`
+            <tr>
+              <td>${r.assistant.name}${r.assistant.active===false?' <span class="small">(former)</span>':''}</td>
+              <td>${r.hrs.toFixed(1)}</td>
+              <td>${r.active
+                ? `<span class="dot-live ${isStale(r.active)?'stale':''}"></span>clocked in ${entryDurationHours(r.active).toFixed(1)}h${isStale(r.active)?' — running long, check it':''}`
+                : `<span class="small">off the clock</span>`}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Tasks open 7+ days</h3>
+      ${overdue.length===0 ? `<div class="small">Nothing's been sitting open longer than a week.</div>` : `
+      <table class="data-table">
+        <thead><tr><th>Task</th><th>Client</th><th>Assignees</th><th>Status</th><th>Days open</th></tr></thead>
+        <tbody>
+          ${overdue.map(({task:t,days})=>{
+            const client = state.clients.find(c=>c.id===t.clientId);
+            const names = (t.assignees||[]).map(assistantName).join(", ") || "—";
+            return `<tr style="cursor:pointer;" onclick="openTaskEditor('${t.id}',null)">
+              <td><span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>${t.title}</td>
+              <td>${client?client.name:'Internal'}</td>
+              <td>${names}</td>
+              <td>${t.status}</td>
+              <td>${Math.floor(days)}d</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>`}
+    </div>
+
+    <div class="card">
+      <h3>Tasks past their due date</h3>
+      ${pastDue.length===0 ? `<div class="small">Nothing's missed its deadline.</div>` : `
+      <table class="data-table">
+        <thead><tr><th>Task</th><th>Client</th><th>Assignees</th><th>Due date</th><th>Days late</th></tr></thead>
+        <tbody>
+          ${pastDue.map(({task:t,daysLate})=>{
+            const client = state.clients.find(c=>c.id===t.clientId);
+            const names = (t.assignees||[]).map(assistantName).join(", ") || "—";
+            return `<tr style="cursor:pointer;" onclick="openTaskEditor('${t.id}',null)">
+              <td><span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>${t.title}</td>
+              <td>${client?client.name:'Internal'}</td>
+              <td>${names}</td>
+              <td>${new Date(t.dueDate).toLocaleDateString()}</td>
+              <td style="color:var(--danger);font-weight:600;">${daysLate}d</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>`}
+    </div>
+
+    <div class="card">
+      <h3>Upcoming &amp; overdue reminders</h3>
+      ${reminders.length===0 ? `<div class="small">Nothing due in the next 14 days.</div>` : `
+      <table class="data-table">
+        <thead><tr><th>Client</th><th>Type</th><th>What</th><th>Date</th><th>Status</th></tr></thead>
+        <tbody>
+          ${reminders.map(r=>`
+            <tr style="cursor:pointer;" onclick="viewClientMembership('${r.client.id}')">
+              <td>${r.client.name}</td>
+              <td>${r.type}</td>
+              <td>${r.label}</td>
+              <td>${r.date.toLocaleDateString()}</td>
+              <td>${r.days<0 ? `<span style="color:var(--danger);">overdue ${Math.abs(r.days)}d</span>` : r.days===0 ? `<span style="color:var(--warn);">today</span>` : `in ${r.days}d`}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>
+
+    <div class="card">
+      <h3>Renewal &amp; cancellation notice deadlines</h3>
+      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged.</div>
+      ${noticeDeadlines.length===0 ? `<div class="small">Nothing coming up in the next 14 days.</div>` : `
+      <table class="data-table">
+        <thead><tr><th>Client</th><th>Term</th><th>Term ends</th><th>Notice deadline</th><th>Status</th></tr></thead>
+        <tbody>
+          ${noticeDeadlines.map(n=>`
+            <tr style="cursor:pointer;" onclick="viewClientMembership('${n.client.id}')">
+              <td>${n.client.name}</td>
+              <td>${TERM_LABELS[n.client.termType]||n.client.termType}</td>
+              <td>${n.termEnd.toLocaleDateString()}</td>
+              <td>${n.deadline.toLocaleDateString()}</td>
+              <td>${n.days<0 ? `<span style="color:var(--danger);">deadline passed — will auto-renew</span>` : n.days===0 ? `<span style="color:var(--warn);">today</span>` : `${n.days}d left`}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table>`}
+    </div>
+
+    ${renderClientRequestsCard(pending, { title: "Client requests awaiting assistant review", showAssistant: true })}
+
+    <div class="card">
+      <h3>Hour-usage alerts</h3>
+      ${clientAlerts.length===0 ? `<div class="small">No clients near their package limit.</div>` :
+        clientAlerts.map(a=>`<div class="alert ${a.level}">${a.text}</div>`).join("")}
+    </div>
+
+    <div class="card">
+      <h3>At-risk clients</h3>
+      <div class="small" style="margin-bottom:8px;">No hours used this billing period and no task completed in the last 30 days — worth a check-in.</div>
+      ${atRiskClients.length===0 ? `<div class="small">No clients look at risk right now.</div>` :
+        atRiskClients.map(c=>`
+          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
+            <div>${c.name}</div>
+            <span class="alert warn" style="margin:0;">at risk</span>
+          </div>`).join("")}
+    </div>
+  `;
+}
+
+function renderTeamDashboard(){
+  const myClientIds = new Set(state.clients.filter(c=>(c.assistantIds||[]).includes(state.currentAssistant?.id)).map(c=>c.id));
+  const alerts = state.clients.filter(c=>myClientIds.has(c.id)).map(tierAlert).filter(Boolean);
+  const myEntry = state.currentAssistant && activeEntryFor(state.currentAssistant.id);
+  const myOpenTasks = state.tasks.filter(t=>t.status!=="Done" && (t.assignees||[]).includes(state.currentAssistant?.id));
+  const myPending = state.tasks.filter(t=>t.status==="Pending approval" && (t.assignees||[]).includes(state.currentAssistant?.id));
+  return `
+    <h2>Dashboard</h2>
+    ${renderClientRequestsCard(myPending, { title: "Requests awaiting your review" })}
+    ${myEntry ? `
+      <div class="card">
+        <div class="flex-between">
+          <div>
+            <div class="small">Currently clocked in</div>
+            <strong>${(state.tasks.find(t=>t.id===myEntry.taskId)||{}).title || "Task"}</strong>
+          </div>
+          <div class="timer-pill">⏱ ${entryDurationHours(myEntry).toFixed(2)} hrs</div>
+        </div>
+        ${isStale(myEntry) ? `<div class="alert danger" style="margin-top:8px;">This clock has been running over 8 hours — check if it's stale.</div>` : ""}
+        <button style="margin-top:10px;" onclick="doClockOut('${myEntry.id}')">Clock out</button>
+      </div>` : ""}
+    <div class="card">
+      <h3>Hour-usage alerts</h3>
+      ${alerts.length===0 ? `<div class="small">No clients near their package limit.</div>` :
+        alerts.map(a=>`<div class="alert ${a.level}">${a.text}</div>`).join("")}
+    </div>
+    <div class="card">
+      <h3>My open tasks</h3>
+      ${renderTaskMiniList(myOpenTasks.slice(0,8))}
+    </div>
+  `;
+}
+function renderTaskMiniList(tasks){
+  if(tasks.length===0) return `<div class="small">Nothing open.</div>`;
+  return tasks.map(t=>{
+    const client = state.clients.find(c=>c.id===t.clientId);
+    return `<div class="list-item">
+      <div>
+        <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
+        ${t.title} <span class="small">(${client?client.name:'Internal'})</span>
+      </div>
+      <span class="small">${t.status}</span>
+    </div>`;
+  }).join("");
+}
+
+// --- Clients list ---
+function renderClientsList(){
+  return `
+    <div class="flex-between"><h2>Clients</h2><button onclick="openClientEditor(null)">+ New client</button></div>
+    <div class="card">
+      ${state.clients.length===0 ? `<div class="small">No clients yet.</div>` :
+        state.clients.map(c=>{
+          const alert = tierAlert(c);
+          const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
+          return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
+            <div>
+              <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''}
+              <div class="small">${c.packageHours||0} hrs/${c.cycleType||'monthly'} · ${(c.assistantIds||[]).map(id=>{
+                const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
+              }).join(", ")}</div>
+            </div>
+            ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
+          </div>`;
+        }).join("")}
+    </div>
+  `;
+}
+function openClient(id){ state.selectedClientId = id; state.crmSubTab="tasks"; render(); }
+function openClientEditor(id){
+  const c = id ? state.clients.find(x=>x.id===id) : null;
+  state.modal = { type:"clientEditor", client:c };
+  render();
+}
+
+// --- Client CRM ---
+function renderClientCRM(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return `<div class="small">Client not found.</div>`;
+  const alert = tierAlert(client);
+  const subtabs = ["profile","tasks","notes","membership"];
+  return `
+    <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
+    <h2>${client.name}</h2>
+    ${alert ? `<div class="alert ${alert.level}">${alert.text}</div>` : ""}
+    <div class="tabs">
+      ${subtabs.map(s=>`<button class="${state.crmSubTab===s?'active':''}" onclick="state.crmSubTab='${s}';render();">${s[0].toUpperCase()+s.slice(1)}</button>`).join("")}
+    </div>
+    ${state.crmSubTab==="profile" ? renderClientProfile(client) : ""}
+    ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
+    ${state.crmSubTab==="notes" ? renderClientNotes(client) : ""}
+    ${state.crmSubTab==="membership" ? renderClientMembership(client) : ""}
+  `;
+}
+// --- Client onboarding profile (filled out during home orientation) ---
+function renderClientProfile(client){
+  const p = client.profile || {};
+  const serviceType = p.serviceType || "home";
+  const showHome = serviceType==="home" || serviceType==="both";
+  const showBusiness = serviceType==="business" || serviceType==="both";
+  const family = p.familyMembers || [];
+  const priorities = p.topPriorities || ["","",""];
+  const specialDates = client.specialDates || [];
+  const discountStatus = clientReferralDiscountStatus(client);
+
+  return `
+    <div class="card">
+      <h3>Client type</h3>
+      <div class="small">Controls which onboarding questions show below.</div>
+      <select style="margin-top:6px;max-width:280px;" onchange="updateProfileField('${client.id}','serviceType',this.value)">
+        <option value="home" ${serviceType==='home'?'selected':''}>Home / personal concierge</option>
+        <option value="business" ${serviceType==='business'?'selected':''}>Business admin support</option>
+        <option value="both" ${serviceType==='both'?'selected':''}>Both</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <h3>Contact basics</h3>
+      <div class="row">
+        <div><label class="small">Email</label><input type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
+        <div><label class="small">Phone</label><input value="${p.phone||''}" onchange="updateProfileField('${client.id}','phone',this.value)"></div>
+        <div><label class="small">Emergency contact</label><input value="${p.emergencyContact||''}" onchange="updateProfileField('${client.id}','emergencyContact',this.value)"></div>
+      </div>
+    </div>
+
+    ${showHome ? `
+    <div class="card">
+      <h3>Home onboarding</h3>
+      <div class="row">
+        <div><label class="small">Home address</label><input value="${p.homeAddress||''}" onchange="updateProfileField('${client.id}','homeAddress',this.value)"></div>
+      </div>
+      <div style="margin-top:12px;">
+        <label class="small">Family / household members (name & age)</label>
+        ${family.map((f,i)=>`
+          <div class="list-item">
+            <div>${f.name}${f.age?', age '+f.age:''}</div>
+            <button class="danger" onclick="removeFamilyMember('${client.id}',${i})">Remove</button>
+          </div>
+        `).join("") || `<div class="small">None added yet.</div>`}
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <input id="fam_name_${client.id}" placeholder="Name" style="max-width:180px;">
+          <input id="fam_age_${client.id}" placeholder="Age" style="max-width:80px;">
+          <button class="secondary" onclick="addFamilyMember('${client.id}')">Add</button>
+        </div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Home access (hidden key, door code, alarm code, parking, etc.)</label><textarea onchange="updateProfileField('${client.id}','homeAccess',this.value)">${p.homeAccess||''}</textarea></div>
+      </div>
+      <div style="margin-top:12px;">
+        <label class="small">Top 3 priorities to start with</label>
+        ${[0,1,2].map(i=>`<input style="margin-top:4px;" placeholder="Priority ${i+1}" value="${priorities[i]||''}" onchange="updatePriority('${client.id}',${i},this.value)">`).join("")}
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Weekly schedule</label><textarea onchange="updateProfileField('${client.id}','weeklySchedule',this.value)">${p.weeklySchedule||''}</textarea></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Pets (names, feeding/walking, vet info)</label><textarea onchange="updateProfileField('${client.id}','petInfo',this.value)">${p.petInfo||''}</textarea></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Other preferences (groceries, communication style, etc.)</label><textarea onchange="updateProfileField('${client.id}','specialPreferences',this.value)">${p.specialPreferences||''}</textarea></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Preferred communication (method & best times to reach them)</label><input value="${p.communicationPreference||''}" onchange="updateProfileField('${client.id}','communicationPreference',this.value)"></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Budget / reimbursement notes</label><textarea onchange="updateProfileField('${client.id}','budgetNotes',this.value)">${p.budgetNotes||''}</textarea></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Off-limits / things to avoid</label><textarea onchange="updateProfileField('${client.id}','offLimits',this.value)">${p.offLimits||''}</textarea></div>
+      </div>
+    </div>` : ""}
+
+    ${showBusiness ? `
+    <div class="card">
+      <h3>Business onboarding</h3>
+      <div class="row">
+        <div><label class="small">Office address</label><input value="${p.officeAddress||''}" onchange="updateProfileField('${client.id}','officeAddress',this.value)"></div>
+        <div><label class="small">Office hours</label><input value="${p.officeHours||''}" onchange="updateProfileField('${client.id}','officeHours',this.value)"></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Team member names & roles</label><textarea onchange="updateProfileField('${client.id}','teamMembers',this.value)">${p.teamMembers||''}</textarea></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">Tools/software used (email, calendar, project management, etc.)</label><textarea onchange="updateProfileField('${client.id}','businessTools',this.value)">${p.businessTools||''}</textarea></div>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div><label class="small">What they need help with at work / for the business</label><textarea onchange="updateProfileField('${client.id}','businessNeeds',this.value)">${p.businessNeeds||''}</textarea></div>
+      </div>
+    </div>` : ""}
+
+    <div class="card">
+      <h3>Birthdays & special occasions</h3>
+      <div class="small" style="margin-bottom:6px;">Recurs yearly — also shows up as a reminder on the Notes tab.</div>
+      ${specialDates.map((d,i)=>`
+        <div class="list-item">
+          <div>${d.label}</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="small">${d.date} (recurs yearly)</span>
+            <button class="danger" onclick="removeSpecialDate('${client.id}',${i})">Remove</button>
+          </div>
+        </div>
+      `).join("") || `<div class="small">None recorded yet.</div>`}
+      <div style="display:flex;gap:6px;margin-top:10px;">
+        <input id="sd_label_${client.id}" placeholder="e.g. Mom's birthday, Anniversary">
+        <input id="sd_date_${client.id}" type="date" style="max-width:170px;">
+        <button class="secondary" onclick="addSpecialDate('${client.id}')">Add</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Referred by an assistant</h3>
+      <div class="row">
+        <div><label class="small">Referred by</label>
+          <select onchange="updateClientField('${client.id}','referredBy',this.value)">
+            <option value="">None</option>
+            ${state.settings.assistants.map(a=>`<option value="${a.id}" ${client.referredBy===a.id?'selected':''}>${a.name}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      ${client.referredBy ? renderReferralStatus(client) : ""}
+    </div>
+
+    <div class="card">
+      <h3>Referred by another client</h3>
+      <div class="small" style="margin-bottom:8px;">If this client was referred by an existing client, they can earn that client 20% off one month once this account signs a 3-month+ term.</div>
+      <div class="row">
+        <div><label class="small">Referred by</label>
+          <select onchange="updateClientField('${client.id}','referredByClientId',this.value)">
+            <option value="">None</option>
+            ${state.clients.filter(c=>c.id!==client.id && c.id!==INTERNAL_CLIENT_ID).map(c=>`<option value="${c.id}" ${client.referredByClientId===c.id?'selected':''}>${c.name}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="small" style="margin-top:10px;">This client's own referral credits: ${discountStatus.earned} referral(s) signed 3-month+, ${discountStatus.redeemed} redeemed, <strong>${discountStatus.available} available</strong>.</div>
+      <button class="secondary" style="margin-top:8px;" ${discountStatus.available<1?'disabled':''} onclick="redeemClientReferralDiscount('${client.id}')">Redeem one 20%-off month</button>
+    </div>
+  `;
+}
+function renderReferralStatus(client){
+  const status = referralPayoutStatus(client);
+  if(!status) return `<div class="small" style="margin-top:8px;">Referring assistant not found.</div>`;
+  if(!status.eligible){
+    return `<div class="small" style="margin-top:8px;">${status.reason}</div>`;
+  }
+  return `
+    <div style="margin-top:10px;">
+      <div class="alert ${status.stoppedEarly?'warn':'ok'}">
+        ${status.assistant.name}: ${status.monthsElapsed} of 12 months elapsed${status.stoppedEarly?' (client cancelled — payouts stopped)':''}.
+        ${status.paid} paid so far, <strong>${status.owed} owed now</strong> at $${status.monthlyAmount}/mo.
+      </div>
+      <button class="secondary" style="margin-top:8px;" ${status.owed<1?'disabled':''} onclick="markReferralPayoutPaid('${client.id}')">Mark one $${status.monthlyAmount} payout as paid</button>
+      <div class="small" style="margin-top:6px;">${status.paid} of 12 payouts recorded so far.</div>
+    </div>
+  `;
+}
+function updateProfileField(clientId, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  const profile = { ...(client.profile||{}), [field]: value };
+  upsert("clients", clientId, { profile });
+}
+function updatePriority(clientId, index, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  const topPriorities = ((client.profile&&client.profile.topPriorities) || ["","",""]).slice();
+  topPriorities[index] = value;
+  const profile = { ...(client.profile||{}), topPriorities };
+  upsert("clients", clientId, { profile });
+}
+function addFamilyMember(clientId){
+  const nameEl = document.getElementById("fam_name_"+clientId);
+  const ageEl = document.getElementById("fam_age_"+clientId);
+  const name = nameEl.value.trim();
+  if(!name) return;
+  const age = ageEl.value.trim();
+  const client = state.clients.find(c=>c.id===clientId);
+  const familyMembers = [...((client.profile&&client.profile.familyMembers)||[]), { name, age }];
+  const profile = { ...(client.profile||{}), familyMembers };
+  upsert("clients", clientId, { profile });
+}
+function removeFamilyMember(clientId, index){
+  const client = state.clients.find(c=>c.id===clientId);
+  const familyMembers = ((client.profile&&client.profile.familyMembers)||[]).filter((_,i)=>i!==index);
+  const profile = { ...(client.profile||{}), familyMembers };
+  upsert("clients", clientId, { profile });
+}
+function addSpecialDate(clientId){
+  const labelEl = document.getElementById("sd_label_"+clientId);
+  const dateEl = document.getElementById("sd_date_"+clientId);
+  const label = labelEl.value.trim();
+  const date = dateEl.value;
+  if(!label || !date){ alert("Please enter both a label and a date."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  const specialDates = [...(client.specialDates||[]), { label, date }];
+  upsert("clients", clientId, { specialDates });
+}
+function removeSpecialDate(clientId, index){
+  const client = state.clients.find(c=>c.id===clientId);
+  const specialDates = (client.specialDates||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { specialDates });
+}
+
+function renderClientTasks(client){
+  const tasks = state.tasks.filter(t=>t.clientId===client.id);
+  return `
+    <div class="card">
+      <div class="flex-between"><h3>Tasks</h3><button onclick="openTaskEditor(null,'${client.id}')">+ New task</button></div>
+      ${renderTaskMiniList(tasks)}
+    </div>`;
+}
+function renderClientNotes(client){
+  const notes = client.notes || [];
+  return `
+    <div class="card">
+      <h3>Client notes</h3>
+      <div style="margin-bottom:10px;">
+        <textarea id="newNoteText" placeholder="Add a note..."></textarea>
+        <button style="margin-top:6px;" onclick="addClientNote('${client.id}')">Add note</button>
+      </div>
+      ${notes.slice().reverse().map(n=>`
+        <div class="list-item">
+          <div>${n.text}${n.source==='orientation-sync' ? ' <span class="badge">auto-synced</span>' : ''}</div>
+          <span class="small">${new Date(n.date).toLocaleDateString()}</span>
+        </div>`).join("") || `<div class="small">No notes yet.</div>`}
+    </div>
+    <div class="card">
+      <h3>Important info</h3>
+      <div class="small" style="margin-bottom:8px;">IDs, membership numbers, alarm codes, anything reference-worthy that isn't a running note.</div>
+      ${(client.importantInfo||[]).map((info,i)=>`
+        <div class="list-item">
+          <div><strong>${info.label}</strong>: ${info.value}</div>
+          <button class="danger" onclick="removeImportantInfo('${client.id}',${i})">Remove</button>
+        </div>`).join("") || `<div class="small">Nothing on file.</div>`}
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+        <input id="info_label_${client.id}" placeholder="Label (e.g. Driver's License #)" style="max-width:220px;">
+        <input id="info_value_${client.id}" placeholder="Value">
+        <button class="secondary" onclick="addImportantInfo('${client.id}')">Add</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Website logins</h3>
+      <div class="small" style="margin-bottom:8px;">Stored as plain text on this client's record — see note below about locking this down before it's real production data.</div>
+      ${(client.logins||[]).map((l,i)=>`
+        <div class="list-item">
+          <div>
+            <strong>${l.site}</strong>${l.username ? ` — ${l.username}` : ""}
+            ${l.notes ? `<div class="small">${l.notes}</div>` : ""}
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="small" style="font-family:monospace;">${state.revealedLogins && state.revealedLogins.has(client.id+'_'+i) ? (l.password||'(none)') : '••••••••'}</span>
+            <button class="secondary" style="padding:2px 8px;" onclick="toggleRevealLogin('${client.id}',${i})">${state.revealedLogins && state.revealedLogins.has(client.id+'_'+i) ? 'Hide' : 'Show'}</button>
+            <button class="danger" onclick="removeLogin('${client.id}',${i})">Remove</button>
+          </div>
+        </div>`).join("") || `<div class="small">None on file.</div>`}
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+        <input id="login_site_${client.id}" placeholder="Site / service" style="max-width:150px;">
+        <input id="login_user_${client.id}" placeholder="Username / email" style="max-width:170px;">
+        <input id="login_pass_${client.id}" placeholder="Password" style="max-width:150px;">
+        <input id="login_notes_${client.id}" placeholder="Notes (optional)" style="max-width:170px;">
+        <button class="secondary" onclick="addLogin('${client.id}')">Add</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Special dates</h3>
+      ${(client.specialDates||[]).map(d=>`<div class="list-item"><div>${d.label}</div><span class="small">${d.date} (recurs yearly)</span></div>`).join("") || `<div class="small">None recorded.</div>`}
+    </div>
+    <div class="card">
+      <h3>Vendors</h3>
+      ${(client.vendors||[]).map((v,i)=>`
+        <div class="list-item">
+          <div>${v.name} — ${v.service}${v.frequencyDays?` <span class="small">(every ${v.frequencyDays}d)</span>`:''}</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="small">last: ${v.lastService||'—'}</span>
+            <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
+          </div>
+        </div>`).join("") || `<div class="small">No vendors on file.</div>`}
+      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+        <input id="v_name_${client.id}" placeholder="Vendor name" style="max-width:150px;">
+        <input id="v_service_${client.id}" placeholder="Service" style="max-width:130px;">
+        <input id="v_last_${client.id}" type="date" title="Last service date" style="max-width:150px;">
+        <input id="v_freq_${client.id}" type="number" placeholder="Every N days" style="max-width:110px;">
+        <button class="secondary" onclick="addVendor('${client.id}')">Add</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Inspections</h3>
+      ${(client.inspections||[]).map((ins,i)=>`
+        <div class="list-item">
+          <div>${ins.name}</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="small">next due: ${ins.nextDue}</span>
+            <button class="danger" onclick="removeInspection('${client.id}',${i})">Remove</button>
+          </div>
+        </div>`).join("") || `<div class="small">None scheduled.</div>`}
+      <div style="display:flex;gap:6px;margin-top:10px;">
+        <input id="ins_name_${client.id}" placeholder="Inspection name">
+        <input id="ins_due_${client.id}" type="date">
+        <button class="secondary" onclick="addInspection('${client.id}')">Add</button>
+      </div>
+    </div>
+  `;
+}
+function addImportantInfo(clientId){
+  const label = document.getElementById("info_label_"+clientId).value.trim();
+  const value = document.getElementById("info_value_"+clientId).value.trim();
+  if(!label || !value){ alert("Please enter both a label and a value."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  const importantInfo = [...(client.importantInfo||[]), { label, value }];
+  upsert("clients", clientId, { importantInfo });
+}
+function removeImportantInfo(clientId, index){
+  const client = state.clients.find(c=>c.id===clientId);
+  const importantInfo = (client.importantInfo||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { importantInfo });
+}
+function addLogin(clientId){
+  const site = document.getElementById("login_site_"+clientId).value.trim();
+  const username = document.getElementById("login_user_"+clientId).value.trim();
+  const password = document.getElementById("login_pass_"+clientId).value;
+  const notes = document.getElementById("login_notes_"+clientId).value.trim();
+  if(!site){ alert("Please enter a site or service name."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  const logins = [...(client.logins||[]), { site, username, password, notes }];
+  upsert("clients", clientId, { logins });
+}
+function removeLogin(clientId, index){
+  const client = state.clients.find(c=>c.id===clientId);
+  const logins = (client.logins||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { logins });
+}
+function toggleRevealLogin(clientId, index){
+  if(!state.revealedLogins) state.revealedLogins = new Set();
+  const key = clientId+'_'+index;
+  if(state.revealedLogins.has(key)) state.revealedLogins.delete(key);
+  else state.revealedLogins.add(key);
+  render();
+}
+function addVendor(clientId){
+  const name = document.getElementById("v_name_"+clientId).value.trim();
+  const service = document.getElementById("v_service_"+clientId).value.trim();
+  const lastService = document.getElementById("v_last_"+clientId).value;
+  const frequencyDays = parseInt(document.getElementById("v_freq_"+clientId).value, 10) || 0;
+  if(!name){ alert("Please enter a vendor name."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  const vendor = { name, service, lastService };
+  if(frequencyDays) vendor.frequencyDays = frequencyDays;
+  const vendors = [...(client.vendors||[]), vendor];
+  upsert("clients", clientId, { vendors });
+}
+function removeVendor(clientId, index){
+  const client = state.clients.find(c=>c.id===clientId);
+  const vendors = (client.vendors||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { vendors });
+}
+function addInspection(clientId){
+  const name = document.getElementById("ins_name_"+clientId).value.trim();
+  const nextDue = document.getElementById("ins_due_"+clientId).value;
+  if(!name || !nextDue){ alert("Please enter both a name and a due date."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  const inspections = [...(client.inspections||[]), { name, nextDue }];
+  upsert("clients", clientId, { inspections });
+}
+function removeInspection(clientId, index){
+  const client = state.clients.find(c=>c.id===clientId);
+  const inspections = (client.inspections||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { inspections });
+}
+function renderClientMembership(client){
+  const used = hoursUsed(client.id);
+  const overage = overageFor(client);
+  const currentTier = PACKAGE_TIERS.find(t=>t.hours===client.packageHours && t.price===client.packagePrice);
+  const isHomeReset = currentTier && currentTier.key.startsWith("reset_");
+  return `
+    <div class="card">
+      <h3>Package</h3>
+      <div class="small" style="margin-bottom:8px;">A client is on exactly one package — an hourly membership tier, or a Home Reset flat-rate tier. Pick from the real rate card, or choose Custom for anything off-menu.</div>
+      <div class="row">
+        <div><label class="small">Package tier</label>
+          <select onchange="selectPackageTier('${client.id}',this.value)">
+            ${PACKAGE_TIERS.map(t=>`<option value="${t.key}" ${currentTier&&currentTier.key===t.key?'selected':''}>${t.label} — $${t.price} (${t.hours}hrs)</option>`).join("")}
+            <option value="custom" ${!currentTier?'selected':''}>Custom</option>
+          </select>
+        </div>
+        <div><label class="small">Billing cycle</label>
+          <select onchange="updateClientField('${client.id}','cycleType',this.value)">
+            ${["biweekly","monthly","quarterly","annual"].map(c=>`<option value="${c}" ${client.cycleType===c?'selected':''}>${c}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Renewal date anchor</label><input type="date" value="${client.renewalDate?client.renewalDate.slice(0,10):''}" onchange="updateClientField('${client.id}','renewalDate',this.value)"></div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
+        <div><label class="small">Package price ($/month) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
+      </div>
+      <div class="progress-bar" style="margin-top:10px;"><div style="width:${Math.min(100,(used/(client.packageHours||1))*100)}%;"></div></div>
+      <div class="small">${used.toFixed(1)} / ${client.packageHours||0} hrs used this ${isHomeReset?'30-day cycle':'period'}</div>
+      ${overage.overHours>0 ? `<div class="alert warn" style="margin-top:6px;">${overage.overHours.toFixed(1)} hrs over package — $${overage.amount.toFixed(2)} overage at $${OVERAGE_RATE}/hr, due by the 1st of next month.</div>` : ""}
+      <div class="row" style="margin-top:10px;">
+        <div><label class="small">Client portal code</label><input value="${client.portalCode||''}" onchange="updateClientField('${client.id}','portalCode',this.value)"></div>
+        <div><label class="small">Client email (for weekly reports)</label><input type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Agreement</h3>
+      <div class="row">
+        <div><label class="small">Term type</label>
+          <select onchange="updateClientField('${client.id}','termType',this.value)">
+            <option value="pilot" ${(!client.termType||client.termType==='pilot')?'selected':''}>One Month Pilot</option>
+            <option value="3month" ${client.termType==='3month'?'selected':''}>Three Month Term</option>
+            <option value="12month_new" ${client.termType==='12month_new'?'selected':''}>Twelve Month Term (New)</option>
+            <option value="12month_renewal" ${client.termType==='12month_renewal'?'selected':''}>Twelve Month Term (Renewal)</option>
+          </select>
+        </div>
+        <div><label class="small">Current term start date</label><input type="date" value="${client.termStartDate?client.termStartDate.slice(0,10):''}" onchange="updateClientField('${client.id}','termStartDate',this.value)"></div>
+        <div><label class="small">Client status</label>
+          <select onchange="updateClientField('${client.id}','clientStatus',this.value)">
+            <option value="active" ${(!client.clientStatus||client.clientStatus==='active')?'selected':''}>Active</option>
+            <option value="paused" ${client.clientStatus==='paused'?'selected':''}>Paused</option>
+            <option value="cancelled" ${client.clientStatus==='cancelled'?'selected':''}>Cancelled</option>
+          </select>
+        </div>
+      </div>
+      ${client.clientStatus==='cancelled' || client.clientStatus==='paused' ? `
+      <div class="row" style="margin-top:10px;">
+        <div><label class="small">${client.clientStatus==='paused'?'Paused since':'Cancelled date'}</label><input type="date" value="${client.cancelledDate?client.cancelledDate.slice(0,10):''}" onchange="updateClientField('${client.id}','cancelledDate',this.value)"></div>
+      </div>` : ""}
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Assigned assistants</h3>
+        <button class="secondary" onclick="openReassignModal('${client.id}')">Reassign</button>
+      </div>
+      <div class="small">${(client.assistantIds||[]).map(assistantName).join(", ") || "No assistant assigned yet."}</div>
+    </div>
+  `;
+}
+function updateClientField(id, field, value){ upsert("clients", id, { [field]: value }); }
+function selectPackageTier(clientId, val){
+  if(val==="custom") return;
+  const tier = PACKAGE_TIERS.find(t=>t.key===val);
+  if(!tier) return;
+  upsert("clients", clientId, { packageHours: tier.hours, packagePrice: tier.price });
+}
+function markReferralPayoutPaid(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  upsert("clients", clientId, { referralPayoutsPaidCount: (client.referralPayoutsPaidCount||0) + 1 });
+}
+
+// --- Bulk client reassignment ---
+// Moves a client's OPEN tasks to a new assistant roster in one shot; never
+// touches existing time entries, so past history stays attributed correctly.
+function openReassignModal(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  state.modal = { type:"reassignClient", client };
+  render();
+}
+function renderReassignModal(client){
+  const openCount = state.tasks.filter(t=>t.clientId===client.id && t.status!=="Done").length;
+  return `
+    <div class="modal">
+      <h3>Reassign ${client.name}</h3>
+      <div class="small" style="margin-bottom:10px;">
+        Updates who's assigned to this client and moves all ${openCount} of their currently open task(s) to the new roster.
+        Past time entries and completed tasks keep whoever actually did the work — nothing there changes.
+      </div>
+      <div>
+        ${assignableAssistants(client.assistantIds).map(a=>`
+          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;margin-bottom:6px;font-size:13px;">
+            <input type="checkbox" value="${a.id}" ${(client.assistantIds||[]).includes(a.id)?'checked':''} class="reassign_assistant"> ${a.name}${a.active===false?' (former)':''}
+          </label>
+        `).join("")}
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="confirmReassign('${client.id}')">Reassign</button>
+      </div>
+    </div>
+  `;
+}
+function confirmReassign(clientId){
+  const newIds = Array.from(document.querySelectorAll(".reassign_assistant:checked")).map(el=>el.value);
+  if(newIds.length===0){ alert("Select at least one assistant."); return; }
+  upsert("clients", clientId, { assistantIds: newIds });
+  state.tasks.filter(t=>t.clientId===clientId && t.status!=="Done").forEach(t=>{
+    upsert("tasks", t.id, { assignees: newIds });
+  });
+  closeModal();
+}
+function addClientNote(clientId){
+  const text = document.getElementById("newNoteText").value.trim();
+  if(!text) return;
+  const client = state.clients.find(c=>c.id===clientId);
+  const notes = client.notes || [];
+  upsert("clients", clientId, { notes: [...notes, { id:newId("note"), text, date:new Date().toISOString(), source:"manual" }] });
+}
+
+// --- Kanban ---
+function renderKanban(){
+  const f = state.kanbanFilter;
+  const filtered = state.tasks.filter(t=>{
+    if(f.clientId!=="all" && t.clientId!==f.clientId) return false;
+    if(f.category!=="all" && t.category!==f.category) return false;
+    if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
+    return true;
+  });
+  return `
+    <div class="flex-between"><h2>Task Board</h2><button onclick="openTaskEditor(null,null)">+ New task</button></div>
+    <div class="row" style="margin-bottom:14px;">
+      <div>
+        <label class="small">Client</label>
+        <select onchange="setKanbanFilter('clientId',this.value)">
+          <option value="all" ${f.clientId==='all'?'selected':''}>All clients</option>
+          <option value="${INTERNAL_CLIENT_ID}" ${f.clientId===INTERNAL_CLIENT_ID?'selected':''}>Internal / Modern Co.</option>
+          ${state.clients.map(c=>`<option value="${c.id}" ${f.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
+        </select>
+      </div>
+      <div>
+        <label class="small">Category</label>
+        <select onchange="setKanbanFilter('category',this.value)">
+          <option value="all" ${f.category==='all'?'selected':''}>All categories</option>
+          <option value="Home" ${f.category==='Home'?'selected':''}>Home</option>
+          <option value="Business" ${f.category==='Business'?'selected':''}>Business</option>
+        </select>
+      </div>
+      ${state.currentAssistant ? `
+      <div style="display:flex;align-items:flex-end;padding-bottom:8px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" ${f.onlyMine?'checked':''} onchange="setKanbanFilter('onlyMine',this.checked)"> My tasks only
+        </label>
+      </div>` : ""}
+    </div>
+    <div class="kanban">
+      ${STATUSES.map(status=>`
+        <div class="kanban-col">
+          <h4>${status}</h4>
+          ${filtered.filter(t=>t.status===status).map(renderKanbanCard).join("")}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+function setKanbanFilter(field, value){
+  state.kanbanFilter[field] = value;
+  render();
+}
+function renderKanbanCard(t){
+  const client = state.clients.find(c=>c.id===t.clientId);
+  const myActive = state.currentAssistant && activeEntryFor(state.currentAssistant.id);
+  const isActiveHere = myActive && myActive.taskId === t.id;
+  let dueMeta = "";
+  if(t.dueDate){
+    const due = new Date(t.dueDate);
+    const days = daysUntil(due, new Date());
+    const color = t.status==="Done" ? null : days<0 ? "var(--danger)" : days<=2 ? "var(--warn)" : null;
+    dueMeta = `<div class="meta" style="${color?'color:'+color+';font-weight:600;':''}">Due ${due.toLocaleDateString()}${!color||t.status==="Done"?'':days<0?' — overdue':' — due soon'}</div>`;
+  }
+  return `
+    <div class="task-card">
+      <div onclick="openTaskEditor('${t.id}',null)">
+        <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
+        ${t.requestedByClient ? '<span class="badge" style="background:var(--rose-dark);">Client request</span>' : ''}
+        <strong>${t.title}</strong>
+        <div class="meta">${client?client.name:'Internal'} ${ (t.assignees||[]).length ? '· '+t.assignees.map(id=>{const a=state.settings.assistants.find(x=>x.id===id);return a?a.name:id;}).join(", ") : ''}</div>
+        ${(t.subtasks||[]).length ? `<div class="meta">${(t.subtasks||[]).filter(s=>s.done).length}/${(t.subtasks||[]).length} subtasks</div>` : ""}
+        ${(t.discussion||[]).length ? `<div class="meta">💬 ${(t.discussion||[]).length} comment${(t.discussion||[]).length===1?'':'s'}</div>` : ""}
+        ${t.requestImage ? `<div class="meta">📷 photo attached</div>` : ""}
+        ${dueMeta}
+      </div>
+      ${state.currentAssistant && t.status!=="Done" ? `
+        <div style="margin-top:8px;">
+          ${isActiveHere
+            ? `<button class="secondary" style="width:100%;" onclick="doClockOut('${myActive.id}')">⏱ ${entryDurationHours(myActive).toFixed(2)} hrs — Clock out</button>`
+            : `<button class="secondary" style="width:100%;" onclick="clockIn('${t.id}', state.currentAssistant.id)">Clock in</button>`}
+        </div>
+      ` : ""}
+    </div>
+  `;
+}
+
+// --- Time tracking view ---
+const TIME_FILTER_PRESETS = [
+  ["today","Today"], ["last30","Last 30 days"], ["period","This pay period"],
+  ["custom","Custom range"], ["all","All time"]
+];
+function timeFilterPeriod(){
+  const f = state.timeFilter;
+  const now = new Date();
+  if(f.preset==="today"){
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return { start, end: new Date(start.getTime()+86400000) };
+  }
+  if(f.preset==="last30"){
+    const end = now;
+    return { start: new Date(end.getTime()-30*86400000), end };
+  }
+  if(f.preset==="period") return currentPayrollPeriod();
+  if(f.preset==="custom"){
+    if(!f.customStart || !f.customEnd) return null;
+    const start = new Date(f.customStart);
+    const end = new Date(f.customEnd);
+    end.setDate(end.getDate()+1); // inclusive of the selected end day
+    return { start, end };
+  }
+  return null; // "all"
+}
+function timeFilterLabel(period){
+  if(state.timeFilter.preset==="all" || !period) return "All entries";
+  return formatPeriodRange(period);
+}
+function setTimeFilterPreset(preset){
+  state.timeFilter.preset = preset;
+  render();
+}
+function setTimeFilterCustom(which, val){
+  state.timeFilter[which==="start"?"customStart":"customEnd"] = val;
+  render();
+}
+function setTimeFilterAssistant(assistantId){
+  state.timeFilter.assistantId = assistantId;
+  render();
+}
+function renderTimeTracking(){
+  const mineAll = state.currentAssistant ? state.timeEntries.filter(t=>t.assistantId===state.currentAssistant.id) : state.timeEntries;
+  const active = state.currentAssistant && activeEntryFor(state.currentAssistant.id);
+  const period = timeFilterPeriod();
+  const assistantFilterId = state.role==="admin" ? state.timeFilter.assistantId : "all";
+  const filtered = mineAll
+    .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
+    .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
+  const totalHrs = filtered.reduce((s,e)=>s+entryDurationHours(e),0);
+  const manualCount = filtered.filter(e=>e.clockOutManual).length;
+
+  const assistantSummary = state.role==="admin" ? state.settings.assistants
+    .filter(a=>assistantFilterId==="all" || a.id===assistantFilterId)
+    .map(a=>{
+      const own = state.timeEntries.filter(e=>e.assistantId===a.id);
+      const own_ = own.filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end));
+      const total = own_.reduce((s,e)=>s+entryDurationHours(e),0);
+      const admin = own_.filter(e=>e.clientId===INTERNAL_CLIENT_ID).reduce((s,e)=>s+entryDurationHours(e),0);
+      const manual = own_.filter(e=>e.clockOutManual).length;
+      return { assistant:a, total, admin, manual };
+    }).filter(r=>r.total>0 || r.assistant.active!==false).sort((a,b)=>b.total-a.total) : [];
+
+  return `
+    <h2>Time Tracking</h2>
+    ${!active && state.currentAssistant ? `
+      <div class="card">
+        <h3>Clock in</h3>
+        <select id="clockInTaskSelect">
+          <option value="">Choose a task...</option>
+          ${state.tasks.filter(t=>t.status!=="Done").map(t=>`<option value="${t.id}">${t.title}</option>`).join("")}
+        </select>
+        <button style="margin-top:8px;" onclick="doClockIn()">Clock in</button>
+        <div class="small" style="margin:10px 0 6px;">Or for general admin work not tied to a specific task:</div>
+        <button class="secondary" onclick="clockInAdminWork(state.currentAssistant.id)">Clock in for Admin Work</button>
+      </div>` : ""}
+    ${state.role==="admin" ? `
+    <div class="card">
+      <h3>Hours by assistant</h3>
+      <div class="small" style="margin-bottom:8px;">${timeFilterLabel(period)} — "Admin hours" is time clocked to Internal / Modern Co. work. "Manual" counts clock-outs where a time was typed in instead of captured live.</div>
+      <table class="data-table">
+        <thead><tr><th>Assistant</th><th>Total hours</th><th>Admin hours</th><th>Manual clock-outs</th></tr></thead>
+        <tbody>
+          ${assistantSummary.map(r=>`
+            <tr>
+              <td>${r.assistant.name}${r.assistant.active===false?' <span class="small">(former)</span>':''}</td>
+              <td>${r.total.toFixed(1)}</td>
+              <td>${r.admin.toFixed(1)}</td>
+              <td>${r.manual>0 ? `<span style="color:var(--warn);font-weight:600;">${r.manual}</span>` : "0"}</td>
+            </tr>`).join("") || `<tr><td colspan="4" class="small">No entries in this range.</td></tr>`}
+        </tbody>
+      </table>
+    </div>` : ""}
+    <div class="card">
+      <div class="flex-between">
+        <h3>Entries</h3>
+        <div style="display:flex;gap:8px;">
+          ${state.role==="admin" ? `
+          <select style="width:auto;" onchange="setTimeFilterAssistant(this.value)">
+            <option value="all" ${assistantFilterId==='all'?'selected':''}>All assistants</option>
+            ${state.settings.assistants.map(a=>`<option value="${a.id}" ${assistantFilterId===a.id?'selected':''}>${a.name}${a.active===false?' (former)':''}</option>`).join("")}
+          </select>` : ""}
+          <select style="width:auto;" onchange="setTimeFilterPreset(this.value)">
+            ${TIME_FILTER_PRESETS.map(([val,label])=>`<option value="${val}" ${state.timeFilter.preset===val?'selected':''}>${label}</option>`).join("")}
+          </select>
+          ${state.timeFilter.preset==="custom" ? `
+            <input type="date" style="width:150px;" value="${state.timeFilter.customStart||''}" onchange="setTimeFilterCustom('start',this.value)">
+            <input type="date" style="width:150px;" value="${state.timeFilter.customEnd||''}" onchange="setTimeFilterCustom('end',this.value)">
+          ` : ""}
+          <button class="secondary" onclick="exportTimeEntriesCsv()">Export CSV</button>
+        </div>
+      </div>
+      <div class="stat-row" style="margin:8px 0 12px;">
+        <div class="stat-tile">
+          <div class="stat-label">Total hours — ${timeFilterLabel(period)}</div>
+          <div class="stat-value">${totalHrs.toFixed(1)}</div>
+          <div class="stat-sub">${filtered.length} ${filtered.length===1?'entry':'entries'}${manualCount>0 ? ` · <span style="color:var(--warn);">${manualCount} manually edited</span>` : ""}</div>
+        </div>
+      </div>
+      ${filtered.slice().reverse().map(e=>{
+        const task = state.tasks.find(t=>t.id===e.taskId);
+        const isAdminWork = e.clientId===INTERNAL_CLIENT_ID;
+        return `<div class="list-item">
+          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${task?task.title:'(deleted task)'}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
+          <div style="display:flex;align-items:center;gap:8px;">${e.clockOut ? entryDurationHours(e).toFixed(2)+" hrs" : `<button onclick="doClockOut('${e.id}')">Clock out</button>`}${state.role==='admin' ? `<button class="secondary" style="padding:2px 8px;" title="Edit this time entry" onclick="openTimeEntryEditor('${e.id}')">Edit</button><button class="secondary" style="padding:2px 8px;${e.flagged?'color:var(--danger);':''}" title="${e.flagged ? 'Unflag' : 'Flag for review'}" onclick="toggleFlagTimeEntry('${e.id}')">${e.flagged ? '⚑' : '⚐'}</button>` : ""}<button class="secondary" style="padding:2px 8px;" title="Delete this time entry" onclick="deleteTimeEntry('${e.id}')">✕</button></div>
+        </div>`;
+      }).join("") || `<div class="small">No entries in this range.</div>`}
+    </div>
+  `;
+}
+function doClockIn(){
+  const sel = document.getElementById("clockInTaskSelect");
+  if(!sel.value){ alert("Pick a task first."); return; }
+  clockIn(sel.value, state.currentAssistant.id);
+}
+function doClockOut(entryId){
+  const editedRaw = prompt("Clock out now? Leave this blank. Only type a time here to correct a clock you forgot to end — it'll be flagged as a manual entry.", "");
+  clockOut(entryId, editedRaw ? new Date(editedRaw).toISOString() : null);
+}
+
+// --- Payroll reconciliation tool (admin only) ---
+function renderPayrollTool(){
+  const period = currentPayrollPeriod();
+  const internal = internalHoursStatus(period);
+  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
+  const rows = realClients.map(c=>{
+    const expected = expectedHoursPerPayrollPeriod(c);
+    const actual = hoursForClientInPeriod(c.id, period);
+    return { client:c, expected, actual, variance: actual - expected };
+  }).sort((a,b)=>Math.abs(b.variance)-Math.abs(a.variance));
+  const totalExpected = rows.reduce((s,r)=>s+r.expected,0);
+  const totalActual = rows.reduce((s,r)=>s+r.actual,0);
+  const flagged = rows.filter(r=>Math.abs(r.variance)>=2);
+  const totalRevenue = realClients.reduce((s,c)=>s+expectedRevenuePerPayrollPeriod(c),0);
+  const totalPayrollCost = state.settings.assistants.reduce((s,a)=>s+hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)*(a.hourlyRate||0),0);
+  const estMargin = totalRevenue - totalPayrollCost;
+
+  return `
+    <div class="flex-between">
+      <h2>Payroll</h2>
+      <span class="small">${formatPeriodRange(period)}</span>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat-tile ${internal.level==='danger'?'status-danger':internal.level==='warn'?'status-warn':''}">
+        <div class="stat-label">Internal/admin hours used</div>
+        <div class="stat-value">${internal.used.toFixed(1)}</div>
+        <div class="stat-sub">${internal.budget ? "of "+internal.budget+" hr budget ("+internal.pct+"%)" : "no budget set below"}</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Client hours paid for (prorated)</div>
+        <div class="stat-value">${totalExpected.toFixed(1)}</div>
+        <div class="stat-sub">this payroll period, across ${realClients.length} clients</div>
+      </div>
+      <div class="stat-tile">
+        <div class="stat-label">Client hours actually clocked</div>
+        <div class="stat-value">${totalActual.toFixed(1)}</div>
+        <div class="stat-sub">${(totalActual-totalExpected)>=0?'+':''}${(totalActual-totalExpected).toFixed(1)} vs. paid-for</div>
+      </div>
+      <div class="stat-tile ${flagged.length?'status-warn':''}">
+        <div class="stat-label">Clients to double-check</div>
+        <div class="stat-value">${flagged.length}</div>
+        <div class="stat-sub">off by 2+ hrs from paid-for</div>
+      </div>
+      <div class="stat-tile ${estMargin<0?'status-danger':(totalRevenue && estMargin/totalRevenue<0.2)?'status-warn':''}">
+        <div class="stat-label">Estimated margin</div>
+        <div class="stat-value">$${estMargin.toFixed(0)}</div>
+        <div class="stat-sub">$${totalRevenue.toFixed(0)} revenue &minus; $${totalPayrollCost.toFixed(0)} payroll</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h3>Assistants — hours to pay this period</h3>
+        <button class="secondary" onclick="exportPayrollCsv()">Export CSV</button>
+      </div>
+      <div class="small" style="margin-bottom:8px;">Every assistant, including any former employee still owed hours from this period. Rates are editable on the Team tab.</div>
+      <table class="data-table">
+        <thead><tr><th>Assistant</th><th>Hours worked</th><th>Rate</th><th>$ owed</th><th>Status</th></tr></thead>
+        <tbody>
+          ${state.settings.assistants.map(a=>{
+            const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
+            const hrs = hoursInPeriod(entries, period);
+            const rate = a.hourlyRate || 0;
+            const active = activeEntryFor(a.id);
+            return `<tr>
+              <td>${a.name}${a.active===false?' <span class="small">(former)</span>':''}</td>
+              <td>${hrs.toFixed(1)}</td>
+              <td>$${rate.toFixed(2)}/hr</td>
+              <td>$${(hrs*rate).toFixed(2)}</td>
+              <td>${active
+                ? `<span class="dot-live ${isStale(active)?'stale':''}"></span>clocked in ${entryDurationHours(active).toFixed(1)}h`
+                : `<span class="small">off the clock</span>`}</td>
+            </tr>`;
+          }).join("")}
+          <tr style="font-weight:600;">
+            <td>Total</td>
+            <td>${state.settings.assistants.reduce((s,a)=>s+hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period),0).toFixed(1)}</td>
+            <td></td>
+            <td>$${state.settings.assistants.reduce((s,a)=>s+hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)*(a.hourlyRate||0),0).toFixed(2)}</td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Admin/internal hours budget</h3>
+      <div class="small">Set the max hours per payroll period the team should spend on "Internal / Modern Co." work before it eats into margin.</div>
+      <div class="row" style="margin-top:8px;">
+        <div><input type="number" step="0.5" value="${state.settings.internalHoursBudget||''}" placeholder="e.g. 20" onchange="updateInternalBudget(this.value)"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Client hours: paid for vs. clocked</h3>
+      <div class="small" style="margin-bottom:8px;">
+        "Paid for" is each client's package prorated to a half-month rate (their own billing cycle rarely lines up with the 1st–14th / 15th–end payroll calendar), so treat it as an estimate to sanity-check against, not their exact contracted usage.
+      </div>
+      <table class="data-table">
+        <thead><tr><th>Client</th><th>Paid for</th><th>Clocked</th><th>Variance</th></tr></thead>
+        <tbody>
+          ${rows.map(r=>`
+            <tr style="cursor:pointer;" onclick="viewClientMembership('${r.client.id}')">
+              <td>${r.client.name}</td>
+              <td>${r.expected.toFixed(1)}</td>
+              <td>${r.actual.toFixed(1)}</td>
+              <td>${Math.abs(r.variance)>=2?'<span class="alert warn" style="display:inline-block;margin:0;padding:2px 8px;">':''}${r.variance>=0?'+':''}${r.variance.toFixed(1)}${Math.abs(r.variance)>=2?'</span>':''}</td>
+            </tr>`).join("") || `<tr><td colspan="4" class="small">No clients yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>Referral payouts owed</h3>
+      <div class="small" style="margin-bottom:8px;">$100/month to the referring assistant, up to 12 months, starting once the client signs on past their 30-day pilot — stops early if the client cancels.</div>
+      ${(()=>{
+        const referred = realClients.filter(c=>c.referredBy).map(c=>({ client:c, status: referralPayoutStatus(c) })).filter(x=>x.status && x.status.eligible && x.status.owed>0);
+        if(referred.length===0) return `<div class="small">Nothing owed right now.</div>`;
+        return `<table class="data-table">
+          <thead><tr><th>Client</th><th>Referred by</th><th>Progress</th><th>Owed now</th><th></th></tr></thead>
+          <tbody>
+            ${referred.map(({client:c,status})=>`
+              <tr>
+                <td style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">${c.name}</td>
+                <td>${status.assistant.name}</td>
+                <td>${status.paid}/${status.monthsElapsed} of 12 paid${status.stoppedEarly?' (cancelled)':''}</td>
+                <td>$${(status.owed*status.monthlyAmount).toFixed(2)}</td>
+                <td><button class="secondary" onclick="markReferralPayoutPaid('${c.id}')">Mark $${status.monthlyAmount} paid</button></td>
+              </tr>`).join("")}
+          </tbody>
+        </table>`;
+      })()}
+    </div>
+  `;
+}
+function updateInternalBudget(val){
+  state.settings.internalHoursBudget = parseFloat(val)||0;
+  upsert("settings","access", { internalHoursBudget: state.settings.internalHoursBudget });
+}
+function viewClientMembership(clientId){
+  state.activeTab = "clients";
+  state.selectedClientId = clientId;
+  state.crmSubTab = "membership";
+  render();
+}
+
+// --- Weekly client reports (admin only) ---
+function renderReportsTab(){
+  const week = currentReportWeek();
+  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
+  const rows = realClients.map(client=>{
+    const weekReport = buildClientReport(client, week, "week");
+    const periodWindow = currentBillingPeriod(client);
+    const periodReport = periodWindow ? buildClientReport(client, periodWindow, "period") : null;
+    return { client, weekReport, periodReport };
+  });
+  return `
+    <div class="flex-between">
+      <h2>Reports</h2>
+      <span class="small">Week of ${formatPeriodRange(week)}</span>
+    </div>
+    <div class="small" style="margin-bottom:12px;">
+      Each report is built live from current task statuses and hours — "In Progress" reflects tasks in that column right now.
+      <strong>Weekly</strong> covers Saturday–Friday completions for the Friday client update; <strong>Period</strong> covers
+      everything completed across the client's full current billing cycle, for their end-of-membership-period recap.
+      Download and attach it to an email, or use Email to open a pre-filled message (your email client won't auto-attach the
+      file — attach the download manually).
+    </div>
+    <div class="card">
+      ${rows.length===0 ? `<div class="small">No clients yet.</div>` : rows.map(({client, weekReport, periodReport})=>`
+        <div class="list-item" style="flex-direction:column;align-items:stretch;gap:10px;">
+          <div class="flex-between">
+            <strong>${client.name}</strong>
+            <span class="small">${weekReport.hoursUsed.toFixed(1)} / ${weekReport.packageHours} hrs used this billing period${client.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</span>
+          </div>
+          <div class="row">
+            <div>
+              <div class="small" style="margin-bottom:4px;">Weekly &middot; ${weekReport.inProgress.length} in progress · ${weekReport.completed.length} completed this week</div>
+              <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+              <button onclick="emailClientReport('${client.id}','week')">Email</button>
+            </div>
+            <div>
+              <div class="small" style="margin-bottom:4px;">${periodReport ? "Period &middot; " + periodReport.completed.length + " completed &middot; ends " + periodReport.billingPeriod.end.toLocaleDateString() : "Period — set a renewal date on the Membership tab to enable"}</div>
+              ${periodReport ? `
+                <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+                <button onclick="emailClientReport('${client.id}','period')">Email</button>
+              ` : ""}
+            </div>
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+// --- Onboarding ---
+const ONBOARDING_CHECKLIST = [
+  "Sign offer letter","Set up email & tools access","Review client assignment",
+  "Shadow a clock-in/clock-out cycle","Read client CRM guide","Complete first task"
+];
+function renderOnboarding(){
+  return `
+    <h2>Onboarding</h2>
+    <div class="card">
+      <h3>New team member checklist</h3>
+      ${ONBOARDING_CHECKLIST.map((item,i)=>`
+        <div class="checklist-item">
+          <input type="checkbox" id="ob_${i}">
+          <label for="ob_${i}">${item}</label>
+        </div>
+      `).join("")}
+      <div class="small" style="margin-top:8px;">Checklist state is local to this device for now — hook this up to Firestore per-assistant if you want it to persist across devices.</div>
+    </div>
+  `;
+}
+
+// --- Team admin (admin only) ---
+const NEW_HIRE_ONBOARDING = [
+  { id:"payroll", text:"Payroll set up (bank info collected)" },
+  { id:"w9", text:"W9 filled out" },
+  { id:"training", text:"1-on-1 meeting to train on software" },
+  { id:"agreement", text:"Employment agreement sent & signed" }
+];
+function renderTeamAdmin(){
+  const active = state.settings.assistants.filter(a=>a.active!==false);
+  const former = state.settings.assistants.filter(a=>a.active===false);
+  return `
+    <div class="flex-between"><h2>Team</h2><button onclick="openEmployeeEditor()">+ Add employee</button></div>
+    <div class="card">
+      <h3>Assistants & access codes</h3>
+      ${active.map(renderAssistantRow).join("")}
+      <div class="small" style="margin-top:10px;">Changes save to Firestore <code>settings/access</code>.</div>
+    </div>
+    ${former.length ? `
+    <div class="card">
+      <h3>Former employees</h3>
+      ${former.map(a=>`
+        <div class="list-item">
+          <div>${a.name}</div>
+          <button class="secondary" onclick="reactivateEmployee('${a.id}')">Reactivate</button>
+        </div>
+      `).join("")}
+      <div class="small" style="margin-top:6px;">Their past tasks and time entries stay on record; they just can't log in or be assigned new work.</div>
+    </div>` : ""}
+    <div class="card">
+      <h3>Admin passcode</h3>
+      <input value="${state.settings.adminPasscode}" onchange="updateAdminPasscode(this.value)">
+    </div>
+  `;
+}
+function renderAssistantRow(a){
+  const onboarding = a.onboarding || [];
+  const doneCount = onboarding.filter(i=>i.done).length;
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <div class="flex-between">
+        <div><strong>${a.name}</strong> <span class="small">· agreement ${a.agreementSigned ? "signed" : "not yet signed"}</span></div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input style="width:140px;" value="${a.accessCode||''}" placeholder="access code" onchange="updateAssistantCode('${a.id}',this.value)">
+          <button class="danger" onclick="removeEmployee('${a.id}')">Remove</button>
+        </div>
+      </div>
+      <div class="row">
+        <div><label class="small">Hourly rate ($)</label><input type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
+      </div>
+      ${onboarding.length ? `
+        <div>
+          <div class="small">Onboarding: ${doneCount}/${onboarding.length} complete</div>
+          ${onboarding.map(it=>`
+            <div class="checklist-item">
+              <input type="checkbox" id="ob_${a.id}_${it.id}" ${it.done?'checked':''} onchange="toggleOnboardingItem('${a.id}','${it.id}')">
+              <label for="ob_${a.id}_${it.id}">${it.text}</label>
+            </div>
+          `).join("")}
+        </div>` : ""}
+    </div>
+  `;
+}
+function updateAssistantCode(id, code){
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,accessCode:code}:a);
+  upsert("settings","access", { assistants: state.settings.assistants });
+}
+function updateAssistantField(id, field, value){
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,[field]:value}:a);
+  upsert("settings","access", { assistants: state.settings.assistants });
+}
+function updateAdminPasscode(pass){
+  state.settings.adminPasscode = pass;
+  upsert("settings","access", { adminPasscode: pass });
+}
+function setAssistantActive(id, active){
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,active}:a);
+  upsert("settings","access", { assistants: state.settings.assistants });
+}
+function removeEmployee(id){
+  const a = state.settings.assistants.find(x=>x.id===id);
+  if(!a) return;
+  if(!confirm(a.name + " will be marked as a former employee and lose app access. Their past tasks and time entries stay on record. Continue?")) return;
+  setAssistantActive(id, false);
+}
+function reactivateEmployee(id){ setAssistantActive(id, true); }
+function toggleOnboardingItem(assistantId, itemId){
+  state.settings.assistants = state.settings.assistants.map(a=>{
+    if(a.id!==assistantId) return a;
+    const onboarding = (a.onboarding||[]).map(it=>it.id===itemId?{...it,done:!it.done}:it);
+    return { ...a, onboarding };
+  });
+  upsert("settings","access", { assistants: state.settings.assistants });
+}
+function openEmployeeEditor(){
+  state.modal = { type:"employeeEditor" };
+  render();
+}
+function renderEmployeeEditorModal(){
+  return `
+    <div class="modal">
+      <h3>New employee</h3>
+      <div class="row"><div><label class="small">Full name</label><input id="ef_name" placeholder="e.g. Jamie Rivera"></div></div>
+      <div class="small" style="margin-top:8px;">Adds them to the team roster with a starter onboarding checklist (payroll info, W9, software training, employment agreement). They'll sign their employment agreement the first time they log in with their access code.</div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="saveNewEmployee()">Add employee</button>
+      </div>
+    </div>
+  `;
+}
+function saveNewEmployee(){
+  const name = document.getElementById("ef_name").value.trim();
+  if(!name){ alert("Name is required."); return; }
+  const assistant = {
+    id: newId("asst"),
+    name,
+    accessCode: "",
+    active: true,
+    agreementSigned: false,
+    hourlyRate: 22,
+    hireDate: new Date().toISOString().slice(0,10),
+    onboarding: NEW_HIRE_ONBOARDING.map(i=>({ ...i, done:false }))
+  };
+  state.settings.assistants = [...state.settings.assistants, assistant];
+  upsert("settings","access", { assistants: state.settings.assistants });
+  closeModal();
+}
+
+// --- Employment agreement gate (first team login) ---
+function employmentAgreementHtml(assistant){
+  const todayStr = new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
+  return `
+    <p style="text-align:center;"><strong>THE MODERN CO, LLC</strong><br><strong>INDEPENDENT CONTRACTOR AGREEMENT</strong></p>
+    <p>This Independent Contractor Agreement (“Agreement”) is entered into as of ${todayStr}, by and between:</p>
+    <p>The Modern Co, LLC (“Company”)<br>and<br>${assistant.name} (“Contractor”).</p>
+
+    <p><strong>1. RELATIONSHIP</strong></p>
+    <ul>
+      <li>Contractor is engaged as an Independent Contractor (1099).</li>
+      <li>Nothing in this Agreement shall be construed to create an employer-employee relationship, partnership, or joint venture.</li>
+      <li>Contractor will be assigned clients by the Company and agrees to fulfill services in accordance with each client's selected membership package.</li>
+      <li>Contractor retains flexibility in scheduling the completion of assigned tasks; however, Contractor agrees to complete all client work within agreed deadlines and to accommodate reasonable time-sensitive or recurring in-person service needs.</li>
+      <li>Contractor is responsible for her own federal, state, and local taxes and will receive a Form 1099-NEC at year end.</li>
+    </ul>
+
+    <p><strong>2. TERM & REVIEW</strong></p>
+    <p>Contractor will begin as a 1099 Independent Contractor.<br>After six (6) to nine (9) months, the parties agree to review:</p>
+    <ul>
+      <li>Workload consistency</li>
+      <li>Average weekly hours</li>
+      <li>Operational structure</li>
+      <li>Business growth</li>
+    </ul>
+    <p>At that time, the Company may, at its discretion, transition Contractor to W-2 employee status if the role evolves into a more structured position.<br>This review does not guarantee reclassification.</p>
+
+    <p><strong>3. COMPENSATION</strong></p>
+    <p>Contractor shall be paid:</p>
+    <ul><li>$22.00 per hour</li></ul>
+    <p>Hours will vary based on client demand and assigned workload.</p>
+    <p>Payment Schedule:</p>
+    <ul><li>Semi-monthly (15th and 30th), based on submitted and approved hours.</li></ul>
+    <p>Contractor agrees to accurately track all time worked using the Company's designated system (ClickUp or other approved platform).</p>
+
+    <p><strong>4. DUTIES &amp; RESPONSIBILITIES</strong></p>
+    <p>Contractor agrees to provide personal assistant and concierge services, which may include:</p>
+    <ul>
+      <li>Administrative support</li>
+      <li>Home reset services</li>
+      <li>Client errands and scheduling</li>
+      <li>Task execution within ClickUp</li>
+      <li>Professional communication with clients</li>
+      <li>Maintaining Company service standards</li>
+    </ul>
+    <p>Contractor agrees to represent The Modern Co professionally at all times.</p>
+
+    <p><strong>5. PERFORMANCE &amp; RATE INCREASES</strong></p>
+    <p>Contractor may be eligible for rate increases based on:</p>
+    <ul>
+      <li>Client satisfaction</li>
+      <li>Reliability and professionalism</li>
+      <li>Ability to manage increased client volume</li>
+      <li>Initiative and operational contribution</li>
+    </ul>
+    <p>Compensation adjustments are at the sole discretion of the Company.</p>
+
+    <p><strong>6. CLIENT REFERRAL INCENTIVE</strong></p>
+    <p>If Contractor personally refers a new client to The Modern Co and that client signs a service agreement and submits payment, Contractor will receive:</p>
+    <ul><li>10% of the client's first month membership revenue</li></ul>
+    <p>This incentive applies to referrals made within Contractor's first four (4) months of engagement.<br>The Company reserves the right to modify or discontinue this incentive program at any time.</p>
+
+    <p><strong>7. CONFIDENTIALITY</strong></p>
+    <p>Contractor agrees to maintain strict confidentiality regarding:</p>
+    <ul>
+      <li>Client information</li>
+      <li>Company pricing</li>
+      <li>Systems and templates</li>
+      <li>Internal processes</li>
+    </ul>
+    <p>This obligation survives termination of this Agreement.</p>
+
+    <p><strong>8. NON-SOLICITATION</strong></p>
+    <p>During the term of this Agreement and for twelve (12) months following termination, Contractor shall not:</p>
+    <ul>
+      <li>Solicit Company clients</li>
+      <li>Use Company systems, templates, or client contacts to establish a competing concierge or assistant service</li>
+    </ul>
+
+    <p><strong>9. EXPENSES</strong></p>
+    <p>Contractor is responsible for:</p>
+    <ul>
+      <li>Transportation</li>
+      <li>Personal phone and equipment</li>
+      <li>Insurance (if applicable)</li>
+      <li>Any personal business expenses</li>
+    </ul>
+    <p>Unless otherwise agreed in writing.</p>
+
+    <p><strong>10. TERMINATION</strong></p>
+    <p>Either party may terminate this Agreement at any time with written notice.</p>
+
+    <p><strong>11. ENTIRE AGREEMENT</strong></p>
+    <p>This Agreement represents the entire understanding between the parties and supersedes prior discussions.<br>Any modifications must be in writing and signed by both parties.</p>
+
+    <p><strong>SIGNATURES</strong></p>
+    <p>The Modern Co, LLC<br>By: Kaylan Olivier<br>Name: Kaylan Olivier<br>Title: Founder</p>
+    <p>Contractor<br>Name: ${assistant.name}<br>Signature: (typed name below)<br>Date: ${todayStr}</p>
+  `;
+}
+function renderAgreementGateModal(assistant){
+  return `
+    <div class="modal" style="width:560px;">
+      <h3>Employment Agreement</h3>
+      <div class="small" style="margin-bottom:10px;">Welcome, ${assistant.name}. Please review and sign before continuing.</div>
+      <div class="agreement-text" style="max-height:320px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px;font-size:13px;background:var(--cream);">
+        ${employmentAgreementHtml(assistant)}
+      </div>
+      <div class="row" style="margin-top:10px;"><div><label class="small">Type your full legal name to sign</label><input id="ag_name" placeholder="Full name"></div></div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;">
+        <input type="checkbox" id="ag_check"> I have read and agree to the terms of this Independent Contractor Agreement.
+      </label>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button onclick="signAgreement('${assistant.id}')">Sign & continue</button>
+      </div>
+    </div>
+  `;
+}
+function signAgreement(assistantId){
+  const name = document.getElementById("ag_name").value.trim();
+  const checked = document.getElementById("ag_check").checked;
+  if(!name || !checked){ alert("Please type your name and check the agreement box to continue."); return; }
+  state.settings.assistants = state.settings.assistants.map(a=>{
+    if(a.id!==assistantId) return a;
+    const onboarding = (a.onboarding||[]).map(it=>it.id==="agreement"?{...it,done:true}:it);
+    return { ...a, agreementSigned:true, agreementSignedName:name, agreementSignedAt:new Date().toISOString(), onboarding };
+  });
+  state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
+  upsert("settings","access", { assistants: state.settings.assistants });
+  state.modal = null;
+  render();
+}
+
+// No file-storage backend here (Firestore only), so a client photo gets
+// resized/compressed to a JPEG data URL and stored right on the task
+// document — keeps it well under Firestore's ~1MB document size limit
+// instead of failing silently on a full-size phone photo.
+function readAndCompressImage(file, maxDim, quality){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        let width = img.width, height = img.height;
+        if(width > maxDim || height > maxDim){
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width*scale);
+          height = Math.round(height*scale);
+        }
+        const canvas = document.createElement("canvas");
+        canvas.width = width; canvas.height = height;
+        canvas.getContext("2d").drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = reject;
+      img.src = reader.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+// Non-image files (PDFs, docs) can't be resized like a photo, so they're
+// capped hard — there's no cloud storage wired up, everything lives inline
+// on the Firestore doc, which tops out around 1MB total.
+const MAX_ATTACHMENT_BYTES = 700000;
+function readFileAsDataURL(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+async function addTaskAttachment(taskId){
+  const input = document.getElementById("tf_attachment");
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
+  if(!task) return;
+  let dataUrl;
+  try{
+    if(file.type.startsWith("image/")){
+      dataUrl = await readAndCompressImage(file, 1400, 0.75);
+    } else {
+      if(file.size > MAX_ATTACHMENT_BYTES){
+        alert(`That file is too big (${Math.round(file.size/1000)}KB) — attachments are capped around ${Math.round(MAX_ATTACHMENT_BYTES/1000)}KB since there's no separate file storage yet. Try a smaller file or a screenshot instead.`);
+        return;
+      }
+      dataUrl = await readFileAsDataURL(file);
+    }
+  }catch(e){
+    console.warn("Attachment read failed:", e);
+    alert("Couldn't read that file.");
+    return;
+  }
+  const attachments = [...(task.attachments||[]), {
+    id: newId("attach"), name: file.name, type: file.type || "application/octet-stream",
+    dataUrl, uploadedAt: new Date().toISOString()
+  }];
+  task.attachments = attachments;
+  upsert("tasks", taskId, { attachments });
+  input.value = "";
+  render();
+}
+function removeTaskAttachment(taskId, attachmentId){
+  const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
+  if(!task) return;
+  const attachments = (task.attachments||[]).filter(a=>a.id!==attachmentId);
+  task.attachments = attachments;
+  upsert("tasks", taskId, { attachments });
+  render();
+}
+async function submitClientTaskRequest(clientId){
+  const titleEl = document.getElementById("reqTitle");
+  const detailsEl = document.getElementById("reqDetails");
+  const categoryEl = document.getElementById("reqCategory");
+  const imageEl = document.getElementById("reqImage");
+  const submitBtn = document.getElementById("reqSubmitBtn");
+  const title = titleEl.value.trim();
+  if(!title){ alert("Please enter what you'd like help with."); return; }
+
+  let requestImage = null;
+  if(imageEl.files && imageEl.files[0]){
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Processing photo...";
+    try{
+      requestImage = await readAndCompressImage(imageEl.files[0], 1000, 0.7);
+    }catch(e){
+      console.warn("Image processing failed:", e);
+      alert("Couldn't process that photo — submitting the request without it.");
+    }
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Submit request";
+  }
+
+  const client = state.clients.find(c=>c.id===clientId);
+  const task = {
+    id: newId("task"),
+    title,
+    clientId,
+    status: "Pending approval",
+    category: categoryEl.value,
+    assignees: (client && client.assistantIds) || [],
+    subtasks: [],
+    discussion: [],
+    description: "",
+    clientRequestNote: detailsEl.value.trim(),
+    requestedByClient: true
+  };
+  if(requestImage) task.requestImage = requestImage;
+  upsert("tasks", task.id, task);
+  alert("Request submitted — your assistant will review and confirm it shortly.");
+  render();
+}
+// --- Client portal (view-only) ---
+function renderClientPortal(){
+  const client = state.clients.find(c=>c.id===state.currentClientId);
+  if(!client){ app.innerHTML = `<div class="center-screen"><div class="login-box">Client not found. <button onclick="logout()">Back</button></div></div>`; return; }
+  const used = hoursUsed(client.id);
+  const overage = overageFor(client);
+  const usagePct = client.packageHours ? (used/client.packageHours)*100 : 0;
+  const tasks = state.tasks.filter(t=>t.clientId===client.id && t.status!=="Done");
+  const weekReport = buildClientReport(client, currentReportWeek(), "week");
+  const tierInfo = PACKAGE_TIERS.find(t=>t.hours===client.packageHours && t.price===client.packagePrice);
+  const termEnd = termEndDate(client);
+  const notice = noticeDeadline(client);
+  const noticeDays = notice ? daysUntil(notice, new Date()) : null;
+  const discountStatus = clientReferralDiscountStatus(client);
+  const history = state.tasks.filter(t=>t.clientId===client.id && t.status==="Done")
+    .sort((a,b)=> new Date(b.completedAt||0) - new Date(a.completedAt||0));
+  return app.innerHTML = `
+    <div class="app-shell">
+      <div class="sidebar">
+        <div class="logo">TMC Portal</div>
+        <div class="who">${client.name}<div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div></div>
+      </div>
+      <div class="main">
+        <h2>Welcome, ${client.name}</h2>
+        <div class="card">
+          <h3>Request help with something</h3>
+          <div class="small" style="margin-bottom:8px;">Submit a request and your assistant will review and confirm it shortly.</div>
+          <div class="row"><div><label class="small">What do you need?</label><input id="reqTitle" placeholder="e.g. Schedule the vet appointment"></div></div>
+          <div class="row" style="margin-top:8px;">
+            <div><label class="small">Details (optional)</label><textarea id="reqDetails" placeholder="Any specifics that would help"></textarea></div>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <div><label class="small">Category</label>
+              <select id="reqCategory">
+                <option value="Home">Home</option>
+                <option value="Business">Business</option>
+              </select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <div><label class="small">Attach a photo (optional) — a return label, reference image, etc.</label><input type="file" id="reqImage" accept="image/*"></div>
+          </div>
+          <button style="margin-top:10px;" id="reqSubmitBtn" onclick="submitClientTaskRequest('${client.id}')">Submit request</button>
+        </div>
+        <div class="card">
+          <h3>Your membership</h3>
+          <div class="row">
+            <div><label class="small">Package</label><div>${tierInfo ? tierInfo.label : "Custom"} — $${client.packagePrice||0}/mo</div></div>
+            <div><label class="small">Renewal date</label><div>${client.renewalDate ? new Date(client.renewalDate).toLocaleDateString() : "not set"}</div></div>
+            <div><label class="small">Term</label><div>${TERM_LABELS[client.termType]||"—"}</div></div>
+          </div>
+          ${termEnd ? `<div class="small" style="margin-top:10px;">Current term ends ${termEnd.toLocaleDateString()}.${notice ? ` Written cancellation notice is due by <strong>${notice.toLocaleDateString()}</strong>${noticeDays!==null && noticeDays>=0 ? ` (${noticeDays} day${noticeDays===1?'':'s'} left)` : noticeDays!==null ? ' — that date has passed, so this term will auto-renew per the agreement' : ''}.` : ''}</div>` : ""}
+        </div>
+        <div class="card">
+          <h3>Hours used this period</h3>
+          <div class="progress-bar"><div style="width:${Math.min(100,usagePct)}%;"></div></div>
+          <div class="small">${used.toFixed(1)} / ${client.packageHours||0} hrs</div>
+          ${overage.overHours>0
+            ? `<div class="alert danger" style="margin-top:8px;">You're ${overage.overHours.toFixed(1)} hrs over your package this period — $${overage.amount.toFixed(2)} in overage at $${OVERAGE_RATE}/hr will be invoiced.</div>`
+            : usagePct>=90 ? `<div class="alert warn" style="margin-top:8px;">You're at ${Math.round(usagePct)}% of your package hours this period.</div>` : ""}
+        </div>
+        <div class="card">
+          <h3>Open tasks</h3>
+          ${tasks.map(t=>`
+            <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+              <div class="flex-between">
+                <div>
+                  <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
+                  ${t.title}
+                  ${(t.subtasks||[]).length ? `<div class="small">${(t.subtasks||[]).length} subtasks</div>` : ""}
+                </div>
+                <div style="text-align:right;">
+                  <span class="small">${t.status}</span>
+                  <div class="small">${hoursForTask(t.id).toFixed(1)} hrs logged</div>
+                </div>
+              </div>
+              <div style="padding-left:8px;border-left:2px solid var(--cream-dark);">
+                ${(t.discussion||[]).map(d=>`<div class="small" style="margin-bottom:4px;"><strong>${d.author}</strong>: ${d.text}</div>`).join("") || `<div class="small">No messages yet on this task.</div>`}
+                <div style="display:flex;gap:6px;margin-top:6px;">
+                  <input id="client_comment_${t.id}" placeholder="Message your assistant about this task...">
+                  <button class="secondary" onclick="addClientTaskComment('${t.id}')">Send</button>
+                </div>
+              </div>
+            </div>
+          `).join("") || `<div class="small">No open tasks.</div>`}
+        </div>
+        <div class="card">
+          <h3>This week's update</h3>
+          <div class="small" style="margin-bottom:8px;">${formatPeriodRange(weekReport.week)}</div>
+          <div class="small" style="font-weight:600;margin-bottom:4px;">Completed this week</div>
+          ${weekReport.completed.map(t=>`
+            <div class="list-item">
+              <div>${t.description||t.title}</div>
+              <span class="small">${hoursForTask(t.id).toFixed(1)} hrs</span>
+            </div>
+          `).join("") || `<div class="small">Nothing completed this week.</div>`}
+          <div class="small" style="font-weight:600;margin:12px 0 4px;">In progress</div>
+          ${weekReport.inProgress.map(t=>`
+            <div class="list-item">
+              <div>${t.description||t.title}</div>
+              <span class="small">${hoursForTask(t.id).toFixed(1)} hrs</span>
+            </div>
+          `).join("") || `<div class="small">Nothing in progress right now.</div>`}
+        </div>
+        <div class="card">
+          <h3>Task history</h3>
+          <div class="small" style="margin-bottom:8px;">Everything completed for you, not just this week.</div>
+          ${history.length ? history.slice(0,25).map(t=>`
+            <div class="list-item">
+              <div>
+                <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
+                ${t.description||t.title}
+              </div>
+              <div style="text-align:right;">
+                <span class="small">${t.completedAt ? new Date(t.completedAt).toLocaleDateString() : '—'}</span>
+                <div class="small">${hoursForTask(t.id).toFixed(1)} hrs</div>
+              </div>
+            </div>
+          `).join("") : `<div class="small">Nothing completed yet.</div>`}
+        </div>
+        <div class="card">
+          <h3>Referral rewards</h3>
+          <div class="small" style="margin-bottom:8px;">Refer someone who signs a 3-month term or longer and earn 20% off one month of your own service.</div>
+          <div class="small">${discountStatus.earned} referral${discountStatus.earned===1?'':'s'} qualified so far &middot; ${discountStatus.redeemed} discount month${discountStatus.redeemed===1?'':'s'} used &middot; <strong>${discountStatus.available} available</strong></div>
+        </div>
+        <div class="card">
+          <h3>Vendors & inspections</h3>
+          ${(client.vendors||[]).map(v=>`<div class="list-item"><div>${v.name} — ${v.service}</div><span class="small">last: ${v.lastService||'—'}</span></div>`).join("")}
+          ${(client.inspections||[]).map(ins=>`<div class="list-item"><div>${ins.name}</div><span class="small">next due: ${new Date(ins.nextDue).toLocaleDateString()}</span></div>`).join("")}
+          ${(!client.vendors||!client.vendors.length) && (!client.inspections||!client.inspections.length) ? `<div class="small">Nothing on file yet.</div>` : ""}
+        </div>
+        <div class="card">
+          <h3>Special dates on file</h3>
+          ${(client.specialDates||[]).map(d=>`<div class="list-item"><div>${d.label}</div><span class="small">${d.date} (recurs yearly)</span></div>`).join("") || `<div class="small">None recorded.</div>`}
+        </div>
+        <div class="card">
+          <h3>Activity log</h3>
+          ${(client.notes||[]).slice().reverse().slice(0,10).map(n=>`<div class="list-item"><div>${n.text}</div><span class="small">${new Date(n.date).toLocaleDateString()}</span></div>`).join("") || `<div class="small">No activity yet.</div>`}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// --- Task editor modal ---
+function openTaskEditor(taskId, defaultClientId){
+  const task = taskId ? state.tasks.find(t=>t.id===taskId) : {
+    id: newId("task"), title:"", clientId: defaultClientId || INTERNAL_CLIENT_ID,
+    status:"To do", category:"Business", assignees:[], subtasks:[], discussion:[], description:"", dueDate:""
+  };
+  state.modal = { type:"taskEditor", task };
+  render();
+}
+function renderTaskEditorModal(task){
+  return `
+    <div class="modal">
+      <h3>${task.title ? "Edit task" : "New task"}</h3>
+      ${task.requestedByClient && task.clientRequestNote ? `<div class="alert warn">Client's original request: &ldquo;${task.clientRequestNote}&rdquo;</div>` : ""}
+      ${task.requestImage ? `<img src="${task.requestImage}" style="max-width:100%;max-height:280px;border-radius:8px;margin-bottom:10px;display:block;">` : ""}
+      <div class="row"><div><label class="small">Title</label><input id="tf_title" value="${task.title||''}"></div></div>
+      <div class="row" style="margin-top:8px;">
+        <div><label class="small">Client</label>
+          <select id="tf_client">
+            <option value="${INTERNAL_CLIENT_ID}" ${task.clientId===INTERNAL_CLIENT_ID?'selected':''}>Internal / Modern Co.</option>
+            ${state.clients.map(c=>`<option value="${c.id}" ${task.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Category</label>
+          <select id="tf_category">
+            <option ${task.category==='Home'?'selected':''}>Home</option>
+            <option ${task.category==='Business'?'selected':''}>Business</option>
+          </select>
+        </div>
+        <div><label class="small">Status</label>
+          <select id="tf_status">
+            ${STATUSES.map(s=>`<option ${task.status===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}"></div>
+      </div>
+      <div style="margin-top:8px;">
+        <label class="small">Assignees</label>
+        ${assignableAssistants(task.assignees).map(a=>`
+          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:13px;">
+            <input type="checkbox" value="${a.id}" ${ (task.assignees||[]).includes(a.id) ? 'checked' : ''} class="tf_assignee"> ${a.name}${a.active===false?' (former)':''}
+          </label>
+        `).join("")}
+      </div>
+      <div style="margin-top:10px;">
+        <label class="small">Client-facing summary (optional — shown on weekly client reports instead of the internal title)</label>
+        <textarea id="tf_description" placeholder="e.g. Handled guest messaging across platforms.">${task.description||''}</textarea>
+      </div>
+      <div style="margin-top:10px;">
+        <label class="small">Subtasks</label>
+        <div id="tf_subtasks">
+          ${(task.subtasks||[]).map((s,i)=>`
+            <div class="checklist-item">
+              <input type="checkbox" ${s.done?'checked':''} onchange="toggleSubtask('${task.id}',${i})">
+              <span>${s.text}</span>
+            </div>`).join("")}
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <input id="tf_new_subtask" placeholder="Add subtask...">
+          <button class="secondary" onclick="addSubtaskDraft('${task.id}')">Add</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label class="small">Attachments</label>
+        <div>
+          ${(task.attachments||[]).length ? (task.attachments||[]).map(a=>`
+            <div class="list-item">
+              <div>${a.type && a.type.startsWith("image/") ? `<img src="${a.dataUrl}" style="max-width:60px;max-height:60px;border-radius:6px;vertical-align:middle;margin-right:8px;">` : "📎 "}<a href="${a.dataUrl}" download="${a.name}" target="_blank">${a.name}</a></div>
+              <button class="danger" style="padding:2px 8px;" onclick="removeTaskAttachment('${task.id}','${a.id}')">Remove</button>
+            </div>`).join("") : `<div class="small">No attachments.</div>`}
+        </div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <input type="file" id="tf_attachment">
+          <button class="secondary" onclick="addTaskAttachment('${task.id}')">Upload</button>
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <label class="small">Discussion — visible to everyone assigned to this task</label>
+        <div style="max-height:180px;overflow-y:auto;margin:6px 0;">
+          ${(task.discussion||[]).length ? (task.discussion||[]).map(d=>`
+            <div class="list-item">
+              <div><strong>${d.author}</strong>: ${d.text}</div>
+              <span class="small">${new Date(d.date).toLocaleString()}</span>
+            </div>`).join("") : `<div class="small">No comments yet.</div>`}
+        </div>
+        <div style="display:flex;gap:6px;">
+          <input id="tf_new_comment" placeholder="Add a comment...">
+          <button class="secondary" onclick="addTaskComment('${task.id}')">Post</button>
+        </div>
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:space-between;">
+        <button class="danger" onclick="deleteTask('${task.id}')">Delete</button>
+        <div>
+          <button class="secondary" onclick="closeModal()">Cancel</button>
+          <button onclick="saveTask('${task.id}')">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function toggleSubtask(taskId, i){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const subtasks = (task.subtasks||[]).slice();
+  subtasks[i] = { ...subtasks[i], done: !subtasks[i].done };
+  upsert("tasks", taskId, { subtasks });
+}
+function addSubtaskDraft(taskId){
+  const input = document.getElementById("tf_new_subtask");
+  const text = input.value.trim();
+  if(!text) return;
+  const task = state.modal.task;
+  task.subtasks = (task.subtasks||[]).concat([{ text, done:false }]);
+  render();
+}
+function addTaskComment(taskId){
+  const input = document.getElementById("tf_new_comment");
+  const text = input.value.trim();
+  if(!text) return;
+  // Posts immediately (unlike subtasks, which wait for the Save button) so a
+  // comment can't be lost by closing the modal without saving, and so it
+  // shows up right away for whoever else is on the task.
+  const author = state.currentAssistant ? state.currentAssistant.name : "Admin";
+  const task = state.modal.task;
+  const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
+  task.discussion = discussion;
+  upsert("tasks", taskId, { discussion });
+  render();
+}
+function addClientTaskComment(taskId){
+  const input = document.getElementById("client_comment_"+taskId);
+  const text = input.value.trim();
+  if(!text) return;
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const client = state.clients.find(c=>c.id===state.currentClientId);
+  const author = (client ? client.name : "Client") + " (Client)";
+  const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
+  upsert("tasks", taskId, { discussion });
+  render();
+}
+function saveTask(taskId){
+  const task = state.modal.task;
+  const assignees = Array.from(document.querySelectorAll(".tf_assignee:checked")).map(el=>el.value);
+  const newStatus = document.getElementById("tf_status").value;
+  // Stamp completedAt the moment a task lands on Done, and clear it if it's
+  // reopened — the weekly client report needs to know WHEN a task finished,
+  // not just that it's currently sitting in Done.
+  let completedAt = task.completedAt || null;
+  if(newStatus === "Done" && task.status !== "Done") completedAt = new Date().toISOString();
+  else if(newStatus !== "Done") completedAt = null;
+  const payload = {
+    title: document.getElementById("tf_title").value.trim(),
+    clientId: document.getElementById("tf_client").value,
+    category: document.getElementById("tf_category").value,
+    status: newStatus,
+    description: document.getElementById("tf_description").value.trim(),
+    dueDate: document.getElementById("tf_due").value,
+    assignees,
+    subtasks: task.subtasks || [],
+    discussion: task.discussion || [],
+    completedAt
+  };
+  upsert("tasks", taskId, payload);
+  closeModal();
+}
+function deleteTask(taskId){
+  if(confirm("Delete this task?")){ remove("tasks", taskId); closeModal(); }
+}
+
+// --- Client editor modal ---
+function renderClientEditorModal(client){
+  const c = client || {};
+  return `
+    <div class="modal">
+      <h3>${client ? "Edit client" : "New client"}</h3>
+      <div class="row"><div><label class="small">Name</label><input id="cf_name" value="${c.name||''}"></div></div>
+      <div class="row" style="margin-top:8px;">
+        <div><label class="small">Package hours</label><input id="cf_pkg" value="${c.packageHours||''}"></div>
+        <div><label class="small">Cycle</label>
+          <select id="cf_cycle">
+            ${["biweekly","monthly","quarterly","annual"].map(cy=>`<option ${c.cycleType===cy?'selected':''}>${cy}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <label class="small">Assigned assistants</label>
+        ${assignableAssistants(c.assistantIds).map(a=>`
+          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:13px;">
+            <input type="checkbox" value="${a.id}" ${(c.assistantIds||[]).includes(a.id)?'checked':''} class="cf_assistant"> ${a.name}${a.active===false?' (former)':''}
+          </label>
+        `).join("")}
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="saveClient('${c.id||''}')">Save</button>
+      </div>
+    </div>
+  `;
+}
+function saveClient(existingId){
+  const id = existingId || newId("client");
+  const assistantIds = Array.from(document.querySelectorAll(".cf_assistant:checked")).map(el=>el.value);
+  upsert("clients", id, {
+    name: document.getElementById("cf_name").value.trim(),
+    packageHours: parseFloat(document.getElementById("cf_pkg").value)||0,
+    cycleType: document.getElementById("cf_cycle").value,
+    assistantIds,
+    notes: [], specialDates: [], vendors: [], inspections: []
+  });
+  state.modal = null;
+  // Land straight on the new client's onboarding Profile tab — that's the
+  // natural next step, whether filled out now or during a later orientation visit.
+  if(!existingId){
+    state.activeTab = "clients";
+    state.selectedClientId = id;
+    state.crmSubTab = "profile";
+  }
+  render();
+}
+
+// --- Time entry editor modal (admin) ---
+function toDatetimeLocalValue(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  const tzOffset = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOffset).toISOString().slice(0,16);
+}
+function fromDatetimeLocalValue(val){
+  return val ? new Date(val).toISOString() : null;
+}
+function openTimeEntryEditor(entryId){
+  const entry = state.timeEntries.find(e=>e.id===entryId);
+  if(!entry) return;
+  state.modal = { type:"timeEntryEditor", entry };
+  render();
+}
+function renderTimeEntryEditorModal(entry){
+  const task = state.tasks.find(t=>t.id===entry.taskId);
+  return `
+    <div class="modal">
+      <h3>Edit time entry</h3>
+      <div class="small" style="margin-bottom:8px;">${task ? task.title : '(deleted task)'}${entry.clientId===INTERNAL_CLIENT_ID ? ' · Internal / Modern Co.' : ''}</div>
+      <div class="row">
+        <div><label class="small">Assistant</label>
+          <select id="tef_assistant">
+            ${state.settings.assistants.map(a=>`<option value="${a.id}" ${entry.assistantId===a.id?'selected':''}>${a.name}${a.active===false?' (former)':''}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <div><label class="small">Clock in</label><input type="datetime-local" id="tef_in" value="${toDatetimeLocalValue(entry.clockIn)}"></div>
+        <div><label class="small">Clock out (blank = still clocked in)</label><input type="datetime-local" id="tef_out" value="${toDatetimeLocalValue(entry.clockOut)}"></div>
+      </div>
+      <div style="margin-top:8px;">
+        <label class="small">Note</label>
+        <input id="tef_note" value="${(entry.note||'').replace(/"/g,'&quot;')}" placeholder="What this entry covers">
+      </div>
+      <div style="margin-top:10px;">
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" id="tef_flagged" ${entry.flagged?'checked':''}> Flag for review
+        </label>
+      </div>
+      <div style="margin-top:8px;">
+        <label class="small">Flag reason (optional)</label>
+        <input id="tef_flagnote" value="${(entry.flagNote||'').replace(/"/g,'&quot;')}">
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:space-between;">
+        <button class="danger" onclick="deleteTimeEntry('${entry.id}'); closeModal();">Delete</button>
+        <div>
+          <button class="secondary" onclick="closeModal()">Cancel</button>
+          <button onclick="saveTimeEntryEdit('${entry.id}')">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+function saveTimeEntryEdit(entryId){
+  const clockIn = fromDatetimeLocalValue(document.getElementById("tef_in").value);
+  const clockOut = fromDatetimeLocalValue(document.getElementById("tef_out").value);
+  if(!clockIn){ alert("Clock in time is required."); return; }
+  if(clockOut && new Date(clockOut) <= new Date(clockIn)){ alert("Clock out has to be after clock in."); return; }
+  upsert("timeEntries", entryId, {
+    assistantId: document.getElementById("tef_assistant").value,
+    clockIn,
+    clockOut,
+    note: document.getElementById("tef_note").value.trim(),
+    flagged: document.getElementById("tef_flagged").checked,
+    flagNote: document.getElementById("tef_flagnote").value.trim(),
+  });
+  closeModal();
+}
+
+// --- Modal shell ---
+function renderModal(){
+  if(!state.modal) return "";
+  const content = state.modal.type==="taskEditor" ? renderTaskEditorModal(state.modal.task)
+    : state.modal.type==="clientEditor" ? renderClientEditorModal(state.modal.client)
+    : state.modal.type==="employeeEditor" ? renderEmployeeEditorModal()
+    : state.modal.type==="agreementGate" ? renderAgreementGateModal(state.modal.assistant)
+    : state.modal.type==="reassignClient" ? renderReassignModal(state.modal.client)
+    : state.modal.type==="timeEntryEditor" ? renderTimeEntryEditorModal(state.modal.entry)
+    : "";
+  const dismissable = state.modal.type !== "agreementGate";
+  return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
+}
+function closeModal(){ state.modal = null; render(); }
+
+// ---- Boot ----
+boot();
+</script>
+</body>
+</html>
