@@ -463,14 +463,20 @@ async function boot(){
       console.warn("Could not load settings from Firestore, using local seed data:", err);
       state.firebaseError = state.firebaseError || err.message;
     }
-    subscribe("clients", items=>{ state.clients = items; render(); });
-    subscribe("tasks", items=>{ state.tasks = items; render(); });
-    subscribe("timeEntries", items=>{ state.timeEntries = items; render(); });
+    // Data still updates in the background even with a modal open (so it's
+    // fresh the moment it closes) -- it just skips forcing a re-render while
+    // one's open, since a background sync mid-form-fill would otherwise wipe
+    // out anything typed into a field that's since been tabbed away from
+    // (those values only live in the DOM until Save, nothing holds them
+    // through a full re-render except the currently-focused field).
+    subscribe("clients", items=>{ state.clients = items; if(!state.modal) render(); });
+    subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
+    subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
     watchOrientationSync();
   }
 
   render();
-  setInterval(()=>render(), 60000); // refresh live timers every minute
+  setInterval(()=>{ if(!state.modal) render(); }, 60000); // refresh live timers every minute, but not mid-form
   setInterval(checkClockReminders, 30*60*1000); // 30-min reminder
 }
 
@@ -3168,7 +3174,7 @@ function renderTaskEditorModal(task){
       <h3>${task.title ? "Edit task" : "New task"}</h3>
       ${task.requestedByClient && task.clientRequestNote ? `<div class="alert warn">Client's original request: &ldquo;${task.clientRequestNote}&rdquo;</div>` : ""}
       ${task.requestImage ? `<img src="${task.requestImage}" style="max-width:100%;max-height:280px;border-radius:8px;margin-bottom:10px;display:block;">` : ""}
-      <div class="row"><div><label class="small">Title</label><input id="tf_title" value="${task.title||''}"></div></div>
+      <div class="row"><div><label class="small">Title</label><input id="tf_title" value="${task.title||''}" oninput="state.modal.task.title=this.value"></div></div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Client</label>
           <select id="tf_client">
@@ -3187,8 +3193,8 @@ function renderTaskEditorModal(task){
             ${STATUSES.map(s=>`<option ${task.status===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
-        <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}"></div>
-        <div><label class="small">Completed date${task.status==='Done'?'':' (only applies once status is Done)'}</label><input type="date" id="tf_completed" value="${task.completedAt ? task.completedAt.slice(0,10) : ''}"></div>
+        <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}" onchange="state.modal.task.dueDate=this.value"></div>
+        <div><label class="small">Completed date${task.status==='Done'?'':' (only applies once status is Done)'}</label><input type="date" id="tf_completed" value="${task._completedDraft !== undefined ? task._completedDraft : (task.completedAt ? task.completedAt.slice(0,10) : '')}" onchange="state.modal.task._completedDraft=this.value"></div>
       </div>
       <div class="small" style="margin-top:2px;">Reports pull "completed this period" straight off this date — if a task was actually finished earlier and just had its status corrected today, set the real date here so it doesn't show up on a report it doesn't belong on.</div>
       <div style="margin-top:8px;">
@@ -3201,7 +3207,7 @@ function renderTaskEditorModal(task){
       </div>
       <div style="margin-top:10px;">
         <label class="small">Client-facing summary (optional — shown on weekly client reports instead of the internal title)</label>
-        <textarea id="tf_description" placeholder="e.g. Handled guest messaging across platforms.">${task.description||''}</textarea>
+        <textarea id="tf_description" placeholder="e.g. Handled guest messaging across platforms." oninput="state.modal.task.description=this.value">${task.description||''}</textarea>
       </div>
       <div style="margin-top:10px;">
         <label class="small">Subtasks</label>
