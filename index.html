@@ -1103,16 +1103,18 @@ function noticeDeadline(client){
   return new Date(end.getTime() - (TERM_NOTICE_DAYS[client.termType]||0)*24*3600000);
 }
 function upcomingNoticeDeadlines(windowDays){
-  windowDays = windowDays || 14;
+  // windowDays === null means "no limit" — every active client with term
+  // data, not just ones whose deadline happens to be imminent.
   const now = new Date();
   return state.clients
     .filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"))
     .map(client=>{
       const deadline = noticeDeadline(client);
       if(!deadline) return null;
-      return { client, deadline, termEnd: termEndDate(client), days: daysUntil(deadline, now) };
+      const period = currentBillingPeriod(client);
+      return { client, deadline, termEnd: termEndDate(client), periodEnd: period ? period.end : null, days: daysUntil(deadline, now) };
     })
-    .filter(x=>x && x.days<=windowDays)
+    .filter(x=>x && (windowDays===null || x.days<=windowDays))
     .sort((a,b)=>a.days-b.days);
 }
 
@@ -1315,7 +1317,7 @@ function renderAdminDashboard(){
   const atRiskClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c));
   const internalStatus = internalHoursStatus(period);
   const reminders = upcomingReminders(14);
-  const noticeDeadlines = upcomingNoticeDeadlines(14);
+  const noticeDeadlines = upcomingNoticeDeadlines(null);
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -1443,10 +1445,10 @@ function renderAdminDashboard(){
 
     <div class="card">
       <h3>Renewal &amp; cancellation notice deadlines</h3>
-      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged.</div>
-      ${noticeDeadlines.length===0 ? `<div class="small">Nothing coming up in the next 14 days.</div>` : `
+      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged. Every active client with a term on file is listed here, soonest deadline first.</div>
+      ${noticeDeadlines.length===0 ? `<div class="small">No active clients have term/renewal data set yet.</div>` : `
       <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Client</th><th>Term</th><th>Term ends</th><th>Notice deadline</th><th>Status</th></tr></thead>
+        <thead><tr><th>Client</th><th>Term</th><th>Term ends</th><th>Notice deadline</th><th>30-day period end date</th><th>Status</th></tr></thead>
         <tbody>
           ${noticeDeadlines.map(n=>`
             <tr style="cursor:pointer;" onclick="viewClientMembership('${n.client.id}')">
@@ -1454,6 +1456,7 @@ function renderAdminDashboard(){
               <td>${TERM_LABELS[n.client.termType]||n.client.termType}</td>
               <td>${n.termEnd.toLocaleDateString()}</td>
               <td>${n.deadline.toLocaleDateString()}</td>
+              <td>${n.periodEnd ? n.periodEnd.toLocaleDateString() : '—'}</td>
               <td>${n.days<0 ? `<span style="color:var(--danger);">deadline passed — will auto-renew</span>` : n.days===0 ? `<span style="color:var(--warn);">today</span>` : `${n.days}d left`}</td>
             </tr>`).join("")}
         </tbody>
