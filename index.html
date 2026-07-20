@@ -269,7 +269,7 @@ let state = {
   selectedClientId: null,
   modal: null,
   timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all" },
-  kanbanFilter: { clientId: "all", category: "all", onlyMine: false }
+  kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true }
 };
 
 // ---- 4. Firestore helpers ----
@@ -2057,8 +2057,17 @@ function renderKanban(){
     if(f.clientId!=="all" && t.clientId!==f.clientId) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
     if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
+    if(f.hideDone && t.status==="Done") return false;
     return true;
   });
+  const doneCount = state.tasks.filter(t=>{
+    if(t.status!=="Done") return false;
+    if(f.clientId!=="all" && t.clientId!==f.clientId) return false;
+    if(f.category!=="all" && t.category!==f.category) return false;
+    if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
+    return true;
+  }).length;
+  const visibleStatuses = f.hideDone ? STATUSES.filter(s=>s!=="Done") : STATUSES;
   return `
     <div class="flex-between"><h2>Task Board</h2><button onclick="openTaskEditor(null,null)">+ New task</button></div>
     <div class="row" style="margin-bottom:14px;">
@@ -2084,9 +2093,15 @@ function renderKanban(){
           <input type="checkbox" ${f.onlyMine?'checked':''} onchange="setKanbanFilter('onlyMine',this.checked)"> My tasks only
         </label>
       </div>` : ""}
+      <div style="display:flex;align-items:flex-end;padding-bottom:8px;">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" ${f.hideDone?'checked':''} onchange="setKanbanFilter('hideDone',this.checked)"> Hide completed
+        </label>
+      </div>
     </div>
+    ${f.hideDone && doneCount>0 ? `<div class="small" style="margin-bottom:10px;">${doneCount} completed task${doneCount===1?'':'s'} hidden — nothing's deleted, they're still on the client's task history and this period's report. <a href="#" onclick="setKanbanFilter('hideDone',false);return false;">Show them</a>.</div>` : ""}
     <div class="kanban">
-      ${STATUSES.map(status=>`
+      ${visibleStatuses.map(status=>`
         <div class="kanban-col">
           <h4>${status}</h4>
           ${filtered.filter(t=>t.status===status).map(renderKanbanCard).join("")}
