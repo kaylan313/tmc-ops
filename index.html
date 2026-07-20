@@ -1486,6 +1486,28 @@ function renderTeamDashboard(){
   const myEntry = state.currentAssistant && activeEntryFor(state.currentAssistant.id);
   const myOpenTasks = state.tasks.filter(t=>t.status!=="Done" && (t.assignees||[]).includes(state.currentAssistant?.id));
   const myPending = state.tasks.filter(t=>t.status==="Pending approval" && (t.assignees||[]).includes(state.currentAssistant?.id));
+
+  // Week ahead: anything flagged priority, plus anything due in the next 7
+  // days (or already overdue) — sorted priority-first, then by due date.
+  const now = new Date();
+  const weekAhead = myOpenTasks.filter(t=>{
+    if(t.priority) return true;
+    if(!t.dueDate) return false;
+    return daysUntil(new Date(t.dueDate), now) <= 7;
+  }).sort((a,b)=>{
+    if(!!b.priority !== !!a.priority) return b.priority ? 1 : -1;
+    if(!a.dueDate && !b.dueDate) return 0;
+    if(!a.dueDate) return 1;
+    if(!b.dueDate) return -1;
+    return new Date(a.dueDate) - new Date(b.dueDate);
+  });
+
+  // Recent comments across everything assigned to me, newest first.
+  const recentComments = myOpenTasks
+    .flatMap(t => (t.discussion||[]).map(d => ({ ...d, task: t })))
+    .sort((a,b)=> new Date(b.date) - new Date(a.date))
+    .slice(0,6);
+
   return `
     <h2>Dashboard</h2>
     ${renderClientRequestsCard(myPending, { title: "Requests awaiting your review" })}
@@ -1505,6 +1527,28 @@ function renderTeamDashboard(){
       <h3>Hour-usage alerts</h3>
       ${alerts.length===0 ? `<div class="small">No clients near their package limit.</div>` :
         alerts.map(a=>`<div class="alert ${a.level}">${a.text}</div>`).join("")}
+    </div>
+    <div class="card">
+      <h3>Week ahead</h3>
+      <div class="small" style="margin-bottom:8px;">Priority tasks and anything due within 7 days (including overdue).</div>
+      ${weekAhead.length===0 ? `<div class="small">Nothing priority or due soon.</div>` : weekAhead.map(t=>{
+        const client = state.clients.find(c=>c.id===t.clientId);
+        const days = t.dueDate ? daysUntil(new Date(t.dueDate), now) : null;
+        const dueLabel = t.dueDate ? (days<0 ? `overdue by ${Math.abs(days)}d` : days===0 ? "due today" : `due in ${days}d`) : "no due date";
+        return `<div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${t.id}',null)">
+          <div>${t.priority?'<span class="badge" style="background:var(--danger);">⚑</span> ':''}${t.title} <span class="small">(${client?client.name:'Internal'})</span></div>
+          <span class="small" style="${days!==null&&days<0?'color:var(--danger);font-weight:600;':''}">${dueLabel}</span>
+        </div>`;
+      }).join("")}
+    </div>
+    <div class="card">
+      <h3>Recent comments on your tasks</h3>
+      ${recentComments.length===0 ? `<div class="small">No comments yet.</div>` : recentComments.map(d=>`
+        <div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${d.task.id}',null)">
+          <div><strong>${d.author}</strong> on ${d.task.title}: ${d.text.length>90 ? d.text.slice(0,90)+"…" : d.text}</div>
+          <span class="small">${new Date(d.date).toLocaleString()}</span>
+        </div>
+      `).join("")}
     </div>
     <div class="card">
       <h3>My open tasks</h3>
@@ -2155,6 +2199,7 @@ function renderKanbanCard(t){
     <div class="task-card">
       <div onclick="openTaskEditor('${t.id}',null)">
         <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
+        ${t.priority ? '<span class="badge" style="background:var(--danger);">⚑ Priority</span>' : ''}
         ${t.requestedByClient ? '<span class="badge" style="background:var(--rose-dark);">Client request</span>' : ''}
         <strong>${t.title}</strong>
         <div class="meta">${client?client.name:'Internal'} ${ (t.assignees||[]).length ? '· '+t.assignees.map(id=>{const a=state.settings.assistants.find(x=>x.id===id);return a?a.name:id;}).join(", ") : ''}</div>
@@ -2250,6 +2295,12 @@ function renderTimeTracking(){
         <button style="margin-top:8px;" onclick="doClockIn()">Clock in</button>
         <div class="small" style="margin:10px 0 6px;">Or for general admin work not tied to a specific task:</div>
         <button class="secondary" onclick="clockInAdminWork(state.currentAssistant.id)">Clock in for Admin Work</button>
+        <div class="small" style="margin:10px 0 6px;">Forgot to clock in earlier, or logging time after the fact?</div>
+        <button class="secondary" onclick="openManualTimeEntry()">Log time manually</button>
+      </div>` : ""}
+    ${!state.currentAssistant && state.role==="admin" ? `
+      <div class="card">
+        <button class="secondary" onclick="openManualTimeEntry()">Log time manually for someone</button>
       </div>` : ""}
     ${state.role==="admin" ? `
     <div class="card">
@@ -2299,7 +2350,7 @@ function renderTimeTracking(){
         const isAdminWork = e.clientId===INTERNAL_CLIENT_ID;
         return `<div class="list-item">
           <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${task?task.title:'(deleted task)'}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
-          <div style="display:flex;align-items:center;gap:8px;">${e.clockOut ? entryDurationHours(e).toFixed(2)+" hrs" : `<button onclick="doClockOut('${e.id}')">Clock out</button>`}${state.role==='admin' ? `<button class="secondary" style="padding:2px 8px;" title="Edit this time entry" onclick="openTimeEntryEditor('${e.id}')">Edit</button><button class="secondary" style="padding:2px 8px;${e.flagged?'color:var(--danger);':''}" title="${e.flagged ? 'Unflag' : 'Flag for review'}" onclick="toggleFlagTimeEntry('${e.id}')">${e.flagged ? '⚑' : '⚐'}</button>` : ""}<button class="secondary" style="padding:2px 8px;" title="Delete this time entry" onclick="deleteTimeEntry('${e.id}')">✕</button></div>
+          <div style="display:flex;align-items:center;gap:8px;">${e.clockOut ? entryDurationHours(e).toFixed(2)+" hrs" : `<button onclick="doClockOut('${e.id}')">Clock out</button>`}${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" title="Edit this time entry" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}${state.role==='admin' ? `<button class="secondary" style="padding:2px 8px;${e.flagged?'color:var(--danger);':''}" title="${e.flagged ? 'Unflag' : 'Flag for review'}" onclick="toggleFlagTimeEntry('${e.id}')">${e.flagged ? '⚑' : '⚐'}</button>` : ""}<button class="secondary" style="padding:2px 8px;" title="Delete this time entry" onclick="deleteTimeEntry('${e.id}')">✕</button></div>
         </div>`;
       }).join("") || `<div class="small">No entries in this range.</div>`}
     </div>
@@ -2311,8 +2362,7 @@ function doClockIn(){
   clockIn(sel.value, state.currentAssistant.id);
 }
 function doClockOut(entryId){
-  const editedRaw = prompt("Clock out now? Leave this blank. Only type a time here to correct a clock you forgot to end — it'll be flagged as a manual entry.", "");
-  clockOut(entryId, editedRaw ? new Date(editedRaw).toISOString() : null);
+  clockOut(entryId, null);
 }
 
 // --- Payroll reconciliation tool (admin only) ---
@@ -3175,6 +3225,9 @@ function renderTaskEditorModal(task){
       ${task.requestedByClient && task.clientRequestNote ? `<div class="alert warn">Client's original request: &ldquo;${task.clientRequestNote}&rdquo;</div>` : ""}
       ${task.requestImage ? `<img src="${task.requestImage}" style="max-width:100%;max-height:280px;border-radius:8px;margin-bottom:10px;display:block;">` : ""}
       <div class="row"><div><label class="small">Title</label><input id="tf_title" value="${task.title||''}" oninput="state.modal.task.title=this.value"></div></div>
+      <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;">
+        <input type="checkbox" id="tf_priority" ${task.priority?'checked':''} onchange="state.modal.task.priority=this.checked"> Mark as priority — surfaces on the assignee's dashboard
+      </label>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Client</label>
           <select id="tf_client">
@@ -3327,6 +3380,7 @@ function saveTask(taskId){
     status: newStatus,
     description: document.getElementById("tf_description").value.trim(),
     dueDate: document.getElementById("tf_due").value,
+    priority: document.getElementById("tf_priority").checked,
     assignees,
     subtasks: task.subtasks || [],
     discussion: task.discussion || [],
@@ -3400,6 +3454,66 @@ function toDatetimeLocalValue(iso){
 function fromDatetimeLocalValue(val){
   return val ? new Date(val).toISOString() : null;
 }
+function openManualTimeEntry(){
+  state.modal = { type:"manualTimeEntry" };
+  render();
+}
+function renderManualTimeEntryModal(){
+  const now = toDatetimeLocalValue(new Date().toISOString());
+  return `
+    <div class="modal">
+      <h3>Log time manually</h3>
+      <div class="small" style="margin-bottom:8px;">For a task you already finished without clocking in live — enter the real clock-in and clock-out times.</div>
+      ${state.role==='admin' ? `
+      <div class="row">
+        <div><label class="small">Assistant</label>
+          <select id="mte_assistant">
+            ${state.settings.assistants.filter(a=>a.active!==false).map(a=>`<option value="${a.id}">${a.name}</option>`).join("")}
+          </select>
+        </div>
+      </div>` : ""}
+      <div class="row" style="margin-top:8px;">
+        <div><label class="small">Task</label>
+          <select id="mte_task">
+            <option value="">Choose a task...</option>
+            ${state.tasks.map(t=>`<option value="${t.id}">${t.title}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <div><label class="small">Clock in</label><input type="datetime-local" id="mte_in" value="${now}"></div>
+        <div><label class="small">Clock out</label><input type="datetime-local" id="mte_out" value="${now}"></div>
+      </div>
+      <div style="margin-top:8px;">
+        <label class="small">Note (optional)</label>
+        <input id="mte_note" placeholder="What this entry covers">
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="saveManualTimeEntry()">Log time</button>
+      </div>
+    </div>
+  `;
+}
+function saveManualTimeEntry(){
+  const taskId = document.getElementById("mte_task").value;
+  const clockIn = fromDatetimeLocalValue(document.getElementById("mte_in").value);
+  const clockOut = fromDatetimeLocalValue(document.getElementById("mte_out").value);
+  const assistantId = state.role==='admin' ? document.getElementById("mte_assistant").value : state.currentAssistant.id;
+  if(!taskId){ alert("Pick a task first."); return; }
+  if(!clockIn || !clockOut){ alert("Both clock in and clock out are required."); return; }
+  if(new Date(clockOut) <= new Date(clockIn)){ alert("Clock out has to be after clock in."); return; }
+  const task = state.tasks.find(t=>t.id===taskId);
+  const entry = {
+    id: newId("te"),
+    taskId, assistantId,
+    clientId: task ? task.clientId : INTERNAL_CLIENT_ID,
+    clockIn, clockOut, clockOutManual: true,
+    note: document.getElementById("mte_note").value.trim(),
+  };
+  upsert("timeEntries", entry.id, entry);
+  closeModal();
+}
 function openTimeEntryEditor(entryId){
   const entry = state.timeEntries.find(e=>e.id===entryId);
   if(!entry) return;
@@ -3412,13 +3526,14 @@ function renderTimeEntryEditorModal(entry){
     <div class="modal">
       <h3>Edit time entry</h3>
       <div class="small" style="margin-bottom:8px;">${task ? task.title : '(deleted task)'}${entry.clientId===INTERNAL_CLIENT_ID ? ' · Internal / Modern Co.' : ''}</div>
+      ${state.role==='admin' ? `
       <div class="row">
         <div><label class="small">Assistant</label>
           <select id="tef_assistant">
             ${state.settings.assistants.map(a=>`<option value="${a.id}" ${entry.assistantId===a.id?'selected':''}>${a.name}${a.active===false?' (former)':''}</option>`).join("")}
           </select>
         </div>
-      </div>
+      </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Clock in</label><input type="datetime-local" id="tef_in" value="${toDatetimeLocalValue(entry.clockIn)}"></div>
         <div><label class="small">Clock out (blank = still clocked in)</label><input type="datetime-local" id="tef_out" value="${toDatetimeLocalValue(entry.clockOut)}"></div>
@@ -3427,6 +3542,7 @@ function renderTimeEntryEditorModal(entry){
         <label class="small">Note</label>
         <input id="tef_note" value="${(entry.note||'').replace(/"/g,'&quot;')}" placeholder="What this entry covers">
       </div>
+      ${state.role==='admin' ? `
       <div style="margin-top:10px;">
         <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
           <input type="checkbox" id="tef_flagged" ${entry.flagged?'checked':''}> Flag for review
@@ -3435,7 +3551,7 @@ function renderTimeEntryEditorModal(entry){
       <div style="margin-top:8px;">
         <label class="small">Flag reason (optional)</label>
         <input id="tef_flagnote" value="${(entry.flagNote||'').replace(/"/g,'&quot;')}">
-      </div>
+      </div>` : ""}
       <div style="margin-top:14px;display:flex;justify-content:space-between;">
         <button class="danger" onclick="deleteTimeEntry('${entry.id}'); closeModal();">Delete</button>
         <div>
@@ -3451,14 +3567,18 @@ function saveTimeEntryEdit(entryId){
   const clockOut = fromDatetimeLocalValue(document.getElementById("tef_out").value);
   if(!clockIn){ alert("Clock in time is required."); return; }
   if(clockOut && new Date(clockOut) <= new Date(clockIn)){ alert("Clock out has to be after clock in."); return; }
-  upsert("timeEntries", entryId, {
-    assistantId: document.getElementById("tef_assistant").value,
+  const payload = {
     clockIn,
     clockOut,
+    clockOutManual: true,
     note: document.getElementById("tef_note").value.trim(),
-    flagged: document.getElementById("tef_flagged").checked,
-    flagNote: document.getElementById("tef_flagnote").value.trim(),
-  });
+  };
+  if(state.role==='admin'){
+    payload.assistantId = document.getElementById("tef_assistant").value;
+    payload.flagged = document.getElementById("tef_flagged").checked;
+    payload.flagNote = document.getElementById("tef_flagnote").value.trim();
+  }
+  upsert("timeEntries", entryId, payload);
   closeModal();
 }
 
@@ -3473,6 +3593,7 @@ function renderModal(){
     : state.modal.type==="timeEntryEditor" ? renderTimeEntryEditorModal(state.modal.entry)
     : state.modal.type==="appGuide" ? renderAppGuideModal(state.modal.assistant)
     : state.modal.type==="appGuideReadOnly" ? renderAppGuideReadOnlyModal()
+    : state.modal.type==="manualTimeEntry" ? renderManualTimeEntryModal()
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
