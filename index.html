@@ -2204,7 +2204,7 @@ function renderClientMembership(client){
             ${["biweekly","monthly","quarterly","annual"].map(c=>`<option value="${c}" ${client.cycleType===c?'selected':''}>${c}</option>`).join("")}
           </select>
         </div>
-        <div><label class="small">Renewal date anchor</label><input type="date" value="${client.renewalDate?client.renewalDate.slice(0,10):''}" onchange="updateClientField('${client.id}','renewalDate',this.value)"></div>
+        <div><label class="small">Renewal date anchor (auto-set from term start date below — only touch this if their billing cycle genuinely starts on a different day)</label><input type="date" value="${client.renewalDate?client.renewalDate.slice(0,10):''}" onchange="updateClientField('${client.id}','renewalDate',this.value)"></div>
       </div>
       <div class="small" style="margin-top:8px;">${period ? `Current ${isHomeReset?'30-day cycle':'billing period'} runs ${period.start.toLocaleDateString()} – ${new Date(period.end.getTime()-1).toLocaleDateString()}, resetting ${period.end.toLocaleDateString()}. Calculated automatically from the renewal date anchor above — nothing to enter separately.` : "Set a renewal date anchor above to calculate when this period ends."}</div>
       <div class="row" style="margin-top:10px;">
@@ -2239,7 +2239,7 @@ function renderClientMembership(client){
             <option value="12month_renewal" ${client.termType==='12month_renewal'?'selected':''}>Twelve Month Term (Renewal)</option>
           </select>
         </div>
-        <div><label class="small">Current term start date</label><input type="date" value="${client.termStartDate?client.termStartDate.slice(0,10):''}" onchange="updateClientField('${client.id}','termStartDate',this.value)"></div>
+        <div><label class="small">Contract signed / term start date</label><input type="date" value="${client.termStartDate?client.termStartDate.slice(0,10):''}" onchange="updateTermStartDate('${client.id}',this.value)"></div>
         <div><label class="small">Client status</label>
           <select onchange="updateClientField('${client.id}','clientStatus',this.value)">
             <option value="active" ${(!client.clientStatus||client.clientStatus==='active')?'selected':''}>Active</option>
@@ -2252,7 +2252,7 @@ function renderClientMembership(client){
       <div class="row" style="margin-top:10px;">
         <div><label class="small">${client.clientStatus==='paused'?'Paused since':'Cancelled date'}</label><input type="date" value="${client.cancelledDate?client.cancelledDate.slice(0,10):''}" onchange="updateClientField('${client.id}','cancelledDate',this.value)"></div>
       </div>` : ""}
-      <div class="small" style="margin-top:12px;">Computed from term type + start date: term ends ${termEndDate(client)?termEndDate(client).toLocaleDateString():'—'}, notice deadline ${noticeDeadline(client)?noticeDeadline(client).toLocaleDateString():'—'}. If either is wrong for this client's actual contract, override it directly below — leave blank to go back to the computed value.</div>
+      <div class="small" style="margin-top:12px;">Auto-calculated from the term start date above (pilot = +30 days, 3-month = +90 days, 12-month = +365 days): term ends ${termEndDate(client)?termEndDate(client).toLocaleDateString():'—'}, notice deadline ${noticeDeadline(client)?noticeDeadline(client).toLocaleDateString():'—'}. If either is wrong for this client's actual contract, override it directly below — leave blank to go back to the computed value.</div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Term end override (optional)</label><input type="date" value="${client.termEndOverride?client.termEndOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','termEndOverride',this.value)"></div>
         <div><label class="small">Cancellation deadline override (optional)</label><input type="date" value="${client.noticeDeadlineOverride?client.noticeDeadlineOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','noticeDeadlineOverride',this.value)"></div>
@@ -2268,6 +2268,13 @@ function renderClientMembership(client){
   `;
 }
 function updateClientField(id, field, value){ upsert("clients", id, { [field]: value }); }
+// One date drives everything: setting the contract/term start date also
+// sets the billing renewal anchor to the same date, so the 30-day period
+// and the term end (30/90/365 days out, per termType) both calculate
+// automatically instead of needing the renewal date entered separately.
+function updateTermStartDate(clientId, value){
+  upsert("clients", clientId, { termStartDate: value, renewalDate: value });
+}
 function setRollover(clientId){
   const hrs = parseFloat(document.getElementById("rollover_hrs_"+clientId).value);
   const periodStart = document.getElementById("rollover_start_"+clientId).value;
