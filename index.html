@@ -2600,7 +2600,19 @@ function renderTimeTracking(){
 
   return `
     <h2>Time Tracking</h2>
-    ${!active && state.currentAssistant ? `
+    ${state.currentAssistant && active ? `
+      <div class="card">
+        <div class="flex-between">
+          <div>
+            <div class="small">Currently clocked in</div>
+            <strong>${(state.tasks.find(t=>t.id===active.taskId)||{}).title || "Task"}</strong>
+          </div>
+          <div class="timer-pill">⏱ ${entryDurationHours(active).toFixed(2)} hrs</div>
+        </div>
+        ${isStale(active) ? `<div class="alert danger" style="margin-top:8px;">This clock has been running over 8 hours — check if it's stale.</div>` : ""}
+        <button style="margin-top:10px;" onclick="doClockOut('${active.id}')">Clock out</button>
+      </div>` : ""}
+    ${state.currentAssistant && !active ? `
       <div class="card">
         <h3>Clock in</h3>
         <input id="clockInTaskSelect" list="clockInTaskList" placeholder="Search by # or title...">
@@ -2608,7 +2620,10 @@ function renderTimeTracking(){
         <button style="margin-top:8px;" onclick="doClockIn()">Clock in</button>
         <div class="small" style="margin:10px 0 6px;">Or for general admin work not tied to a specific task:</div>
         <button class="secondary" onclick="clockInAdminWork(state.currentAssistant.id)">Clock in for Admin Work</button>
-        <div class="small" style="margin:10px 0 6px;">Forgot to clock in earlier, or logging time after the fact?</div>
+      </div>` : ""}
+    ${state.currentAssistant ? `
+      <div class="card">
+        <div class="small" style="margin-bottom:6px;">Forgot to clock in earlier, or logging time after the fact?</div>
         <button class="secondary" onclick="openManualTimeEntry()">Log time manually</button>
       </div>` : ""}
     ${!state.currentAssistant && state.role==="admin" ? `
