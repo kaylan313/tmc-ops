@@ -490,6 +490,41 @@ async function boot(){
 }
 
 // ---- 6. Orientation sync (existing integration, preserved) ----
+// A 2-digit year via new Date("7/10/26") parses as 1926, not 2026 — rewrite
+// it to a 4-digit year first. Falls back to whatever Date() makes of it for
+// any other format the onboarding dashboard might send.
+function parseLooseDate(str){
+  if(!str || typeof str !== "string" || !str.trim()) return null;
+  const m = str.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
+  const normalized = m ? `${m[1]}/${m[2]}/20${m[3]}` : str.trim();
+  const d = new Date(normalized);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0,10);
+}
+function mapMembershipTierToPackage(membershipTier, homeReset){
+  const text = ((membershipTier||"") + " " + (homeReset||"")).toLowerCase();
+  if(!text.trim()) return null;
+  if(text.includes("refresh")) return PACKAGE_TIERS.find(t=>t.key==="reset_refresh");
+  if(text.includes("restore")) return PACKAGE_TIERS.find(t=>t.key==="reset_restore");
+  const hourMatch = text.match(/(\d+)\s*hr/);
+  if(hourMatch) return PACKAGE_TIERS.find(t=>t.hours===parseInt(hourMatch[1],10)) || null;
+  return null;
+}
+function mapAgreementTypeToTermType(agreementType){
+  const text = (agreementType||"").toLowerCase();
+  if(!text.trim()) return null;
+  if(text.includes("pilot") || text.includes("1 month") || text.includes("one (1) month")) return "pilot";
+  if(text.includes("three") || text.includes("3 month") || text.includes("3-month")) return "3month";
+  if(text.includes("twelve") || text.includes("12 month") || text.includes("1 year") || text.includes("annual")) return "12month_new";
+  return null;
+}
+// Appends a synced value onto an existing free-text field instead of
+// clobbering it, and no-ops if there's nothing new to add.
+function appendIfNew(existing, label, value){
+  if(!value || !value.trim()) return existing;
+  const tag = `${label}: ${value.trim()}`;
+  if(existing && existing.includes(tag)) return existing;
+  return existing ? existing + "\n" + tag : tag;
+}
 function watchOrientationSync(){
   db.collection("orientationClients").where("done.visit","==",true)
     .onSnapshot(snap=>{
@@ -499,18 +534,70 @@ function watchOrientationSync(){
           const clientName = data.clientName || data.name;
           const match = state.clients.find(c => c.name && clientName &&
             c.name.toLowerCase() === clientName.toLowerCase());
-          if(match){
-            const note = {
+          if(!match) return;
+
+          const notes = match.notes || [];
+          const patch = {};
+          if(!notes.some(n=>n.source==="orientation-sync")){
+            patch.notes = [...notes, {
               id: newId("note"),
               text: "Home orientation completed (synced from onboarding dashboard).",
               date: new Date().toISOString(),
               source: "orientation-sync"
-            };
-            const notes = match.notes || [];
-            if(!notes.some(n=>n.source==="orientation-sync")){
-              upsert("clients", match.id, { notes: [...notes, note] });
-            }
+            }];
           }
+
+          // Contract dates + term — only fill in what's still blank, and
+          // setting the start date also sets the renewal anchor to match,
+          // same as the manual entry path.
+          const startDate = !match.termStartDate ? (parseLooseDate(data.contractStartDate) || parseLooseDate(data.sigDate)) : null;
+          if(startDate){
+            patch.termStartDate = startDate;
+            if(!match.renewalDate) patch.renewalDate = startDate;
+          }
+          if(!match.termType){
+            const termType = mapAgreementTypeToTermType(data.agreementType);
+            if(termType) patch.termType = termType;
+          }
+          if(!match.packageHours){
+            const tier = mapMembershipTierToPackage(data.membershipTier, data.homeReset);
+            if(tier){ patch.packageHours = tier.hours; patch.packagePrice = tier.price; }
+          }
+
+          // Vendors from the onboarding intake — their "type" field is
+          // actually the vendor's name/who, "notes" is what they do.
+          if(!(match.vendors||[]).length && (data.vendors||[]).some(v=>v && v.type)){
+            patch.vendors = (data.vendors||[]).filter(v=>v && v.type).map(v=>({
+              name: v.type, service: (v.notes||"") + (v.schedule ? ` (${v.schedule})` : ""), lastService: ""
+            }));
+          }
+
+          // Home/business intake questionnaire — folded into the matching
+          // free-text profile fields rather than forced into structured
+          // ones (the source is loose prose, not clean per-field data).
+          const f = data.fields || {};
+          const profile = { ...(match.profile||{}) };
+          let profileChanged = false;
+          const fold = (profileKey, ...sourcePairs) => {
+            let val = profile[profileKey] || "";
+            const before = val;
+            sourcePairs.forEach(([label, srcVal]) => { val = appendIfNew(val, label, srcVal); });
+            if(val !== before){ profile[profileKey] = val; profileChanged = true; }
+          };
+          if(f.support_home || f.support_business || f.support_both){
+            const serviceType = f.support_both ? "both" : f.support_business ? "business" : "home";
+            if(!match.profile || !match.profile.serviceType){ profile.serviceType = serviceType; profileChanged = true; }
+          }
+          fold("homeAccess", ["WiFi", f.home_wifi], ["Alarm/entry", f.home_entry], ["Alarm code", f.home_alarm], ["Parking", f.home_parking], ["Garage", f.home_garage]);
+          fold("weeklySchedule", ["Household routine", f.hh_routine], ["Work schedule", f.hh_work], ["School", f.hh_school]);
+          fold("petInfo", ["Pets", f.home_pets]);
+          fold("specialPreferences", ["Preferences", f.prefs_notes], ["Family", f.hh_family]);
+          fold("officeAddress", ["Business address", f.biz_address]);
+          fold("businessTools", ["Systems", f.biz_systems], ["Logins", f.biz_login]);
+          fold("teamMembers", ["Contacts", f.biz_contacts]);
+          if(profileChanged) patch.profile = profile;
+
+          if(Object.keys(patch).length) upsert("clients", match.id, patch);
         }
       });
     }, err=>console.warn("orientation sync listener error", err));
