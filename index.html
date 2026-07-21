@@ -1418,6 +1418,12 @@ function render(){
   const active = document.activeElement;
   const preserving = active && (active.tagName === "TEXTAREA" || (active.tagName === "INPUT" && (active.type === "text" || active.type === "number" || active.type === "email" || active.type === "search")));
   const preserved = preserving ? { id: active.id, value: active.value, selStart: active.selectionStart, selEnd: active.selectionEnd } : null;
+  // Every re-render rebuilds the page from scratch, which resets scroll to
+  // the top — so clicking anything below the fold (mark a comment seen,
+  // check off a subtask, clock out, etc.) yanks you back up. Restore
+  // wherever you were scrolled to, same idea as the focus-preservation above.
+  const prevScrollEl = document.querySelector(".main");
+  const prevScrollTop = prevScrollEl ? prevScrollEl.scrollTop : 0;
 
   if(state.view === "login") renderLogin();
   else if(state.role === "client") renderClientPortal();
@@ -1431,6 +1437,8 @@ function render(){
       try{ el.setSelectionRange(preserved.selStart, preserved.selEnd); }catch(e){}
     }
   }
+  const newScrollEl = document.querySelector(".main");
+  if(newScrollEl && prevScrollTop) newScrollEl.scrollTop = prevScrollTop;
 }
 
 function renderLogin(){
@@ -1552,7 +1560,18 @@ function renderClientRequestsCard(tasks, opts){
   `;
 }
 function acceptClientRequest(taskId){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
   upsert("tasks", taskId, { status: "To do" });
+  // Update the in-memory copy too, not just Firestore — the write above
+  // won't reflect back into state.tasks until the next snapshot arrives,
+  // and opening the editor immediately after would otherwise show (and on
+  // Save, re-save) the old "Pending approval" status.
+  task.status = "To do";
+  // Open it straight away so accepting doesn't just make the card vanish —
+  // whoever accepted it can immediately see what it actually is, adjust
+  // assignees/due date/etc. without having to go hunt for it afterward.
+  openTaskEditor(taskId, null);
 }
 function declineClientRequest(taskId){
   const task = state.tasks.find(t=>t.id===taskId);
