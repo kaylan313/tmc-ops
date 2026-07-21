@@ -289,14 +289,22 @@ async function ensureSettings(){
 }
 
 function subscribe(name, onChange){
+  // A Firestore listener that errors (e.g. a transient quota blip) doesn't
+  // come back on its own — once the error callback fires, that listener is
+  // dead for good. Without this, the page silently stops seeing any new
+  // data (new clients, tasks, clock-ins...) until someone thinks to
+  // manually reload it. Auto-resubscribing means a blip just causes a
+  // few-second gap instead of a stuck page.
   return col(name).onSnapshot(snap=>{
     const items = [];
     snap.forEach(d=>items.push({ id:d.id, ...d.data() }));
+    if(state.firebaseError){ state.firebaseError = null; }
     onChange(items);
   }, err=>{
-    console.warn("Firestore subscription failed for '" + name + "':", err);
-    state.firebaseError = state.firebaseError || err.message;
+    console.warn("Firestore subscription failed for '" + name + "', reconnecting shortly:", err);
+    state.firebaseError = err.message;
     render();
+    setTimeout(()=>subscribe(name, onChange), 5000);
   });
 }
 
@@ -1390,7 +1398,10 @@ function renderAppShell(){
           </div>
         </div>
       </div>
-      <div class="main" id="main">${renderMain()}</div>
+      <div class="main" id="main">
+        ${state.firebaseError ? `<div class="alert danger" style="margin-bottom:16px;">Connection to the database dropped (${state.firebaseError}) — reconnecting automatically. If this doesn't clear within a minute, refresh the page.</div>` : ""}
+        ${renderMain()}
+      </div>
     </div>
     ${state.modal ? renderModal() : ""}
   `;
@@ -2193,6 +2204,7 @@ function renderClientMembership(client){
         </div>
         <div><label class="small">Renewal date anchor</label><input type="date" value="${client.renewalDate?client.renewalDate.slice(0,10):''}" onchange="updateClientField('${client.id}','renewalDate',this.value)"></div>
       </div>
+      <div class="small" style="margin-top:8px;">${period ? `Current ${isHomeReset?'30-day cycle':'billing period'} runs ${period.start.toLocaleDateString()} – ${new Date(period.end.getTime()-1).toLocaleDateString()}, resetting ${period.end.toLocaleDateString()}. Calculated automatically from the renewal date anchor above — nothing to enter separately.` : "Set a renewal date anchor above to calculate when this period ends."}</div>
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
         <div><label class="small">Package price ($/month) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
