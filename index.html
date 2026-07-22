@@ -2168,20 +2168,43 @@ function renderClientTasks(client){
       ${renderTaskMiniList(tasks)}
     </div>`;
 }
+function renderNoteBullets(text){
+  const lines = (text||"").split("\n").map(l=>l.trim()).filter(Boolean);
+  if(!lines.length) return "";
+  return `<ul style="margin:4px 0 0;padding-left:18px;">${lines.map(l=>`<li>${l}</li>`).join("")}</ul>`;
+}
 function renderClientNotes(client){
   const notes = client.notes || [];
+  const indexed = notes.map((n,i)=>({n,i})).slice().reverse();
   return `
     <div class="card">
       <h3>Client notes</h3>
       <div style="margin-bottom:10px;">
-        <textarea id="newNoteText" placeholder="Add a note..."></textarea>
+        <textarea id="newNoteText" placeholder="Add a note... press Enter between separate points to show them as bullets"></textarea>
         <button style="margin-top:6px;" onclick="addClientNote('${client.id}')">Add note</button>
       </div>
-      ${notes.slice().reverse().map(n=>`
-        <div class="list-item">
-          <div>${n.text}${n.source==='orientation-sync' ? ' <span class="badge">auto-synced</span>' : ''}</div>
-          <span class="small">${new Date(n.date).toLocaleDateString()}</span>
-        </div>`).join("") || `<div class="small">No notes yet.</div>`}
+      ${indexed.map(({n,i})=>{
+        const editing = state.editingNote && state.editingNote.clientId===client.id && state.editingNote.index===i;
+        if(editing){
+          return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+            <textarea id="edit_note_${i}">${n.text}</textarea>
+            <div style="display:flex;gap:6px;justify-content:flex-end;">
+              <button class="secondary" onclick="cancelEditNote()">Cancel</button>
+              <button onclick="saveEditNote('${client.id}',${i})">Save</button>
+            </div>
+          </div>`;
+        }
+        return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:2px;">
+          <div class="flex-between">
+            <span class="small">${new Date(n.date).toLocaleDateString()}${n.source==='orientation-sync' ? ' <span class="badge">auto-synced</span>' : ''}</span>
+            <div style="display:flex;gap:6px;">
+              <button class="secondary" style="padding:2px 8px;" onclick="startEditNote('${client.id}',${i})">Edit</button>
+              <button class="danger" style="padding:2px 8px;" onclick="deleteClientNote('${client.id}',${i})">Delete</button>
+            </div>
+          </div>
+          ${renderNoteBullets(n.text)}
+        </div>`;
+      }).join("") || `<div class="small">No notes yet.</div>`}
     </div>
     <div class="card">
       <h3>Important info</h3>
@@ -2489,6 +2512,29 @@ function addClientNote(clientId){
   const client = state.clients.find(c=>c.id===clientId);
   const notes = client.notes || [];
   upsert("clients", clientId, { notes: [...notes, { id:newId("note"), text, date:new Date().toISOString(), source:"manual" }] });
+}
+function startEditNote(clientId, index){
+  state.editingNote = { clientId, index };
+  render();
+}
+function cancelEditNote(){
+  state.editingNote = null;
+  render();
+}
+function saveEditNote(clientId, index){
+  const text = document.getElementById("edit_note_"+index).value.trim();
+  if(!text) return;
+  const client = state.clients.find(c=>c.id===clientId);
+  const notes = (client.notes||[]).slice();
+  notes[index] = { ...notes[index], text };
+  state.editingNote = null;
+  upsert("clients", clientId, { notes });
+}
+function deleteClientNote(clientId, index){
+  if(!confirm("Delete this note? This can't be undone.")) return;
+  const client = state.clients.find(c=>c.id===clientId);
+  const notes = (client.notes||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { notes });
 }
 
 // --- Kanban ---
