@@ -2354,7 +2354,7 @@ function renderClientMembership(client){
       <div class="small" style="margin-top:8px;">${period ? `<strong>30-day period:</strong> ${period.start.toLocaleDateString()} – ${new Date(period.end.getTime()-1).toLocaleDateString()}, next one starts ${period.end.toLocaleDateString()} — recalculates automatically every cycle from the start date above.` : "Set the 30-day period start date above (or a contract sign date, which sets it automatically) to calculate when this period ends."}</div>
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
-        <div><label class="small">Package price ($/month) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Package price ($, billed ${cycleLabel(client.cycleType).toLowerCase()}) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
       </div>
       <div class="progress-bar" style="margin-top:10px;"><div style="width:${Math.min(100,(used/(pkg||1))*100)}%;"></div></div>
       <div class="small">${used.toFixed(1)} / ${pkg} hrs used this ${isHomeReset?'30-day cycle':'period'}${rolloverActive ? ` (includes +${client.rolloverHours} rolled over)` : ''}</div>
@@ -3543,7 +3543,7 @@ function renderClientPortal(){
         <div class="card">
           <h3>Your membership</h3>
           <div class="row">
-            <div><label class="small">Package</label><div>${tierInfo ? tierInfo.label : "Custom"} — $${client.packagePrice||0}/mo</div></div>
+            <div><label class="small">Package</label><div>${tierInfo ? tierInfo.label : "Custom"} — $${client.packagePrice||0}, billed ${cycleLabel(client.cycleType).toLowerCase()}</div></div>
             <div><label class="small">Renewal date</label><div>${client.renewalDate ? parseYMD(client.renewalDate).toLocaleDateString() : "not set"}</div></div>
             <div><label class="small">Term</label><div>${TERM_LABELS[client.termType]||"—"}</div></div>
           </div>
