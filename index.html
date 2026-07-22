@@ -288,7 +288,8 @@ async function ensureSettings(){
   return snap.data();
 }
 
-function subscribe(name, onChange){
+function subscribe(name, onChange, attempt){
+  attempt = attempt || 0;
   // A Firestore listener that errors (e.g. a transient quota blip) doesn't
   // come back on its own — once the error callback fires, that listener is
   // dead for good. Without this, the page silently stops seeing any new
@@ -301,10 +302,17 @@ function subscribe(name, onChange){
     if(state.firebaseError){ state.firebaseError = null; }
     onChange(items);
   }, err=>{
-    console.warn("Firestore subscription failed for '" + name + "', reconnecting shortly:", err);
+    console.warn("Firestore subscription failed for '" + name + "':", err);
     state.firebaseError = err.message;
     render();
-    setTimeout(()=>subscribe(name, onChange), 5000);
+    // Back off exponentially (5s, 10s, 20s... capped at 2min) instead of
+    // retrying every 5s forever — a durably broken connection retried at a
+    // fixed short interval is exactly what can exhaust Firestore's quota,
+    // which already happened once. A permission error also won't be fixed
+    // by waiting, so don't bother retrying that at all.
+    if(err.code === "permission-denied") return;
+    const delay = Math.min(5000 * Math.pow(2, attempt), 120000);
+    setTimeout(()=>subscribe(name, onChange, attempt+1), delay);
   });
 }
 
@@ -490,15 +498,24 @@ async function boot(){
 }
 
 // ---- 6. Orientation sync (existing integration, preserved) ----
-// A 2-digit year via new Date("7/10/26") parses as 1926, not 2026 — rewrite
-// it to a 4-digit year first. Falls back to whatever Date() makes of it for
-// any other format the onboarding dashboard might send.
+// Extracts Y/M/D directly from the string wherever possible instead of
+// round-tripping through a Date object — new Date(string) parses "M/D/YY"
+// as LOCAL time but a bare "YYYY-MM-DD" as UTC, so any single post-parse
+// conversion (like toISOString) is only correct for one of those two shapes
+// and silently shifts the other by a day in some timezones.
 function parseLooseDate(str){
   if(!str || typeof str !== "string" || !str.trim()) return null;
-  const m = str.trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})$/);
-  const normalized = m ? `${m[1]}/${m[2]}/20${m[3]}` : str.trim();
-  const d = new Date(normalized);
-  return isNaN(d.getTime()) ? null : d.toISOString().slice(0,10);
+  const s = str.trim();
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if(m){
+    const yr = m[3].length===2 ? 2000+parseInt(m[3],10) : parseInt(m[3],10);
+    return `${yr}-${String(parseInt(m[1],10)).padStart(2,'0')}-${String(parseInt(m[2],10)).padStart(2,'0')}`;
+  }
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if(m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const d = new Date(s);
+  if(isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 function mapMembershipTierToPackage(membershipTier, homeReset){
   const text = ((membershipTier||"") + " " + (homeReset||"")).toLowerCase();
@@ -525,7 +542,8 @@ function appendIfNew(existing, label, value){
   if(existing && existing.includes(tag)) return existing;
   return existing ? existing + "\n" + tag : tag;
 }
-function watchOrientationSync(){
+function watchOrientationSync(attempt){
+  attempt = attempt || 0;
   db.collection("orientationClients").where("done.visit","==",true)
     .onSnapshot(snap=>{
       snap.docChanges().forEach(change=>{
@@ -559,7 +577,7 @@ function watchOrientationSync(){
             const termType = mapAgreementTypeToTermType(data.agreementType);
             if(termType) patch.termType = termType;
           }
-          if(!match.packageHours){
+          if(match.packageHours == null){
             const tier = mapMembershipTierToPackage(data.membershipTier, data.homeReset);
             if(tier){ patch.packageHours = tier.hours; patch.packagePrice = tier.price; }
           }
@@ -600,7 +618,12 @@ function watchOrientationSync(){
           if(Object.keys(patch).length) upsert("clients", match.id, patch);
         }
       });
-    }, err=>console.warn("orientation sync listener error", err));
+    }, err=>{
+      console.warn("orientation sync listener error, reconnecting:", err);
+      if(err.code === "permission-denied") return;
+      const delay = Math.min(5000 * Math.pow(2, attempt), 120000);
+      setTimeout(()=>watchOrientationSync(attempt+1), delay);
+    });
 }
 
 // ---- 7. Time tracking ----
@@ -630,7 +653,8 @@ function clockInAdminWork(assistantId){
   if(!state.tasks.find(t=>t.id===GENERAL_ADMIN_TASK_ID)){
     upsert("tasks", GENERAL_ADMIN_TASK_ID, {
       title: "General Admin Work", clientId: INTERNAL_CLIENT_ID, status: "In progress",
-      category: "Business", assignees: [], subtasks: [], discussion: [], description: ""
+      category: "Business", assignees: [], subtasks: [], discussion: [], description: "",
+      taskNumber: nextTaskNumber()
     });
   }
   clockIn(GENERAL_ADMIN_TASK_ID, assistantId, note.trim());
@@ -678,11 +702,23 @@ function checkClockReminders(){
 }
 
 // ---- 8. Billing period + tier alerts ----
+// A bare "YYYY-MM-DD" string (from every <input type="date">) parses as UTC
+// midnight per the JS spec, but every display of it calls toLocaleDateString/
+// getMonth/getDate, which convert to the LOCAL timezone — in any US timezone
+// that silently shows one calendar day earlier than what was actually
+// entered. Use this for every date-only field (renewalDate, termStartDate,
+// dueDate, nextDue, lastService, etc.) instead of new Date(str) directly.
+function parseYMD(str){
+  if(!str) return null;
+  const parts = String(str).slice(0,10).split("-").map(Number);
+  if(parts.length!==3 || parts.some(isNaN)) return new Date(str);
+  return new Date(parts[0], parts[1]-1, parts[2]);
+}
 const CYCLE_LABELS = { biweekly:"Every 14 days", monthly:"Every 30 days", quarterly:"Every 90 days", annual:"Annual" };
 function cycleLabel(cycleType){ return CYCLE_LABELS[cycleType||"monthly"] || cycleType; }
 function currentBillingPeriod(client){
   if(!client.renewalDate) return null;
-  const anchor = new Date(client.renewalDate);
+  const anchor = parseYMD(client.renewalDate);
   const cycle = client.cycleType || "monthly";
   const now = new Date();
   let periodStart = new Date(anchor);
@@ -1256,9 +1292,9 @@ function referralPayoutStatus(client){
   if(!client.termStartDate){
     return { assistant, eligible:false, reason:"Set a term start date on the Membership tab to calculate payout months." };
   }
-  const start = new Date(client.termStartDate);
+  const start = parseYMD(client.termStartDate);
   const stoppedAccruing = client.clientStatus && client.clientStatus!=="active";
-  const asOf = (stoppedAccruing && client.cancelledDate) ? new Date(client.cancelledDate) : new Date();
+  const asOf = (stoppedAccruing && client.cancelledDate) ? parseYMD(client.cancelledDate) : new Date();
   let monthsElapsed = (asOf.getFullYear()-start.getFullYear())*12 + (asOf.getMonth()-start.getMonth()) + 1;
   if(asOf.getDate() < start.getDate()) monthsElapsed--;
   monthsElapsed = Math.max(0, Math.min(12, monthsElapsed));
@@ -1298,15 +1334,15 @@ function tasksPastDueDate(){
   const now = new Date();
   return state.tasks
     .filter(t=>t.status!=="Done" && t.dueDate)
-    .map(t=>({ task:t, daysLate: -daysUntil(new Date(t.dueDate), now) }))
+    .map(t=>({ task:t, daysLate: -daysUntil(parseYMD(t.dueDate), now) }))
     .filter(x=>x.daysLate > 0)
     .sort((a,b)=>b.daysLate-a.daysLate);
 }
 
 // ---- 8e. Upcoming/overdue reminders (special dates, vendors, inspections) ----
 function nextYearlyOccurrence(dateStr, now){
-  const d = new Date(dateStr);
-  if(isNaN(d.getTime())) return null;
+  const d = parseYMD(dateStr);
+  if(!d || isNaN(d.getTime())) return null;
   const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   let next = new Date(now.getFullYear(), d.getMonth(), d.getDate());
   if(next < todayMid) next = new Date(now.getFullYear()+1, d.getMonth(), d.getDate());
@@ -1329,13 +1365,13 @@ function upcomingReminders(windowDays){
     });
     (client.vendors||[]).forEach(v=>{
       if(!v.lastService || !v.frequencyDays) return;
-      const due = new Date(new Date(v.lastService).getTime() + v.frequencyDays*86400000);
+      const due = new Date(parseYMD(v.lastService).getTime() + v.frequencyDays*86400000);
       const days = daysUntil(due, now);
       if(days <= windowDays) results.push({ client, type:"Vendor service", label: v.name + " — " + v.service, date:due, days });
     });
     (client.inspections||[]).forEach(ins=>{
       if(!ins.nextDue) return;
-      const due = new Date(ins.nextDue);
+      const due = parseYMD(ins.nextDue);
       const days = daysUntil(due, now);
       if(days <= windowDays) results.push({ client, type:"Inspection", label: ins.name, date:due, days });
     });
@@ -1352,12 +1388,12 @@ const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "12m
 function termEndDate(client){
   // A manual override always wins — the 30/90/365-day formula is a default,
   // not every real contract lines up with it exactly.
-  if(client.termEndOverride) return new Date(client.termEndOverride);
+  if(client.termEndOverride) return parseYMD(client.termEndOverride);
   if(!client.termStartDate || !client.termType || !TERM_LENGTH_DAYS[client.termType]) return null;
-  return new Date(new Date(client.termStartDate).getTime() + TERM_LENGTH_DAYS[client.termType]*24*3600000);
+  return new Date(parseYMD(client.termStartDate).getTime() + TERM_LENGTH_DAYS[client.termType]*24*3600000);
 }
 function noticeDeadline(client){
-  if(client.noticeDeadlineOverride) return new Date(client.noticeDeadlineOverride);
+  if(client.noticeDeadlineOverride) return parseYMD(client.noticeDeadlineOverride);
   const end = termEndDate(client);
   if(!end) return null;
   return new Date(end.getTime() - (TERM_NOTICE_DAYS[client.termType]||0)*24*3600000);
@@ -1589,6 +1625,7 @@ function declineClientRequest(taskId){
     }] });
   }
   remove("tasks", taskId);
+  render();
 }
 function renderAdminDashboard(){
   const period = currentPayrollPeriod();
@@ -1701,7 +1738,7 @@ function renderAdminDashboard(){
               <td><span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>${t.title}</td>
               <td>${client?client.name:'Internal'}</td>
               <td>${names}</td>
-              <td>${new Date(t.dueDate).toLocaleDateString()}</td>
+              <td>${parseYMD(t.dueDate).toLocaleDateString()}</td>
               <td style="color:var(--danger);font-weight:600;">${daysLate}d</td>
             </tr>`;
           }).join("")}
@@ -1781,7 +1818,7 @@ function renderTeamDashboard(){
   const weekAhead = myOpenTasks.filter(t=>{
     if(t.priority) return true;
     if(!t.dueDate) return false;
-    return daysUntil(new Date(t.dueDate), now) <= 7;
+    return daysUntil(parseYMD(t.dueDate), now) <= 7;
   }).sort((a,b)=>{
     if(!!b.priority !== !!a.priority) return b.priority ? 1 : -1;
     if(!a.dueDate && !b.dueDate) return 0;
@@ -1821,7 +1858,7 @@ function renderTeamDashboard(){
       <div class="small" style="margin-bottom:8px;">Priority tasks and anything due within 7 days (including overdue).</div>
       ${weekAhead.length===0 ? `<div class="small">Nothing priority or due soon.</div>` : weekAhead.map(t=>{
         const client = state.clients.find(c=>c.id===t.clientId);
-        const days = t.dueDate ? daysUntil(new Date(t.dueDate), now) : null;
+        const days = t.dueDate ? daysUntil(parseYMD(t.dueDate), now) : null;
         const dueLabel = t.dueDate ? (days<0 ? `overdue by ${Math.abs(days)}d` : days===0 ? "due today" : `due in ${days}d`) : "no due date";
         return `<div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${t.id}',null)">
           <div>${t.priority?'<span class="badge" style="background:var(--danger);">⚑</span> ':''}${t.title} <span class="small">(${client?client.name:'Internal'})</span></div>
@@ -2324,7 +2361,7 @@ function renderClientMembership(client){
       ${overage.overHours>0 ? `<div class="alert warn" style="margin-top:6px;">${overage.overHours.toFixed(1)} hrs over package — $${overage.amount.toFixed(2)} overage at $${OVERAGE_RATE}/hr, due by the 1st of next month.</div>` : ""}
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small">Hour rollover — one-time extra hours for a specific upcoming/current period</label>
-        ${client.rolloverHours && client.rolloverPeriodStart ? `<div class="small" style="margin:4px 0;">Currently: +${client.rolloverHours} hrs for the period starting ${new Date(client.rolloverPeriodStart).toLocaleDateString()}${rolloverActive ? ' (active now)' : ' (not this period)'}. <a href="#" onclick="clearRollover('${client.id}');return false;">Clear</a></div>` : ""}
+        ${client.rolloverHours && client.rolloverPeriodStart ? `<div class="small" style="margin:4px 0;">Currently: +${client.rolloverHours} hrs for the period starting ${parseYMD(client.rolloverPeriodStart).toLocaleDateString()}${rolloverActive ? ' (active now)' : ' (not this period)'}. <a href="#" onclick="clearRollover('${client.id}');return false;">Clear</a></div>` : ""}
         <div class="row" style="margin-top:6px;">
           <div><label class="small">Hours to add</label><input type="number" step="0.25" id="rollover_hrs_${client.id}" placeholder="e.g. 6.5"></div>
           <div><label class="small">Applies to period starting</label><input type="date" id="rollover_start_${client.id}" value="${period?period.start.toISOString().slice(0,10):''}"></div>
@@ -2524,7 +2561,7 @@ function renderKanbanCard(t){
   const isActiveHere = myActive && myActive.taskId === t.id;
   let dueMeta = "";
   if(t.dueDate){
-    const due = new Date(t.dueDate);
+    const due = parseYMD(t.dueDate);
     const days = daysUntil(due, new Date());
     const color = t.status==="Done" ? null : days<0 ? "var(--danger)" : days<=2 ? "var(--warn)" : null;
     dueMeta = `<div class="meta" style="${color?'color:'+color+';font-weight:600;':''}">Due ${due.toLocaleDateString()}${!color||t.status==="Done"?'':days<0?' — overdue':' — due soon'}</div>`;
@@ -2572,8 +2609,8 @@ function timeFilterPeriod(){
   if(f.preset==="period") return currentPayrollPeriod();
   if(f.preset==="custom"){
     if(!f.customStart || !f.customEnd) return null;
-    const start = new Date(f.customStart);
-    const end = new Date(f.customEnd);
+    const start = parseYMD(f.customStart);
+    const end = parseYMD(f.customEnd);
     end.setDate(end.getDate()+1); // inclusive of the selected end day
     return { start, end };
   }
@@ -3507,7 +3544,7 @@ function renderClientPortal(){
           <h3>Your membership</h3>
           <div class="row">
             <div><label class="small">Package</label><div>${tierInfo ? tierInfo.label : "Custom"} — $${client.packagePrice||0}/mo</div></div>
-            <div><label class="small">Renewal date</label><div>${client.renewalDate ? new Date(client.renewalDate).toLocaleDateString() : "not set"}</div></div>
+            <div><label class="small">Renewal date</label><div>${client.renewalDate ? parseYMD(client.renewalDate).toLocaleDateString() : "not set"}</div></div>
             <div><label class="small">Term</label><div>${TERM_LABELS[client.termType]||"—"}</div></div>
           </div>
           ${termEnd ? `<div class="small" style="margin-top:10px;">Current term ends ${termEnd.toLocaleDateString()}.${notice ? ` Written cancellation notice is due by <strong>${notice.toLocaleDateString()}</strong>${noticeDays!==null && noticeDays>=0 ? ` (${noticeDays} day${noticeDays===1?'':'s'} left)` : noticeDays!==null ? ' — that date has passed, so this term will auto-renew per the agreement' : ''}.` : ''}</div>` : ""}
@@ -3587,7 +3624,7 @@ function renderClientPortal(){
         <div class="card">
           <h3>Vendors & inspections</h3>
           ${(client.vendors||[]).map(v=>`<div class="list-item"><div>${v.name} — ${v.service}</div><span class="small">last: ${v.lastService||'—'}</span></div>`).join("")}
-          ${(client.inspections||[]).map(ins=>`<div class="list-item"><div>${ins.name}</div><span class="small">next due: ${new Date(ins.nextDue).toLocaleDateString()}</span></div>`).join("")}
+          ${(client.inspections||[]).map(ins=>`<div class="list-item"><div>${ins.name}</div><span class="small">next due: ${ins.nextDue ? parseYMD(ins.nextDue).toLocaleDateString() : "not set"}</span></div>`).join("")}
           ${(!client.vendors||!client.vendors.length) && (!client.inspections||!client.inspections.length) ? `<div class="small">Nothing on file yet.</div>` : ""}
         </div>
         <div class="card">
@@ -3742,11 +3779,16 @@ function renderTaskEditorModal(task){
   `;
 }
 function toggleSubtask(taskId, i){
-  const task = state.tasks.find(t=>t.id===taskId);
-  if(!task) return;
+  const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
+  if(!task || !(task.subtasks||[])[i]) return;
   const subtasks = (task.subtasks||[]).slice();
   subtasks[i] = { ...subtasks[i], done: !subtasks[i].done };
+  // Mutate the in-memory task too, not just Firestore — saveTask() reads
+  // task.subtasks when the Save button is clicked, and without this it
+  // would silently write the pre-toggle array back over this change.
+  task.subtasks = subtasks;
   upsert("tasks", taskId, { subtasks });
+  render();
 }
 function addSubtaskDraft(taskId){
   const input = document.getElementById("tf_new_subtask");
