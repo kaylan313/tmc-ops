@@ -554,16 +554,34 @@ function watchOrientationSync(attempt){
             c.name.toLowerCase() === clientName.toLowerCase());
           if(!match) return;
 
-          const notes = match.notes || [];
+          let notes = match.notes || [];
           const patch = {};
+          let notesChanged = false;
           if(!notes.some(n=>n.source==="orientation-sync")){
-            patch.notes = [...notes, {
+            notes = [...notes, {
               id: newId("note"),
               text: "Home orientation completed (synced from onboarding dashboard).",
               date: new Date().toISOString(),
               source: "orientation-sync"
             }];
+            notesChanged = true;
           }
+          // The orientation form's birthdays/special-dates field is free
+          // text (e.g. "Spouse birthday - 8/2"), while the app's own
+          // specialDates need individual label+date entries to recur
+          // yearly — drop it in as its own note so it's visible and
+          // actionable instead of trying to auto-parse it.
+          const f0 = data.fields || {};
+          if(f0.specialDatesNotes && f0.specialDatesNotes.trim() && !notes.some(n=>n.source==="orientation-sync-dates")){
+            notes = [...notes, {
+              id: newId("note"),
+              text: "Birthdays/special dates from orientation (add these individually under Special Dates): " + f0.specialDatesNotes.trim(),
+              date: new Date().toISOString(),
+              source: "orientation-sync-dates"
+            }];
+            notesChanged = true;
+          }
+          if(notesChanged) patch.notes = notes;
 
           // Contract dates + term — only fill in what's still blank, and
           // setting the start date also sets the renewal anchor to match,
@@ -613,6 +631,25 @@ function watchOrientationSync(attempt){
           fold("officeAddress", ["Business address", f.biz_address]);
           fold("businessTools", ["Systems", f.biz_systems], ["Logins", f.biz_login]);
           fold("teamMembers", ["Contacts", f.biz_contacts]);
+          // These fields now share the exact same name on both sides (the
+          // orientation form was rebuilt to match), so it's a direct
+          // fill-in-if-blank copy instead of folding into another field.
+          const direct = (profileKey, srcVal) => {
+            if(srcVal && srcVal.trim && srcVal.trim() && !profile[profileKey]){ profile[profileKey] = srcVal.trim(); profileChanged = true; }
+            else if(srcVal && typeof srcVal !== "string" && !profile[profileKey]){ profile[profileKey] = srcVal; profileChanged = true; }
+          };
+          direct("phone", f.phone);
+          direct("emergencyContact", f.emergencyContact);
+          direct("homeAddress", f.homeAddress);
+          direct("officeHours", f.officeHours);
+          direct("businessNeeds", f.businessNeeds);
+          direct("communicationPreference", f.communicationPreference);
+          direct("budgetNotes", f.budgetNotes);
+          direct("offLimits", f.offLimits);
+          if(!profile.topPriorities && (f.topPriority1 || f.topPriority2 || f.topPriority3)){
+            profile.topPriorities = [f.topPriority1||"", f.topPriority2||"", f.topPriority3||""];
+            profileChanged = true;
+          }
           if(profileChanged) patch.profile = profile;
 
           if(Object.keys(patch).length) upsert("clients", match.id, patch);
