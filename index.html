@@ -1330,6 +1330,17 @@ function isAtRiskClient(client){
   const recentCompleted = state.tasks.some(t=>t.clientId===client.id && t.status==="Done" && t.completedAt && new Date(t.completedAt).getTime() >= thirtyDaysAgo);
   return !recentCompleted;
 }
+// Flags an active client whose contract term end date has already passed —
+// e.g. their 3-month term ended and they were supposed to sign a new term,
+// but nobody's gotten around to updating termType/termStartDate to reflect
+// it yet. Self-clears the moment the term is actually updated, since that
+// pushes termEndDate back into the future.
+function needsTermUpdate(client){
+  if(client.clientStatus && client.clientStatus!=="active") return false;
+  const end = termEndDate(client);
+  if(!end) return false;
+  return end.getTime() < Date.now();
+}
 function tasksPastDueDate(){
   const now = new Date();
   return state.tasks
@@ -1636,6 +1647,7 @@ function renderAdminDashboard(){
   const pending = state.tasks.filter(t=>t.status==="Pending approval");
   const clientAlerts = state.clients.map(tierAlert).filter(Boolean);
   const atRiskClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c));
+  const termUpdateClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c));
   const internalStatus = internalHoursStatus(period);
   const reminders = upcomingReminders(14);
   const noticeDeadlines = upcomingNoticeDeadlines(null);
@@ -1684,6 +1696,11 @@ function renderAdminDashboard(){
         <div class="stat-label">At-risk clients</div>
         <div class="stat-value">${atRiskClients.length}</div>
         <div class="stat-sub">0 hrs this period &amp; nothing completed in 30d</div>
+      </div>
+      <div class="stat-tile ${termUpdateClients.length?'status-danger':''}">
+        <div class="stat-label">Terms needing update</div>
+        <div class="stat-value">${termUpdateClients.length}</div>
+        <div class="stat-sub">contract end date has passed, still active</div>
       </div>
     </div>
 
@@ -1802,6 +1819,21 @@ function renderAdminDashboard(){
             <span class="alert warn" style="margin:0;">at risk</span>
           </div>`).join("")}
     </div>
+
+    <div class="card">
+      <h3>Terms needing update</h3>
+      <div class="small" style="margin-bottom:8px;">These clients' contract end date has already passed but they're still active — likely still waiting on a signed renewal. This clears itself the moment you update their term on the Membership tab.</div>
+      ${termUpdateClients.length===0 ? `<div class="small">Nobody's term is overdue right now.</div>` :
+        termUpdateClients.map(c=>{
+          const end = termEndDate(c);
+          const daysAgo = end ? Math.round((Date.now()-end.getTime())/86400000) : null;
+          return `
+          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
+            <div>${c.name} <span class="small">(${TERM_LABELS[c.termType]||c.termType||'no term type'})</span></div>
+            <span class="alert danger" style="margin:0;">contract ended ${daysAgo!==null?daysAgo+'d ago':''}</span>
+          </div>`;
+        }).join("")}
+    </div>
   `;
 }
 
@@ -1915,9 +1947,10 @@ function renderClientsList(){
         state.clients.map(c=>{
           const alert = tierAlert(c);
           const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
+          const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
           return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
             <div>
-              <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''}
+              <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
               <div class="small">${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
                 const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
               }).join(", ")}</div>
@@ -2357,6 +2390,7 @@ function renderClientMembership(client){
   const isHomeReset = currentTier && currentTier.key.startsWith("reset_");
   const period = currentBillingPeriod(client);
   return `
+    ${needsTermUpdate(client) ? `<div class="alert danger" style="margin-bottom:14px;">This client's contract end date has already passed — if they've signed a new term, update the Term type/start date below (or the overrides) so this clears.</div>` : ""}
     <div class="card">
       <h3>Package</h3>
       <div class="small" style="margin-bottom:8px;">A client is on exactly one package — an hourly membership tier, or a Home Reset flat-rate tier. Pick from the real rate card, or choose Custom for anything off-menu.</div>
