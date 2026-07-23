@@ -2372,9 +2372,12 @@ function renderClientMembership(client){
             ${["biweekly","monthly","quarterly","annual"].map(c=>`<option value="${c}" ${(client.cycleType||'monthly')===c?'selected':''}>${cycleLabel(c)}</option>`).join("")}
           </select>
         </div>
-        <div><label class="small">30-day period start date (auto-set from contract sign date below — only touch this if their hours cycle genuinely starts on a different day)</label><input type="date" value="${client.renewalDate?client.renewalDate.slice(0,10):''}" onchange="updateClientField('${client.id}','renewalDate',this.value)"></div>
       </div>
-      <div class="small" style="margin-top:8px;">${period ? `<strong>30-day period:</strong> ${period.start.toLocaleDateString()} – ${new Date(period.end.getTime()-1).toLocaleDateString()}, next one starts ${period.end.toLocaleDateString()} — recalculates automatically every cycle from the start date above.` : "Set the 30-day period start date above (or a contract sign date, which sets it automatically) to calculate when this period ends."}</div>
+      <div class="row" style="margin-top:10px;">
+        <div><label class="small">30-day period start date</label><input type="date" value="${client.renewalDate?client.renewalDate.slice(0,10):''}" onchange="updateClientField('${client.id}','renewalDate',this.value)"></div>
+        <div><label class="small">30-day period end date</label><div style="padding:8px 10px;">${period ? period.end.toLocaleDateString() : "—"}</div></div>
+      </div>
+      <div class="small" style="margin-top:4px;">Auto-fills from the contract start date on the Agreement card below — only change the start date above if this client's hours actually reset on a different day than their contract began. ${period ? `Current period: ${period.start.toLocaleDateString()} – ${new Date(period.end.getTime()-1).toLocaleDateString()}.` : ""}</div>
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
         <div><label class="small">Package price ($, billed ${cycleLabel(client.cycleType).toLowerCase()}) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
@@ -2407,7 +2410,7 @@ function renderClientMembership(client){
             <option value="12month_renewal" ${client.termType==='12month_renewal'?'selected':''}>Twelve Month Term (Renewal)</option>
           </select>
         </div>
-        <div><label class="small">Contract signed / term start date</label><input type="date" value="${client.termStartDate?client.termStartDate.slice(0,10):''}" onchange="updateTermStartDate('${client.id}',this.value)"></div>
+        <div><label class="small">Contract start date</label><input type="date" value="${client.termStartDate?client.termStartDate.slice(0,10):''}" onchange="updateTermStartDate('${client.id}',this.value)"></div>
         <div><label class="small">Client status</label>
           <select onchange="updateClientField('${client.id}','clientStatus',this.value)">
             <option value="active" ${(!client.clientStatus||client.clientStatus==='active')?'selected':''}>Active</option>
@@ -2420,7 +2423,11 @@ function renderClientMembership(client){
       <div class="row" style="margin-top:10px;">
         <div><label class="small">${client.clientStatus==='paused'?'Paused since':'Cancelled date'}</label><input type="date" value="${client.cancelledDate?client.cancelledDate.slice(0,10):''}" onchange="updateClientField('${client.id}','cancelledDate',this.value)"></div>
       </div>` : ""}
-      <div class="small" style="margin-top:12px;"><strong>Contract end date</strong> — auto-calculated from the sign date above (pilot = +30 days, 3-month = +90 days, 12-month = +365 days): contract ends ${termEndDate(client)?termEndDate(client).toLocaleDateString():'—'}, cancellation notice due by ${noticeDeadline(client)?noticeDeadline(client).toLocaleDateString():'—'}. This is separate from the 30-day hours period on the Package card above. If either date is wrong for this client's actual contract, override it directly below — leave blank to go back to the computed value.</div>
+      <div class="row" style="margin-top:10px;">
+        <div><label class="small">Contract end date</label><div style="padding:8px 10px;">${termEndDate(client)?termEndDate(client).toLocaleDateString():'—'}</div></div>
+        <div><label class="small">Cancellation notice due by</label><div style="padding:8px 10px;">${noticeDeadline(client)?noticeDeadline(client).toLocaleDateString():'—'}</div></div>
+      </div>
+      <div class="small" style="margin-top:4px;">Auto-calculated from the contract start date above (pilot = +30 days, 3-month = +90 days, 12-month = +365 days) — separate from the 30-day hours period on the Package card above. Wrong for this client's actual contract? Override either one directly below; leave blank to go back to the computed value.</div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Term end override (optional)</label><input type="date" value="${client.termEndOverride?client.termEndOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','termEndOverride',this.value)"></div>
         <div><label class="small">Cancellation deadline override (optional)</label><input type="date" value="${client.noticeDeadlineOverride?client.noticeDeadlineOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','noticeDeadlineOverride',this.value)"></div>
