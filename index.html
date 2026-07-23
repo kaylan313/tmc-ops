@@ -1991,24 +1991,45 @@ function renderClientCRM(clientId){
 // Manual steps only — "assistant assigned" and "portal code set" are
 // derived straight from real data below instead of being a checkbox that
 // could silently fall out of sync with reality.
-const CLIENT_ONBOARDING_CHECKLIST = [
+const CLIENT_ONBOARDING_COMMON = [
   { id:"contract_signed", text:"Contract signed" },
   { id:"payment_on_file", text:"Payment method on file" },
   { id:"first_period_paid", text:"First month/period paid" },
-  { id:"portal_code_sent", text:"Client portal code emailed to client" },
-  { id:"orientation_done", text:"Home/business orientation visit scheduled or completed" }
+  { id:"portal_code_sent", text:"Client portal code emailed to client" }
 ];
+const CLIENT_ONBOARDING_HOME = [
+  { id:"home_orientation_done", text:"Home orientation visit scheduled or completed" },
+  { id:"home_access_collected", text:"Home access info collected (WiFi, alarm, entry, parking)" },
+  { id:"home_vendors_collected", text:"Vendor list collected" }
+];
+const CLIENT_ONBOARDING_BUSINESS = [
+  { id:"biz_intake_done", text:"Business intake call scheduled or completed" },
+  { id:"biz_tools_collected", text:"Business tools/logins collected" },
+  { id:"biz_contacts_collected", text:"Team member contacts collected" }
+];
+// Reuses the same "Client type" field the Profile tab already has (home /
+// business / both) — Susan-style clients who need both just have both sets
+// show up, nothing separate to configure.
+function clientOnboardingItems(client){
+  const serviceType = (client.profile && client.profile.serviceType) || "home";
+  let items = CLIENT_ONBOARDING_COMMON.slice();
+  if(serviceType==="home" || serviceType==="both") items = items.concat(CLIENT_ONBOARDING_HOME);
+  if(serviceType==="business" || serviceType==="both") items = items.concat(CLIENT_ONBOARDING_BUSINESS);
+  return items;
+}
 function renderClientOnboardingChecklist(client){
-  const items = CLIENT_ONBOARDING_CHECKLIST.map(i=>{
+  const items = clientOnboardingItems(client).map(i=>{
     const saved = (client.onboardingChecklist||[]).find(x=>x.id===i.id);
     return { ...i, done: saved ? saved.done : false };
   });
   const doneCount = items.filter(i=>i.done).length;
   const assistantAssigned = (client.assistantIds||[]).length > 0;
   const portalCodeSet = !!client.portalCode;
+  const serviceType = (client.profile && client.profile.serviceType) || "home";
   return `
     <div class="card">
       <div class="flex-between"><h3>Onboarding checklist</h3><span class="small">${doneCount}/${items.length} done</span></div>
+      <div class="small" style="margin-bottom:6px;">Home/business steps shown below are based on "Client type" further down — currently <strong>${serviceType}</strong>. Set it to "Both" for a client like Susan who needs both.</div>
       <div class="checklist-item"><span class="small">${assistantAssigned ? '✅' : '⬜'} Assistant assigned ${assistantAssigned ? '— '+((client.assistantIds||[]).map(assistantName).join(', ')) : '(set on Membership tab)'}</span></div>
       <div class="checklist-item"><span class="small">${portalCodeSet ? '✅' : '⬜'} Client portal code set ${portalCodeSet ? '' : '(set on Membership tab)'}</span></div>
       ${items.map(i=>`
@@ -2022,7 +2043,7 @@ function renderClientOnboardingChecklist(client){
 function toggleClientOnboardingItem(clientId, itemId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
-  const items = CLIENT_ONBOARDING_CHECKLIST.map(i=>{
+  const items = clientOnboardingItems(client).map(i=>{
     const saved = (client.onboardingChecklist||[]).find(x=>x.id===i.id);
     return { id:i.id, done: saved ? saved.done : false };
   });
