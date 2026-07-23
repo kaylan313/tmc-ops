@@ -1988,6 +1988,48 @@ function renderClientCRM(clientId){
   `;
 }
 // --- Client onboarding profile (filled out during home orientation) ---
+// Manual steps only — "assistant assigned" and "portal code set" are
+// derived straight from real data below instead of being a checkbox that
+// could silently fall out of sync with reality.
+const CLIENT_ONBOARDING_CHECKLIST = [
+  { id:"contract_signed", text:"Contract signed" },
+  { id:"payment_on_file", text:"Payment method on file" },
+  { id:"first_period_paid", text:"First month/period paid" },
+  { id:"portal_code_sent", text:"Client portal code emailed to client" },
+  { id:"orientation_done", text:"Home/business orientation visit scheduled or completed" }
+];
+function renderClientOnboardingChecklist(client){
+  const items = CLIENT_ONBOARDING_CHECKLIST.map(i=>{
+    const saved = (client.onboardingChecklist||[]).find(x=>x.id===i.id);
+    return { ...i, done: saved ? saved.done : false };
+  });
+  const doneCount = items.filter(i=>i.done).length;
+  const assistantAssigned = (client.assistantIds||[]).length > 0;
+  const portalCodeSet = !!client.portalCode;
+  return `
+    <div class="card">
+      <div class="flex-between"><h3>Onboarding checklist</h3><span class="small">${doneCount}/${items.length} done</span></div>
+      <div class="checklist-item"><span class="small">${assistantAssigned ? '✅' : '⬜'} Assistant assigned ${assistantAssigned ? '— '+((client.assistantIds||[]).map(assistantName).join(', ')) : '(set on Membership tab)'}</span></div>
+      <div class="checklist-item"><span class="small">${portalCodeSet ? '✅' : '⬜'} Client portal code set ${portalCodeSet ? '' : '(set on Membership tab)'}</span></div>
+      ${items.map(i=>`
+        <div class="checklist-item">
+          <input type="checkbox" id="cob_${client.id}_${i.id}" ${i.done?'checked':''} onchange="toggleClientOnboardingItem('${client.id}','${i.id}')">
+          <label for="cob_${client.id}_${i.id}">${i.text}</label>
+        </div>`).join("")}
+    </div>
+  `;
+}
+function toggleClientOnboardingItem(clientId, itemId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const items = CLIENT_ONBOARDING_CHECKLIST.map(i=>{
+    const saved = (client.onboardingChecklist||[]).find(x=>x.id===i.id);
+    return { id:i.id, done: saved ? saved.done : false };
+  });
+  const idx = items.findIndex(i=>i.id===itemId);
+  items[idx] = { ...items[idx], done: !items[idx].done };
+  upsert("clients", clientId, { onboardingChecklist: items });
+}
 function renderClientProfile(client){
   const p = client.profile || {};
   const serviceType = p.serviceType || "home";
@@ -1999,6 +2041,7 @@ function renderClientProfile(client){
   const discountStatus = clientReferralDiscountStatus(client);
 
   return `
+    ${renderClientOnboardingChecklist(client)}
     <div class="card">
       <h3>Client type</h3>
       <div class="small">Controls which onboarding questions show below.</div>
