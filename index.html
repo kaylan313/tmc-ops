@@ -4185,6 +4185,20 @@ function addClientTaskComment(taskId){
   upsert("tasks", taskId, { discussion });
   render();
 }
+// Catches the "task about a client left tagged Internal" trap: new tasks
+// default to Internal/Modern Co. when there's no client context (e.g.
+// created from the Task Board instead of inside a client's Tasks tab), and
+// since time-entry clientId is copied straight from the task at clock-in,
+// a task that never gets its Client field corrected silently sends every
+// hour logged against it to admin hours instead of that client's hours.
+function suggestClientFromTitle(title){
+  const t = (title||"").toLowerCase();
+  if(!t) return null;
+  return state.clients.find(c=>{
+    const first = (c.name||"").split(" ")[0];
+    return first && first.length>2 && t.includes(first.toLowerCase());
+  }) || null;
+}
 function saveTask(taskId){
   const task = state.modal.task;
   const assignees = Array.from(document.querySelectorAll(".tf_assignee:checked")).map(el=>el.value);
@@ -4218,6 +4232,12 @@ function saveTask(taskId){
     discussion: task.discussion || [],
     completedAt
   };
+  if(payload.clientId === INTERNAL_CLIENT_ID){
+    const suggested = suggestClientFromTitle(payload.title);
+    if(suggested && !confirm(`This task's title mentions ${suggested.name}, but Client is set to "Internal / Modern Co." — any time clocked on it will count as admin hours instead of ${suggested.name}'s.\n\nSave it as Internal anyway?`)){
+      return;
+    }
+  }
   upsert("tasks", taskId, payload);
   closeModal();
 }
