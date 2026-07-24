@@ -759,6 +759,16 @@ function parseYMD(str){
   if(parts.length!==3 || parts.some(isNaN)) return new Date(str);
   return new Date(parts[0], parts[1]-1, parts[2]);
 }
+// The inverse: a full ISO datetime (e.g. a task's completedAt) needs to
+// populate a bare <input type="date">, which reads/writes "YYYY-MM-DD" in
+// LOCAL terms. Slicing the ISO string directly grabs the UTC calendar date
+// instead, which is wrong whenever the local timezone crosses midnight
+// relative to UTC (i.e. always, in the US) — this converts to local first.
+function toLocalDateInputValue(iso){
+  if(!iso) return "";
+  const d = new Date(iso);
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
 const CYCLE_LABELS = { biweekly:"Every 14 days", monthly:"Every 30 days", quarterly:"Every 90 days", annual:"Annual" };
 function cycleLabel(cycleType){ return CYCLE_LABELS[cycleType||"monthly"] || cycleType; }
 function currentBillingPeriod(client){
@@ -4041,7 +4051,7 @@ function renderTaskEditorModal(task){
           </select>
         </div>
         <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}" onchange="state.modal.task.dueDate=this.value"></div>
-        <div><label class="small">Completed date${task.status==='Done'?'':' (only applies once status is Done)'}</label><input type="date" id="tf_completed" value="${task._completedDraft !== undefined ? task._completedDraft : (task.completedAt ? task.completedAt.slice(0,10) : '')}" onchange="state.modal.task._completedDraft=this.value"></div>
+        <div><label class="small">Completed date${task.status==='Done'?'':' (only applies once status is Done)'}</label><input type="date" id="tf_completed" value="${task._completedDraft !== undefined ? task._completedDraft : (task.completedAt ? toLocalDateInputValue(task.completedAt) : '')}" onchange="state.modal.task._completedDraft=this.value"></div>
       </div>
       <div class="small" style="margin-top:2px;">Reports pull "completed this period" straight off this date — if a task was actually finished earlier and just had its status corrected today, set the real date here so it doesn't show up on a report it doesn't belong on.</div>
       <div style="margin-top:8px;">
