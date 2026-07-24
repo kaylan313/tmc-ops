@@ -269,6 +269,7 @@ let state = {
   selectedClientId: null,
   modal: null,
   timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all" },
+  payrollFilter: { preset: "period", assistantId: "all", adminOnly: false },
   kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true }
 };
 
@@ -835,6 +836,26 @@ function currentPayrollPeriod(refDate){
   }
   return { start: new Date(year, month, 15), end: new Date(year, month+1, 1) };
 }
+function previousPayrollPeriod(){
+  const current = currentPayrollPeriod();
+  return currentPayrollPeriod(new Date(current.start.getTime()-1));
+}
+const PAYROLL_FILTER_PRESETS = [
+  ["period","This pay period"], ["lastPeriod","Last pay period"],
+  ["last30","Last 30 days"], ["lastMonth","Last calendar month"], ["ytd","Year to date"]
+];
+function payrollFilterPeriod(){
+  const preset = state.payrollFilter.preset;
+  const now = new Date();
+  if(preset==="lastPeriod") return previousPayrollPeriod();
+  if(preset==="last30") return { start: new Date(now.getTime()-30*86400000), end: now };
+  if(preset==="lastMonth") return { start: new Date(now.getFullYear(), now.getMonth()-1, 1), end: new Date(now.getFullYear(), now.getMonth(), 1) };
+  if(preset==="ytd") return { start: new Date(now.getFullYear(), 0, 1), end: now };
+  return currentPayrollPeriod();
+}
+function setPayrollFilterPreset(val){ state.payrollFilter.preset = val; render(); }
+function setPayrollFilterAssistant(val){ state.payrollFilter.assistantId = val; render(); }
+function togglePayrollAdminOnly(checked){ state.payrollFilter.adminOnly = checked; render(); }
 function hoursInPeriod(entries, period){
   return entries
     .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
@@ -2951,8 +2972,14 @@ function doClockOut(entryId){
 }
 
 // --- Payroll reconciliation tool (admin only) ---
+function payrollHoursForAssistant(assistantId, period, adminOnly){
+  const entries = state.timeEntries.filter(e=>e.assistantId===assistantId && (!adminOnly || e.clientId===INTERNAL_CLIENT_ID));
+  return hoursInPeriod(entries, period);
+}
 function renderPayrollTool(){
-  const period = currentPayrollPeriod();
+  const pf = state.payrollFilter;
+  const period = payrollFilterPeriod();
+  const isPayrollPeriodPreset = pf.preset==="period" || pf.preset==="lastPeriod";
   const internal = internalHoursStatus(period);
   const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
   const rows = realClients.map(c=>{
@@ -2967,18 +2994,43 @@ function renderPayrollTool(){
   const totalPayrollCost = state.settings.assistants.reduce((s,a)=>s+hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)*(a.hourlyRate||0),0);
   const estMargin = totalRevenue - totalPayrollCost;
 
+  const shownAssistants = state.settings.assistants.filter(a=>pf.assistantId==="all" || a.id===pf.assistantId);
+  const periodLabel = PAYROLL_FILTER_PRESETS.find(([v])=>v===pf.preset)[1];
+
   return `
     <div class="flex-between">
       <h2>Payroll</h2>
       <span class="small">${formatPeriodRange(period)}</span>
     </div>
 
+    <div class="card">
+      <div class="row">
+        <div><label class="small">Date range</label>
+          <select onchange="setPayrollFilterPreset(this.value)">
+            ${PAYROLL_FILTER_PRESETS.map(([v,label])=>`<option value="${v}" ${pf.preset===v?'selected':''}>${label}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Assistant</label>
+          <select onchange="setPayrollFilterAssistant(this.value)">
+            <option value="all" ${pf.assistantId==='all'?'selected':''}>All assistants</option>
+            ${state.settings.assistants.map(a=>`<option value="${a.id}" ${pf.assistantId===a.id?'selected':''}>${a.name}${a.active===false?' (former)':''}</option>`).join("")}
+          </select>
+        </div>
+        <div style="display:flex;align-items:flex-end;padding-bottom:8px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
+            <input type="checkbox" ${pf.adminOnly?'checked':''} onchange="togglePayrollAdminOnly(this.checked)"> Admin/internal hours only
+          </label>
+        </div>
+      </div>
+    </div>
+
     <div class="stat-row">
-      <div class="stat-tile ${internal.level==='danger'?'status-danger':internal.level==='warn'?'status-warn':''}">
+      <div class="stat-tile ${isPayrollPeriodPreset && internal.level==='danger'?'status-danger':isPayrollPeriodPreset && internal.level==='warn'?'status-warn':''}">
         <div class="stat-label">Internal/admin hours used</div>
         <div class="stat-value">${internal.used.toFixed(1)}</div>
-        <div class="stat-sub">${internal.budget ? "of "+internal.budget+" hr budget ("+internal.pct+"%)" : "no budget set below"}</div>
+        <div class="stat-sub">${isPayrollPeriodPreset ? (internal.budget ? "of "+internal.budget+" hr budget ("+internal.pct+"%)" : "no budget set below") : periodLabel+" — budget is per payroll period"}</div>
       </div>
+      ${isPayrollPeriodPreset ? `
       <div class="stat-tile">
         <div class="stat-label">Client hours paid for (prorated)</div>
         <div class="stat-value">${totalExpected.toFixed(1)}</div>
@@ -2998,21 +3050,30 @@ function renderPayrollTool(){
         <div class="stat-label">Estimated margin</div>
         <div class="stat-value">$${estMargin.toFixed(0)}</div>
         <div class="stat-sub">$${totalRevenue.toFixed(0)} revenue &minus; $${totalPayrollCost.toFixed(0)} payroll</div>
+      </div>` : `
+      <div class="stat-tile">
+        <div class="stat-label">Total hours (${pf.adminOnly?'admin only':'all work'})</div>
+        <div class="stat-value">${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly),0).toFixed(1)}</div>
+        <div class="stat-sub">${periodLabel}${pf.assistantId!=='all' ? ' · '+assistantName(pf.assistantId) : ''}</div>
       </div>
+      <div class="stat-tile">
+        <div class="stat-label">Total pay</div>
+        <div class="stat-value">$${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly)*(a.hourlyRate||0),0).toFixed(0)}</div>
+        <div class="stat-sub">"Paid for vs. clocked" and margin only show for a single payroll period, not ${periodLabel.toLowerCase()}</div>
+      </div>`}
     </div>
 
     <div class="card">
       <div class="flex-between">
-        <h3>Assistants — hours to pay this period</h3>
+        <h3>Assistants — hours ${pf.adminOnly?'(admin/internal only) ':''}for ${periodLabel.toLowerCase()}</h3>
         <button class="secondary" onclick="exportPayrollCsv()">Export CSV</button>
       </div>
-      <div class="small" style="margin-bottom:8px;">Every assistant, including any former employee still owed hours from this period. Rates are editable on the Team tab.</div>
+      <div class="small" style="margin-bottom:8px;">${pf.assistantId==='all' ? 'Every assistant, including any former employee still owed hours from this range.' : 'Filtered to one assistant.'} Rates are editable on the Team tab.</div>
       <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Assistant</th><th>Hours worked</th><th>Rate</th><th>$ owed</th><th>Status</th></tr></thead>
         <tbody>
-          ${state.settings.assistants.map(a=>{
-            const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
-            const hrs = hoursInPeriod(entries, period);
+          ${shownAssistants.map(a=>{
+            const hrs = payrollHoursForAssistant(a.id, period, pf.adminOnly);
             const rate = a.hourlyRate || 0;
             const active = activeEntryFor(a.id);
             return `<tr>
@@ -3027,9 +3088,9 @@ function renderPayrollTool(){
           }).join("")}
           <tr style="font-weight:600;">
             <td>Total</td>
-            <td>${state.settings.assistants.reduce((s,a)=>s+hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period),0).toFixed(1)}</td>
+            <td>${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly),0).toFixed(1)}</td>
             <td></td>
-            <td>$${state.settings.assistants.reduce((s,a)=>s+hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)*(a.hourlyRate||0),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly)*(a.hourlyRate||0),0).toFixed(2)}</td>
             <td></td>
           </tr>
         </tbody>
