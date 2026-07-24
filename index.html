@@ -270,6 +270,7 @@ let state = {
   modal: null,
   timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all" },
   payrollFilter: { preset: "period", assistantId: "all", adminOnly: false },
+  clientHoursFilter: { preset: "week" },
   kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true }
 };
 
@@ -864,6 +865,20 @@ function hoursInPeriod(entries, period){
 function hoursForClientInPeriod(clientId, period){
   return hoursInPeriod(state.timeEntries.filter(t=>t.clientId===clientId), period);
 }
+const CLIENT_HOURS_FILTER_PRESETS = [
+  ["week","Last 7 days"], ["twoWeeks","Last 14 days"], ["days30","Last 30 days"],
+  ["period","Current billing period"], ["all","All time"]
+];
+function clientHoursFilterPeriod(client){
+  const preset = state.clientHoursFilter.preset;
+  const now = new Date();
+  if(preset==="twoWeeks") return { start: new Date(now.getTime()-14*86400000), end: now };
+  if(preset==="days30") return { start: new Date(now.getTime()-30*86400000), end: now };
+  if(preset==="period") return currentBillingPeriod(client);
+  if(preset==="all") return null;
+  return { start: new Date(now.getTime()-7*86400000), end: now };
+}
+function setClientHoursFilterPreset(val){ state.clientHoursFilter.preset = val; render(); }
 // period.end is an exclusive boundary (midnight of the day AFTER the period)
 // so it's one day past the period's actual last day — always subtract 1ms
 // before formatting for display, or "7/15–7/31" reads as "7/15–8/1".
@@ -2318,9 +2333,75 @@ function removeSpecialDate(clientId, index){
 function renderClientTasks(client){
   const tasks = state.tasks.filter(t=>t.clientId===client.id);
   return `
+    ${renderClientHoursCard(client)}
     <div class="card">
       <div class="flex-between"><h3>Tasks</h3><button onclick="openTaskEditor(null,'${client.id}')">+ New task</button></div>
       ${renderTaskMiniList(tasks)}
+    </div>`;
+}
+// Lets whoever's on this client's Tasks tab — admin or the assigned
+// assistant(s) — see total hours clocked for this client over a range they
+// pick, a per-assistant breakdown (so admin can see who worked how much,
+// and assistants can see teammates covering the same client), and send the
+// weekly/period client recap themselves instead of only from the admin-only
+// Reports tab.
+function renderClientHoursCard(client){
+  const chf = state.clientHoursFilter;
+  const period = clientHoursFilterPeriod(client);
+  const periodLabel = CLIENT_HOURS_FILTER_PRESETS.find(([v])=>v===chf.preset)[1];
+  const periodWindow = currentBillingPeriod(client);
+  const entries = state.timeEntries.filter(e=>e.clientId===client.id)
+    .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end));
+  const total = entries.reduce((s,e)=>s+entryDurationHours(e),0);
+  const byAssistant = {};
+  entries.forEach(e=>{ byAssistant[e.assistantId] = (byAssistant[e.assistantId]||0) + entryDurationHours(e); });
+  const rows = Object.entries(byAssistant).map(([id,hrs])=>({name: assistantName(id), hrs})).sort((a,b)=>b.hrs-a.hrs);
+  const pkg = effectivePackageHours(client);
+  const week = currentReportWeek();
+
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <h3>Hours &amp; client reports</h3>
+        <select onchange="setClientHoursFilterPreset(this.value)">
+          ${CLIENT_HOURS_FILTER_PRESETS.map(([v,label])=>`<option value="${v}" ${chf.preset===v?'selected':''}>${label}</option>`).join("")}
+        </select>
+      </div>
+      ${chf.preset==="period" && !periodWindow ? `<div class="small" style="margin-bottom:8px;">${client.name} doesn't have a renewal date set yet, so this is showing all-time instead — add one on the Membership tab.</div>` : ""}
+      <div class="stat-row">
+        <div class="stat-tile">
+          <div class="stat-label">Hours clocked</div>
+          <div class="stat-value">${total.toFixed(1)}</div>
+          <div class="stat-sub">${periodLabel}</div>
+        </div>
+        ${pkg ? `<div class="stat-tile">
+          <div class="stat-label">Used this billing period</div>
+          <div class="stat-value">${hoursUsed(client.id).toFixed(1)} / ${pkg}</div>
+          <div class="stat-sub">membership hours</div>
+        </div>` : ""}
+      </div>
+      ${rows.length ? `
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Assistant</th><th>Hours (${periodLabel.toLowerCase()})</th></tr></thead>
+        <tbody>${rows.map(r=>`<tr><td>${r.name}</td><td>${r.hrs.toFixed(1)}</td></tr>`).join("")}</tbody>
+      </table></div>` : `<div class="small">No time clocked for this client in this range.</div>`}
+
+      <hr style="margin:14px 0;">
+      <div class="row">
+        <div>
+          <div class="small" style="margin-bottom:4px;">Weekly recap &middot; Sat–Fri, week of ${formatPeriodRange(week)}</div>
+          <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+          <button onclick="emailClientReport('${client.id}','week')">Email client</button>
+        </div>
+        <div>
+          <div class="small" style="margin-bottom:4px;">${periodWindow ? "Period recap &middot; ends " + periodWindow.end.toLocaleDateString() : "Period recap — set a renewal date on the Membership tab"}</div>
+          ${periodWindow ? `
+            <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+            <button onclick="emailClientReport('${client.id}','period')">Email client</button>
+          ` : ""}
+        </div>
+      </div>
+      ${!client.email ? `<div class="small" style="color:var(--danger);margin-top:8px;">No client email on file — add one on the Membership tab before emailing.</div>` : ""}
     </div>`;
 }
 function renderNoteBullets(text){
