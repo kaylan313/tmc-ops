@@ -336,16 +336,22 @@ function removeLocal(name, id){
   if(!Array.isArray(arr)) return;
   state[name] = arr.filter(x=>x.id!==id);
 }
+// Resolves true on success, false on failure — callers that need to know
+// whether a write actually landed (e.g. the client request form, which must
+// not tell the client "submitted" if it didn't) can await this and check.
+// Every other call site is fire-and-forget and ignores the resolved value,
+// so changing it from "always resolves" to "resolves true/false" is safe.
 function upsert(name, id, data){
   if(!db){
     console.warn("Firebase not connected — saving locally only (won't survive a reload):", name, id, data);
     upsertLocal(name, id, data);
     render();
-    return Promise.resolve();
+    return Promise.resolve(true);
   }
-  return col(name).doc(id).set(data, { merge:true }).catch(err=>{
+  return col(name).doc(id).set(data, { merge:true }).then(()=>true).catch(err=>{
     console.warn("Write to '" + name + "' failed:", err);
     alert("This didn't save — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
+    return false;
   });
 }
 function remove(name, id){
@@ -3791,9 +3797,11 @@ async function submitClientTaskRequest(clientId){
   const title = titleEl.value.trim();
   if(!title){ alert("Please enter what you'd like help with."); return; }
 
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Submitting...";
+
   let requestImage = null;
   if(imageEl.files && imageEl.files[0]){
-    submitBtn.disabled = true;
     submitBtn.textContent = "Processing photo...";
     try{
       requestImage = await readAndCompressImage(imageEl.files[0], 1000, 0.7);
@@ -3801,8 +3809,7 @@ async function submitClientTaskRequest(clientId){
       console.warn("Image processing failed:", e);
       alert("Couldn't process that photo — submitting the request without it.");
     }
-    submitBtn.disabled = false;
-    submitBtn.textContent = "Submit request";
+    submitBtn.textContent = "Submitting...";
   }
 
   const client = state.clients.find(c=>c.id===clientId);
@@ -3821,9 +3828,19 @@ async function submitClientTaskRequest(clientId){
     requestedByClient: true
   };
   if(requestImage) task.requestImage = requestImage;
-  upsert("tasks", task.id, task);
-  alert("Request submitted — your assistant will review and confirm it shortly.");
-  render();
+
+  // upsert() resolves false (and shows its own error alert) if the write
+  // failed — only tell the client it went through, and only clear the form,
+  // once it's actually confirmed. Otherwise leave everything they typed in
+  // place so they don't have to retype it, and let them try again.
+  const saved = await upsert("tasks", task.id, task);
+  if(saved){
+    alert("Request submitted — your assistant will review and confirm it shortly.");
+    render();
+  } else {
+    submitBtn.disabled = false;
+    submitBtn.textContent = "Submit request";
+  }
 }
 // --- Client portal (view-only) ---
 function renderClientPortal(){
