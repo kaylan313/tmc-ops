@@ -771,11 +771,11 @@ function toLocalDateInputValue(iso){
 }
 const CYCLE_LABELS = { biweekly:"Every 14 days", monthly:"Every 30 days", quarterly:"Every 90 days", annual:"Annual" };
 function cycleLabel(cycleType){ return CYCLE_LABELS[cycleType||"monthly"] || cycleType; }
-function currentBillingPeriod(client){
+function currentBillingPeriod(client, refDate){
   if(!client.renewalDate) return null;
   const anchor = parseYMD(client.renewalDate);
   const cycle = client.cycleType || "monthly";
-  const now = new Date();
+  const now = refDate || new Date();
   let periodStart = new Date(anchor);
   const advance = (d)=>{
     const nd = new Date(d);
@@ -788,6 +788,14 @@ function currentBillingPeriod(client){
   while(advance(periodStart) <= now) periodStart = advance(periodStart);
   const periodEnd = advance(periodStart);
   return { start: periodStart, end: periodEnd };
+}
+// The billing period immediately before the current one — lets a report be
+// pulled for last month even after the client has already rolled into a new
+// period, e.g. catching up on a recap that didn't get sent in time.
+function previousBillingPeriod(client){
+  const current = currentBillingPeriod(client);
+  if(!current) return null;
+  return currentBillingPeriod(client, new Date(current.start.getTime()-1));
 }
 // A one-off grant of extra hours into a specific upcoming period (e.g. "let
 // this client carry over 6.5 unused hours into their period starting 7/18")
@@ -921,9 +929,13 @@ function formatHoursMinutes(hrs){
   const totalMinutes = Math.round(Math.max(0,hrs) * 60);
   return Math.floor(totalMinutes/60) + "h " + (totalMinutes % 60) + "m";
 }
-// kind: "week" (the Friday recap, Saturday–Friday) or "period" (the client's
-// full current billing cycle, e.g. their 30-day membership period) — both
-// share the same layout, just a different task-completion window and labels.
+// kind: "week" (the Friday recap, Saturday–Friday), "period" (the client's
+// current billing cycle), or "lastPeriod" (the cycle just before that, for
+// catching up on a recap that didn't go out in time) — all three share the
+// same layout, just a different task-completion window and labels. For any
+// "period"-flavored kind, hours used/remaining are scoped to that specific
+// window instead of always "right now" — otherwise a last-period recap would
+// show this period's usage, which doesn't match what it's reporting on.
 function buildClientReport(client, window, kind){
   const tasks = state.tasks.filter(t=>t.clientId===client.id);
   const inProgress = tasks.filter(t=>t.status==="In progress");
@@ -932,19 +944,20 @@ function buildClientReport(client, window, kind){
     const d = new Date(t.completedAt);
     return d >= window.start && d < window.end;
   });
-  const used = hoursUsed(client.id);
+  const isPeriodKind = kind==="period" || kind==="lastPeriod";
+  const used = isPeriodKind ? hoursForClientInPeriod(client.id, window) : hoursUsed(client.id);
   const pkg = effectivePackageHours(client);
   return {
     kind, client, week: window, inProgress, completed,
     hoursUsed: used, packageHours: pkg,
     hoursRemaining: Math.max(0, pkg - used),
-    billingPeriod: currentBillingPeriod(client),
+    billingPeriod: isPeriodKind ? window : currentBillingPeriod(client),
     signerName: "The Modern Concierge Team"
   };
 }
 function clientReportHtml(report){
   const { client, week, inProgress, completed } = report;
-  const isPeriod = report.kind === "period";
+  const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
   const recapLabel = isPeriod ? "END-OF-PERIOD RECAP" : "END-OF-WEEK RECAP";
   const recapNoun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
   const completedLabel = isPeriod ? "Completed This Period" : "Completed This Week";
@@ -1061,7 +1074,7 @@ function clientReportHtml(report){
 }
 function clientReportPlainText(report){
   const { client, week, inProgress, completed } = report;
-  const isPeriod = report.kind === "period";
+  const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
   const fmt = d => new Date(d).toLocaleDateString();
   const fmtShort = d => (d.getMonth()+1) + "/" + d.getDate();
   const noun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
@@ -1144,7 +1157,9 @@ function exportTimeEntriesCsv(){
   downloadCsv("time-entries-" + new Date().toISOString().slice(0,10) + ".csv", rows);
 }
 function reportWindowFor(client, kind){
-  return kind === "period" ? currentBillingPeriod(client) : currentReportWeek();
+  if(kind === "period") return currentBillingPeriod(client);
+  if(kind === "lastPeriod") return previousBillingPeriod(client);
+  return currentReportWeek();
 }
 function downloadClientReport(clientId, kind){
   const client = state.clients.find(c=>c.id===clientId);
@@ -1156,7 +1171,8 @@ function downloadClientReport(clientId, kind){
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kind + "-report-" + new Date().toISOString().slice(0,10) + ".html";
+  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
+  a.download = client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html";
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -1169,7 +1185,7 @@ function emailClientReport(clientId, kind){
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
-  const subject = encodeURIComponent((kind==="period" ? "Your Membership Period Recap — " : "Your Weekly Update — ") + client.name);
+  const subject = encodeURIComponent(((kind==="period"||kind==="lastPeriod") ? "Your Membership Period Recap — " : "Your Weekly Update — ") + client.name);
   const body = encodeURIComponent(clientReportPlainText(report));
   window.location.href = "mailto:" + client.email + "?subject=" + subject + "&body=" + body;
 }
@@ -2378,6 +2394,7 @@ function renderClientHoursCard(client){
   const rows = Object.entries(byAssistant).map(([id,hrs])=>({name: assistantName(id), hrs})).sort((a,b)=>b.hrs-a.hrs);
   const pkg = effectivePackageHours(client);
   const week = currentReportWeek();
+  const lastPeriodWindow = previousBillingPeriod(client);
 
   return `
     <div class="card">
@@ -2418,6 +2435,13 @@ function renderClientHoursCard(client){
           ${periodWindow ? `
             <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
             <button onclick="emailClientReport('${client.id}','period')">Email client</button>
+          ` : ""}
+        </div>
+        <div>
+          <div class="small" style="margin-bottom:4px;">${lastPeriodWindow ? "Last period recap &middot; " + formatPeriodRange(lastPeriodWindow) : "Last period — not enough billing history yet"}</div>
+          ${lastPeriodWindow ? `
+            <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+            <button onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
           ` : ""}
         </div>
       </div>
@@ -3287,7 +3311,9 @@ function renderReportsTab(){
     const weekReport = buildClientReport(client, week, "week");
     const periodWindow = currentBillingPeriod(client);
     const periodReport = periodWindow ? buildClientReport(client, periodWindow, "period") : null;
-    return { client, weekReport, periodReport };
+    const lastPeriodWindow = previousBillingPeriod(client);
+    const lastPeriodReport = lastPeriodWindow ? buildClientReport(client, lastPeriodWindow, "lastPeriod") : null;
+    return { client, weekReport, periodReport, lastPeriodReport };
   });
   return `
     <div class="flex-between">
@@ -3302,7 +3328,7 @@ function renderReportsTab(){
       file — attach the download manually).
     </div>
     <div class="card">
-      ${rows.length===0 ? `<div class="small">No clients yet.</div>` : rows.map(({client, weekReport, periodReport})=>`
+      ${rows.length===0 ? `<div class="small">No clients yet.</div>` : rows.map(({client, weekReport, periodReport, lastPeriodReport})=>`
         <div class="list-item" style="flex-direction:column;align-items:stretch;gap:10px;">
           <div class="flex-between">
             <strong>${client.name}</strong>
@@ -3319,6 +3345,13 @@ function renderReportsTab(){
               ${periodReport ? `
                 <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
                 <button onclick="emailClientReport('${client.id}','period')">Email</button>
+              ` : ""}
+            </div>
+            <div>
+              <div class="small" style="margin-bottom:4px;">${lastPeriodReport ? "Last period &middot; " + lastPeriodReport.completed.length + " completed &middot; " + formatPeriodRange(lastPeriodReport.billingPeriod) : "Last period — not enough billing history yet"}</div>
+              ${lastPeriodReport ? `
+                <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+                <button onclick="emailClientReport('${client.id}','lastPeriod')">Email</button>
               ` : ""}
             </div>
           </div>
