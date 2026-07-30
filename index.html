@@ -271,7 +271,14 @@ let state = {
   timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all" },
   payrollFilter: { preset: "period", assistantId: "all", adminOnly: false },
   clientHoursFilter: { preset: "week" },
-  kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true }
+  kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true },
+  // The client request form's fields used to be uncontrolled (no value=
+  // binding), so a background render() — from any other client/assistant's
+  // unrelated Firestore write, or the 60-second timer refresh — silently
+  // wiped out whatever the client had typed before they got to Submit.
+  // Keeping the draft here means a render mid-typing just redraws the
+  // inputs with the same values already in them, instead of blanking them.
+  clientRequestDraft: { title: "", details: "", category: "Home" }
 };
 
 // ---- 4. Firestore helpers ----
@@ -692,14 +699,14 @@ function clockIn(taskId, assistantId, note){
 // A standing task under Internal / Modern Co. so anyone can clock straight
 // into general admin work without first creating a one-off task for it.
 const GENERAL_ADMIN_TASK_ID = "task_general_admin";
-function clockInAdminWork(assistantId){
+async function clockInAdminWork(assistantId){
   const note = prompt("What are you clocking in for? (required so Kaylan knows what this admin time covers)", "");
   if(!note || !note.trim()){ alert("You need to enter a description before clocking in for admin work."); return; }
   if(!state.tasks.find(t=>t.id===GENERAL_ADMIN_TASK_ID)){
     upsert("tasks", GENERAL_ADMIN_TASK_ID, {
       title: "General Admin Work", clientId: INTERNAL_CLIENT_ID, status: "In progress",
       category: "Business", assignees: [], subtasks: [], discussion: [], description: "",
-      taskNumber: nextTaskNumber()
+      taskNumber: await allocateTaskNumber()
     });
   }
   clockIn(GENERAL_ADMIN_TASK_ID, assistantId, note.trim());
@@ -1554,7 +1561,9 @@ function tryTeamLogin(code){
 function tryClientLogin(code){
   const match = state.clients.find(c=>c.portalCode && c.portalCode===code);
   if(match){
-    state.role="client"; state.currentClientId = match.id; state.view="app"; state.activeTab="portal"; render();
+    state.role="client"; state.currentClientId = match.id; state.view="app"; state.activeTab="portal";
+    state.clientRequestDraft = { title: "", details: "", category: "Home" };
+    render();
   } else alert("Client code not recognized.");
 }
 function logout(){
@@ -3867,7 +3876,7 @@ async function submitClientTaskRequest(clientId){
     clientId,
     status: "Pending approval",
     category: categoryEl.value,
-    taskNumber: nextTaskNumber(),
+    taskNumber: await allocateTaskNumber(),
     assignees: (client && client.assistantIds) || [],
     subtasks: [],
     discussion: [],
@@ -3884,6 +3893,10 @@ async function submitClientTaskRequest(clientId){
   const saved = await upsert("tasks", task.id, task);
   if(saved){
     alert("Request submitted — your assistant will review and confirm it shortly.");
+    // Fields are bound to clientRequestDraft now (see the state comment),
+    // so clearing the form on success means resetting that, not just
+    // relying on a re-render to blank out unbound inputs.
+    state.clientRequestDraft = { title: "", details: "", category: "Home" };
     render();
   } else {
     submitBtn.disabled = false;
@@ -3918,15 +3931,15 @@ function renderClientPortal(){
         <div class="card">
           <h3>Request help with something</h3>
           <div class="small" style="margin-bottom:8px;">Submit a request and your assistant will review and confirm it shortly.</div>
-          <div class="row"><div><label class="small">What do you need?</label><input id="reqTitle" placeholder="e.g. Schedule the vet appointment"></div></div>
+          <div class="row"><div><label class="small">What do you need?</label><input id="reqTitle" placeholder="e.g. Schedule the vet appointment" value="${(state.clientRequestDraft.title||'').replace(/"/g,'&quot;')}" oninput="state.clientRequestDraft.title=this.value"></div></div>
           <div class="row" style="margin-top:8px;">
-            <div><label class="small">Details (optional)</label><textarea id="reqDetails" placeholder="Any specifics that would help"></textarea></div>
+            <div><label class="small">Details (optional)</label><textarea id="reqDetails" placeholder="Any specifics that would help" oninput="state.clientRequestDraft.details=this.value">${(state.clientRequestDraft.details||'').replace(/</g,'&lt;')}</textarea></div>
           </div>
           <div class="row" style="margin-top:8px;">
             <div><label class="small">Category</label>
-              <select id="reqCategory">
-                <option value="Home">Home</option>
-                <option value="Business">Business</option>
+              <select id="reqCategory" onchange="state.clientRequestDraft.category=this.value">
+                <option value="Home" ${state.clientRequestDraft.category==='Home'?'selected':''}>Home</option>
+                <option value="Business" ${state.clientRequestDraft.category==='Business'?'selected':''}>Business</option>
               </select>
             </div>
           </div>
@@ -4048,14 +4061,43 @@ function renderImageViewerModal(dataUrl){
     </div>
   `;
 }
-function nextTaskNumber(){
-  return state.tasks.reduce((max,t)=>Math.max(max, t.taskNumber||0), 0) + 1;
+// Assigns the next task number atomically via a shared Firestore counter,
+// instead of computing max(existing)+1 from whatever's in the local task
+// list. The old approach let two people creating tasks around the same
+// moment (before either write had synced back to the other's browser)
+// both compute the same "next" number off their own stale local copy —
+// that's the #586-on-two-different-tasks bug. A transaction serializes
+// this: Firestore retries one side automatically if they race, so no two
+// calls can ever walk away with the same value.
+async function allocateTaskNumber(){
+  if(!db){
+    // Local-only/demo mode has no shared counter to coordinate through —
+    // fall back to the old best-effort approach, which is fine since
+    // there's only one browser involved.
+    return state.tasks.reduce((max,t)=>Math.max(max, t.taskNumber||0), 0) + 1;
+  }
+  const counterRef = col("settings").doc("taskCounter");
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(counterRef);
+    // First run ever (counter doc doesn't exist yet): start from whatever
+    // the highest existing task number already is, so it doesn't restart
+    // at 1 and collide with real tasks already numbered well past that.
+    const current = snap.exists ? (snap.data().value || 0)
+      : state.tasks.reduce((max,t)=>Math.max(max, t.taskNumber||0), 0);
+    const next = current + 1;
+    tx.set(counterRef, { value: next }, { merge: true });
+    return next;
+  });
 }
+// Task numbers are no longer assigned here, at draft-creation time — a
+// "New task" modal can sit open for minutes while someone fills it in,
+// which is exactly the window where two people's drafts used to collide.
+// It's assigned once, atomically, in saveTask() at the moment it's
+// actually persisted.
 function openTaskEditor(taskId, defaultClientId){
   const task = taskId ? state.tasks.find(t=>t.id===taskId) : {
     id: newId("task"), title:"", clientId: defaultClientId || INTERNAL_CLIENT_ID,
-    status:"To do", category:"Business", assignees:[], subtasks:[], discussion:[], description:"", dueDate:"",
-    taskNumber: nextTaskNumber()
+    status:"To do", category:"Business", assignees:[], subtasks:[], discussion:[], description:"", dueDate:""
   };
   state.modal = { type:"taskEditor", task };
   render();
@@ -4250,7 +4292,7 @@ function suggestClientFromTitle(title){
     return first && first.length>2 && t.includes(first.toLowerCase());
   }) || null;
 }
-function saveTask(taskId){
+async function saveTask(taskId){
   const task = state.modal.task;
   const assignees = Array.from(document.querySelectorAll(".tf_assignee:checked")).map(el=>el.value);
   const newStatus = document.getElementById("tf_status").value;
@@ -4268,6 +4310,9 @@ function saveTask(taskId){
   } else {
     completedAt = null;
   }
+  // Only ever allocated once — a task keeps the number it was first saved
+  // with for its whole life, same as before.
+  const taskNumber = task.taskNumber || await allocateTaskNumber();
   const payload = {
     title: document.getElementById("tf_title").value.trim(),
     clientId: document.getElementById("tf_client").value,
@@ -4277,7 +4322,7 @@ function saveTask(taskId){
     privateNotes: document.getElementById("tf_private_notes").value.trim(),
     dueDate: document.getElementById("tf_due").value,
     priority: document.getElementById("tf_priority").checked,
-    taskNumber: task.taskNumber || nextTaskNumber(),
+    taskNumber,
     assignees,
     subtasks: task.subtasks || [],
     discussion: task.discussion || [],
