@@ -1741,6 +1741,11 @@ function acceptClientRequest(taskId){
 function declineClientRequest(taskId){
   const task = state.tasks.find(t=>t.id===taskId);
   if(!task) return;
+  // A pending-approval request shouldn't normally have any clock-ins yet,
+  // but guard it anyway — same rule as deleteTask(): a time entry can't
+  // outlive the task it belongs to.
+  const entries = state.timeEntries.filter(e=>e.taskId===taskId);
+  if(entries.length > 0 && !confirm(`This request already has ${formatHoursMinutes(hoursForTask(taskId))} clocked into it. Declining it will delete that time too. Continue?`)) return;
   const reason = prompt("Reason for declining (shared with the client in their activity log):", "");
   if(reason === null) return;
   const client = state.clients.find(c=>c.id===task.clientId);
@@ -1753,6 +1758,7 @@ function declineClientRequest(taskId){
       source: "task-declined"
     }] });
   }
+  entries.forEach(e=>remove("timeEntries", e.id));
   remove("tasks", taskId);
   render();
 }
@@ -3392,7 +3398,16 @@ function toggleReportReview(clientId){
   render();
 }
 function deleteTaskFromReports(taskId){
-  if(!confirm("Delete this task? This can't be undone.")) return;
+  // Same rule as deleteTask() — a time entry can't be left behind with no
+  // task to belong to, so this deletes its time right along with it.
+  const entries = state.timeEntries.filter(e=>e.taskId===taskId);
+  let message = "Delete this task? This can't be undone.";
+  if(entries.length > 0){
+    const hours = hoursForTask(taskId);
+    message = `This task has ${formatHoursMinutes(hours)} clocked into it across ${entries.length} time entr${entries.length===1?'y':'ies'}. Deleting the task will delete that time too — a time entry can't be left behind with no task to belong to.\n\nIf you only meant to fix or remove the time itself, cancel this and use Time Entries instead.\n\nDelete the task AND its time entries?`;
+  }
+  if(!confirm(message)) return;
+  entries.forEach(e=>remove("timeEntries", e.id));
   remove("tasks", taskId);
 }
 
@@ -4337,8 +4352,26 @@ async function saveTask(taskId){
   upsert("tasks", taskId, payload);
   closeModal();
 }
+// A time entry should never be able to outlive the task it was clocked
+// into — that's exactly how orphaned entries happened before this: the
+// task went away, its time silently kept counting toward the client's
+// hours-used with no visible task left to explain it (found the hard way
+// auditing a client's numbers not adding up). So deleting a task with time
+// on it now deletes that time right along with it, instead of leaving it
+// behind — if someone only meant to fix/remove the time itself, Time
+// Entries is where that happens, not here.
 function deleteTask(taskId){
-  if(confirm("Delete this task?")){ remove("tasks", taskId); closeModal(); }
+  const entries = state.timeEntries.filter(e=>e.taskId===taskId);
+  let message = "Delete this task?";
+  if(entries.length > 0){
+    const hours = hoursForTask(taskId);
+    message = `This task has ${formatHoursMinutes(hours)} clocked into it across ${entries.length} time entr${entries.length===1?'y':'ies'}. Deleting the task will delete that time too — a time entry can't be left behind with no task to belong to.\n\nIf you only meant to fix or remove the time itself, cancel this and use Time Entries instead.\n\nDelete the task AND its time entries?`;
+  }
+  if(confirm(message)){
+    entries.forEach(e=>remove("timeEntries", e.id));
+    remove("tasks", taskId);
+    closeModal();
+  }
 }
 
 // --- Client editor modal ---
