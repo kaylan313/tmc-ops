@@ -268,7 +268,7 @@ let state = {
   crmSubTab: "tasks",
   selectedClientId: null,
   modal: null,
-  timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all" },
+  timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all", taskId: null },
   payrollFilter: { preset: "period", assistantId: "all", adminOnly: false },
   clientHoursFilter: { preset: "week" },
   kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true },
@@ -2982,14 +2982,34 @@ function setTimeFilterAssistant(assistantId){
   state.timeFilter.assistantId = assistantId;
   render();
 }
+// Lets the Entries list collapse down to just one task's clock-ins instead
+// of scrolling through every entry — the search box reuses the same "#123
+// or title" lookup as clock-in/manual-entry, so it's a null-op if nothing
+// matches yet (e.g. still mid-typing) rather than erroring.
+function setTimeFilterTask(value){
+  const task = resolveTaskFromSearch(value);
+  state.timeFilter.taskId = task ? task.id : null;
+  render();
+}
+function clearTimeFilterTask(){
+  state.timeFilter.taskId = null;
+  render();
+}
 function renderTimeTracking(){
   const mineAll = state.currentAssistant ? state.timeEntries.filter(t=>t.assistantId===state.currentAssistant.id) : state.timeEntries;
   const active = state.currentAssistant && activeEntryFor(state.currentAssistant.id);
   const period = timeFilterPeriod();
   const assistantFilterId = state.role==="admin" ? state.timeFilter.assistantId : "all";
-  const filtered = mineAll
-    .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
-    .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
+  const taskFilterId = state.timeFilter.taskId;
+  const taskFilterTask = taskFilterId ? state.tasks.find(t=>t.id===taskFilterId) : null;
+  // Picking a task is a more specific ask than the date/assistant filters —
+  // once one's picked, show its FULL history rather than silently hiding
+  // entries that fall outside whatever date range happened to be selected.
+  const filtered = taskFilterId
+    ? mineAll.filter(e => e.taskId===taskFilterId)
+    : mineAll
+      .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
+      .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
   const totalHrs = filtered.reduce((s,e)=>s+entryDurationHours(e),0);
   const manualCount = filtered.filter(e=>e.clockOutManual).length;
 
@@ -3036,7 +3056,7 @@ function renderTimeTracking(){
       <div class="card">
         <button class="secondary" onclick="openManualTimeEntry()">Log time manually for someone</button>
       </div>` : ""}
-    ${state.role==="admin" ? `
+    ${state.role==="admin" && !taskFilterId ? `
     <div class="card">
       <h3>Hours by assistant</h3>
       <div class="small" style="margin-bottom:8px;">${timeFilterLabel(period)} — "Admin hours" is time clocked to Internal / Modern Co. work. "Manual" counts clock-outs where a time was typed in instead of captured live.</div>
@@ -3056,7 +3076,10 @@ function renderTimeTracking(){
     <div class="card">
       <div class="flex-between">
         <h3>Entries</h3>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <input style="width:200px;" list="timeFilterTaskList" placeholder="Compact view for one task — search # or title..." value="${taskFilterTask ? '#'+(taskFilterTask.taskNumber||'?')+' — '+taskFilterTask.title : ''}" onchange="setTimeFilterTask(this.value)">
+          <datalist id="timeFilterTaskList">${taskSearchOptions(state.tasks)}</datalist>
+          ${taskFilterId ? `<button class="secondary" onclick="clearTimeFilterTask()">✕ Clear task</button>` : `
           ${state.role==="admin" ? `
           <select style="width:auto;" onchange="setTimeFilterAssistant(this.value)">
             <option value="all" ${assistantFilterId==='all'?'selected':''}>All assistants</option>
@@ -3068,13 +3091,13 @@ function renderTimeTracking(){
           ${state.timeFilter.preset==="custom" ? `
             <input type="date" style="width:150px;" value="${state.timeFilter.customStart||''}" onchange="setTimeFilterCustom('start',this.value)">
             <input type="date" style="width:150px;" value="${state.timeFilter.customEnd||''}" onchange="setTimeFilterCustom('end',this.value)">
-          ` : ""}
+          ` : ""}`}
           <button class="secondary" onclick="exportTimeEntriesCsv()">Export CSV</button>
         </div>
       </div>
       <div class="stat-row" style="margin:8px 0 12px;">
         <div class="stat-tile">
-          <div class="stat-label">Total hours — ${timeFilterLabel(period)}</div>
+          <div class="stat-label">Total hours — ${taskFilterTask ? 'all time on #'+(taskFilterTask.taskNumber||'?') : timeFilterLabel(period)}</div>
           <div class="stat-value">${totalHrs.toFixed(1)}</div>
           <div class="stat-sub">${filtered.length} ${filtered.length===1?'entry':'entries'}${manualCount>0 ? ` · <span style="color:var(--warn);">${manualCount} manually edited</span>` : ""}</div>
         </div>
@@ -4117,6 +4140,35 @@ function openTaskEditor(taskId, defaultClientId){
   state.modal = { type:"taskEditor", task };
   render();
 }
+// Lets whoever opens a task see exactly which clock-ins make up its total —
+// asked for after a correction added on top of an existing entry produced a
+// total that didn't match either number, which is much easier to catch when
+// every individual entry is visible right here instead of only a sum.
+function renderTaskTimeEntriesSection(task){
+  if(!task.id || !state.tasks.find(t=>t.id===task.id)) return "";
+  const entries = state.timeEntries.filter(e=>e.taskId===task.id).sort((a,b)=> new Date(b.clockIn) - new Date(a.clockIn));
+  const total = entries.reduce((s,e)=>s+entryDurationHours(e),0);
+  return `
+    <div class="card" style="margin-top:10px;">
+      <div class="flex-between"><h4 style="margin:0;">Time clocked on this task</h4><span class="small">${total.toFixed(2)} hrs total &middot; ${entries.length} ${entries.length===1?'entry':'entries'}</span></div>
+      ${entries.length ? `
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Assistant</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th></th></tr></thead>
+        <tbody>
+          ${entries.map(e=>`
+            <tr>
+              <td>${assistantName(e.assistantId)}</td>
+              <td>${new Date(e.clockIn).toLocaleString()}</td>
+              <td>${e.clockOut ? new Date(e.clockOut).toLocaleString() : '<span class="small">still clocked in</span>'}</td>
+              <td>${entryDurationHours(e).toFixed(2)}${e.clockOutManual?' <span class="small">(manual)</span>':''}${e.flagged?' <span class="small" style="color:var(--danger);">⚑</span>':''}</td>
+              <td style="white-space:nowrap;">${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}</td>
+            </tr>
+            ${e.note ? `<tr><td colspan="5" class="small" style="padding-top:0;">&ldquo;${e.note}&rdquo;</td></tr>` : ""}
+          `).join("")}
+        </tbody>
+      </table></div>` : `<div class="small">No time clocked yet.</div>`}
+    </div>`;
+}
 function renderTaskEditorModal(task){
   return `
     <div class="modal">
@@ -4152,6 +4204,7 @@ function renderTaskEditorModal(task){
         <div><label class="small">Completed date${task.status==='Done'?'':' (only applies once status is Done)'}</label><input type="date" id="tf_completed" value="${task._completedDraft !== undefined ? task._completedDraft : (task.completedAt ? toLocalDateInputValue(task.completedAt) : '')}" onchange="state.modal.task._completedDraft=this.value"></div>
       </div>
       <div class="small" style="margin-top:2px;">Reports pull "completed this period" straight off this date — if a task was actually finished earlier and just had its status corrected today, set the real date here so it doesn't show up on a report it doesn't belong on.</div>
+      ${renderTaskTimeEntriesSection(task)}
       <div style="margin-top:8px;">
         <label class="small">Assignees</label>
         ${assignableAssistants(task.assignees).map(a=>`
