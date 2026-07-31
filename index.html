@@ -1542,6 +1542,19 @@ function upcomingNoticeDeadlines(windowDays){
     .filter(x=>windowDays===null || x.days===null || x.days<=windowDays)
     .sort((a,b)=>(a.days===null?Infinity:a.days)-(b.days===null?Infinity:b.days));
 }
+// "This week"/"next week" reuse the same Sat–Fri window the weekly client
+// reports already use, rather than inventing a second definition of "week".
+function nextReportWeek(){
+  const week = currentReportWeek();
+  return { start: week.end, end: new Date(week.end.getTime() + 7*86400000) };
+}
+function clientsRenewingInWindow(window){
+  return state.clients
+    .filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"))
+    .map(client=>({ client, end: termEndDate(client) }))
+    .filter(x=>x.end && x.end>=window.start && x.end<window.end)
+    .sort((a,b)=>a.end-b.end);
+}
 
 // ---- 9. Auth ----
 function tryAdminLogin(code){
@@ -1644,7 +1657,7 @@ function promptLogin(kind){
 
 function renderAppShell(){
   const tabs = state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["onboarding","Onboarding"],["team","Team"]]
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["onboarding","Onboarding"],["team","Team"]]
     : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
 
   app.innerHTML = `
@@ -1681,6 +1694,7 @@ function renderMain(){
     case "time": return renderTimeTracking();
     case "payroll": return state.role==="admin" ? renderPayrollTool() : "";
     case "reports": return state.role==="admin" ? renderReportsTab() : "";
+    case "renewals": return state.role==="admin" ? renderRenewalsTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
     default: return "";
@@ -1774,7 +1788,8 @@ function renderAdminDashboard(){
   const termUpdateClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c));
   const internalStatus = internalHoursStatus(period);
   const reminders = upcomingReminders(14);
-  const noticeDeadlines = upcomingNoticeDeadlines(null);
+  const renewingThisWeek = clientsRenewingInWindow(currentReportWeek());
+  const renewingNextWeek = clientsRenewingInWindow(nextReportWeek());
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -1826,7 +1841,34 @@ function renderAdminDashboard(){
         <div class="stat-value">${termUpdateClients.length}</div>
         <div class="stat-sub">contract end date has passed, still active</div>
       </div>
+      <div class="stat-tile ${renewingThisWeek.length?'status-warn':''}" style="cursor:pointer;" onclick="setTab('renewals')">
+        <div class="stat-label">Renewing this week</div>
+        <div class="stat-value">${renewingThisWeek.length}</div>
+        <div class="stat-sub">${formatPeriodRange(currentReportWeek())}</div>
+      </div>
+      <div class="stat-tile" style="cursor:pointer;" onclick="setTab('renewals')">
+        <div class="stat-label">Renewing next week</div>
+        <div class="stat-value">${renewingNextWeek.length}</div>
+        <div class="stat-sub">${formatPeriodRange(nextReportWeek())}</div>
+      </div>
     </div>
+
+    ${(renewingThisWeek.length || renewingNextWeek.length) ? `
+    <div class="card">
+      <div class="flex-between"><h3>Renewing soon</h3><button class="secondary" onclick="setTab('renewals')">See all renewals &amp; membership info</button></div>
+      ${renewingThisWeek.length ? `<div class="small" style="font-weight:600;margin-bottom:4px;">This week</div>
+      ${renewingThisWeek.map(({client,end})=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+          <div>${client.name} <span class="small">(${TERM_LABELS[client.termType]||client.termType||'no term type'})</span></div>
+          <span class="alert warn" style="margin:0;">${end.toLocaleDateString()}</span>
+        </div>`).join("")}` : ""}
+      ${renewingNextWeek.length ? `<div class="small" style="font-weight:600;margin:${renewingThisWeek.length?'12px':'0'} 0 4px;">Next week</div>
+      ${renewingNextWeek.map(({client,end})=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+          <div>${client.name} <span class="small">(${TERM_LABELS[client.termType]||client.termType||'no term type'})</span></div>
+          <span class="small">${end.toLocaleDateString()}</span>
+        </div>`).join("")}` : ""}
+    </div>` : ""}
 
     <div class="card">
       <h3>Assistants — this payroll period</h3>
@@ -1905,26 +1947,6 @@ function renderAdminDashboard(){
       </table></div>`}
     </div>
 
-    <div class="card">
-      <h3>Renewal &amp; cancellation notice deadlines</h3>
-      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged. Every active client is listed here — soonest deadline first, anyone still missing term data at the bottom.</div>
-      ${noticeDeadlines.length===0 ? `<div class="small">No active clients yet.</div>` : `
-      <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Client</th><th>Term</th><th>Term ends</th><th>Notice deadline</th><th>30-day period end date</th><th>Status</th></tr></thead>
-        <tbody>
-          ${noticeDeadlines.map(n=>`
-            <tr style="cursor:pointer;" onclick="viewClientMembership('${n.client.id}')">
-              <td>${n.client.name}</td>
-              <td>${n.client.termType ? (TERM_LABELS[n.client.termType]||n.client.termType) : '—'}</td>
-              <td>${n.termEnd ? n.termEnd.toLocaleDateString() : '—'}</td>
-              <td>${n.deadline ? n.deadline.toLocaleDateString() : '—'}</td>
-              <td>${n.periodEnd ? n.periodEnd.toLocaleDateString() : '—'}</td>
-              <td>${n.days===null ? `<span style="color:var(--warn);">term/renewal data not set yet</span>` : n.days<0 ? `<span style="color:var(--danger);">deadline passed — will auto-renew</span>` : n.days===0 ? `<span style="color:var(--warn);">today</span>` : `${n.days}d left`}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table></div>`}
-    </div>
-
     ${renderClientRequestsCard(pending, { title: "Client requests awaiting assistant review", showAssistant: true })}
 
     <div class="card">
@@ -1944,6 +1966,17 @@ function renderAdminDashboard(){
           </div>`).join("")}
     </div>
 
+  `;
+}
+
+// --- Renewals & membership info (admin only, moved off the dashboard so it
+// stays quick-glance — full detail lives here instead) ---
+function renderRenewalsTab(){
+  const noticeDeadlines = upcomingNoticeDeadlines(null);
+  const termUpdateClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c));
+  return `
+    <h2>Renewals &amp; Membership Info</h2>
+
     <div class="card">
       <h3>Terms needing update</h3>
       <div class="small" style="margin-bottom:8px;">These clients' contract end date has already passed but they're still active — likely still waiting on a signed renewal. This clears itself the moment you update their term on the Membership tab.</div>
@@ -1957,6 +1990,26 @@ function renderAdminDashboard(){
             <span class="alert danger" style="margin:0;">contract ended ${daysAgo!==null?daysAgo+'d ago':''}</span>
           </div>`;
         }).join("")}
+    </div>
+
+    <div class="card">
+      <h3>Renewal &amp; cancellation notice deadlines</h3>
+      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged. Every active client is listed here — soonest deadline first, anyone still missing term data at the bottom.</div>
+      ${noticeDeadlines.length===0 ? `<div class="small">No active clients yet.</div>` : `
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Client</th><th>Term</th><th>Term ends</th><th>Notice deadline</th><th>30-day period end date</th><th>Status</th></tr></thead>
+        <tbody>
+          ${noticeDeadlines.map(n=>`
+            <tr style="cursor:pointer;" onclick="viewClientMembership('${n.client.id}')">
+              <td>${n.client.name}</td>
+              <td>${n.client.termType ? (TERM_LABELS[n.client.termType]||n.client.termType) : '—'}</td>
+              <td>${n.termEnd ? n.termEnd.toLocaleDateString() : '—'}</td>
+              <td>${n.deadline ? n.deadline.toLocaleDateString() : '—'}</td>
+              <td>${n.periodEnd ? n.periodEnd.toLocaleDateString() : '—'}</td>
+              <td>${n.days===null ? `<span style="color:var(--warn);">term/renewal data not set yet</span>` : n.days<0 ? `<span style="color:var(--danger);">deadline passed — will auto-renew</span>` : n.days===0 ? `<span style="color:var(--warn);">today</span>` : `${n.days}d left`}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>`}
     </div>
   `;
 }
