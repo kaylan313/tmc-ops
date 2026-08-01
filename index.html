@@ -1124,7 +1124,7 @@ function downloadCsv(filename, rows){
   URL.revokeObjectURL(url);
 }
 function exportPayrollCsv(){
-  const period = currentPayrollPeriod();
+  const period = payrollFilterPeriod();
   const rows = [["Assistant","Hours worked","Hourly rate","Amount owed","Status","Payroll period"]];
   state.settings.assistants.forEach(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -1322,7 +1322,7 @@ function payrollReportPlainText(report){
 function downloadPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
-  const period = currentPayrollPeriod();
+  const period = payrollFilterPeriod();
   const report = buildPayrollReport(assistant, period);
   const blob = new Blob([payrollReportHtml(report)], { type: "text/html" });
   const url = URL.createObjectURL(blob);
@@ -1338,7 +1338,7 @@ function emailPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
   if(!assistant.email){ alert(assistant.name + " doesn't have an email on file yet — add one on the Team tab first."); return; }
-  const period = currentPayrollPeriod();
+  const period = payrollFilterPeriod();
   const report = buildPayrollReport(assistant, period);
   const subject = encodeURIComponent("Your Payroll Recap — " + formatPeriodRange(period));
   const body = encodeURIComponent(payrollReportPlainText(report));
