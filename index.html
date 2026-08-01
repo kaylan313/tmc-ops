@@ -270,6 +270,7 @@ let state = {
   modal: null,
   timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all", taskId: null },
   payrollFilter: { preset: "period", assistantId: "all", adminOnly: false },
+  payrollReportPeriod: "period", // "period" (current) or "lastPeriod" — which payroll period the per-assistant report/email download covers
   clientHoursFilter: { preset: "week" },
   kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true },
   // The client request form's fields used to be uncontrolled (no value=
@@ -886,6 +887,10 @@ function payrollFilterPeriod(){
   return currentPayrollPeriod();
 }
 function setPayrollFilterPreset(val){ state.payrollFilter.preset = val; render(); }
+function setPayrollReportPeriod(val){ state.payrollReportPeriod = val; render(); }
+function resolvedPayrollReportPeriod(){
+  return state.payrollReportPeriod === "lastPeriod" ? previousPayrollPeriod() : currentPayrollPeriod();
+}
 function setPayrollFilterAssistant(val){ state.payrollFilter.assistantId = val; render(); }
 function togglePayrollAdminOnly(checked){ state.payrollFilter.adminOnly = checked; render(); }
 function hoursInPeriod(entries, period){
@@ -1322,7 +1327,7 @@ function payrollReportPlainText(report){
 function downloadPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
-  const period = payrollFilterPeriod();
+  const period = resolvedPayrollReportPeriod();
   const report = buildPayrollReport(assistant, period);
   const blob = new Blob([payrollReportHtml(report)], { type: "text/html" });
   const url = URL.createObjectURL(blob);
@@ -1338,7 +1343,7 @@ function emailPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
   if(!assistant.email){ alert(assistant.name + " doesn't have an email on file yet — add one on the Team tab first."); return; }
-  const period = payrollFilterPeriod();
+  const period = resolvedPayrollReportPeriod();
   const report = buildPayrollReport(assistant, period);
   const subject = encodeURIComponent("Your Payroll Recap — " + formatPeriodRange(period));
   const body = encodeURIComponent(payrollReportPlainText(report));
@@ -3317,10 +3322,16 @@ function renderPayrollTool(){
     <div class="card">
       <div class="flex-between">
         <h3>Payroll reports</h3>
+        <div><label class="small">Period</label>
+          <select onchange="setPayrollReportPeriod(this.value)">
+            <option value="period" ${state.payrollReportPeriod==='period'?'selected':''}>Current period (${formatPeriodRange(currentPayrollPeriod())})</option>
+            <option value="lastPeriod" ${state.payrollReportPeriod==='lastPeriod'?'selected':''}>Last period (${formatPeriodRange(previousPayrollPeriod())})</option>
+          </select>
+        </div>
       </div>
-      <div class="small" style="margin-bottom:12px;">Same branded format as the client weekly reports — download or email each assistant their hours/pay for this period. Add an email on the Team tab for anyone missing one below.</div>
+      <div class="small" style="margin-bottom:12px;">Same branded format as the client weekly reports — download or email each assistant their hours/pay for the period selected above. Independent of the "Date range" filter in the table above, since reports only ever make sense for one pay period at a time. Add an email on the Team tab for anyone missing one below.</div>
       ${state.settings.assistants.filter(a=>a.active!==false).map(a=>{
-        const hrs = hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period);
+        const hrs = hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), resolvedPayrollReportPeriod());
         return `
         <div class="list-item">
           <div>${a.name}${a.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</div>
