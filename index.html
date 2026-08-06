@@ -167,6 +167,30 @@
     .stat-tile{min-width:140px;}
     .modal{padding:18px;}
   }
+  .orgchart-wrap{overflow-x:auto;padding-bottom:8px;}
+  .orgchart-row{margin-bottom:8px;}
+  .orgchart-row .orgchart-bar{height:2px;background:var(--rose-dark);width:100%;margin:12px 0 18px;}
+  .orgchart-seats{display:flex;gap:16px;flex-wrap:wrap;min-height:40px;}
+  .orgchart-seats.oc-empty{border:1.5px dashed var(--cream-dark);border-radius:var(--radius);align-items:center;justify-content:center;}
+  .orgchart-seat{background:#fff;border:2px solid var(--brown-dark);border-radius:10px;width:220px;text-align:left;cursor:grab;box-shadow:var(--shadow);}
+  .orgchart-seat:active{cursor:grabbing;}
+  .orgchart-seat .oc-head{padding:9px 12px 8px;border-bottom:1px solid var(--cream-dark);border-left:6px solid var(--brown-dark);border-radius:10px 0 0 0;}
+  .orgchart-seat.dept-ops .oc-head{border-left-color:var(--rose-dark);}
+  .orgchart-seat.dept-mkt .oc-head{border-left-color:var(--brown);}
+  .orgchart-seat.dept-exec .oc-head{border-left-color:var(--brown-dark);}
+  .orgchart-seat.dept-other .oc-head{border-left-color:var(--warn);}
+  .orgchart-seat .oc-title{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#8a7a72;font-weight:700;}
+  .orgchart-seat .oc-name{font-size:16px;font-weight:700;color:var(--brown-dark);margin-top:2px;}
+  .orgchart-seat .oc-name.leaving{text-decoration:line-through;color:#a08b83;}
+  .orgchart-seat .oc-body{padding:9px 12px 2px;}
+  .orgchart-seat .oc-resp{list-style:none;margin:0 0 8px;padding:0;font-size:12px;color:var(--brown-dark);}
+  .orgchart-seat .oc-resp li{padding-left:12px;position:relative;margin-bottom:5px;line-height:1.35;}
+  .orgchart-seat .oc-resp li:before{content:"▸";position:absolute;left:0;color:var(--rose-dark);}
+  .orgchart-seat .oc-flag{font-size:11px;color:#8a7a72;font-style:italic;border-top:1px dashed var(--cream-dark);padding:8px 0;margin-top:2px;}
+  .orgchart-seat .oc-actions{padding:6px 12px 10px;}
+  .oc-tag{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 6px;border-radius:8px;margin-left:6px;}
+  .oc-tag.new{background:#e4ede0;color:var(--ok);}
+  .oc-tag.leaving{background:#f5e1e0;color:var(--danger);}
 </style>
 </head>
 <body>
@@ -268,7 +292,7 @@ let state = {
   crmSubTab: "tasks",
   selectedClientId: null,
   modal: null,
-  timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all", taskId: null },
+  timeFilter: { preset: "last30", customStart: null, customEnd: null, assistantId: "all", taskId: null, sort: "clockInDesc" },
   payrollFilter: { preset: "period", assistantId: "all", adminOnly: false },
   payrollReportPeriod: "period", // "period" (current) or "lastPeriod" — which payroll period the per-assistant report/email download covers
   clientHoursFilter: { preset: "week" },
@@ -809,13 +833,20 @@ function previousBillingPeriod(client){
 // this client carry over 6.5 unused hours into their period starting 7/18")
 // — tied to that exact period's start date so it doesn't silently keep
 // applying to every period after that one.
+// `extraHours` is the same idea but for paid add-on hours purchased mid-period
+// (e.g. a client buying 20 more hours because they're about to run out) —
+// each entry only counts once `paid` is checked, so hours a client hasn't
+// actually paid for yet don't inflate their package.
 function effectivePackageHours(client){
-  const base = client.packageHours || 0;
-  if(!client.rolloverHours || !client.rolloverPeriodStart) return base;
+  let total = client.packageHours || 0;
   const period = currentBillingPeriod(client);
-  if(!period) return base;
+  if(!period) return total;
   const periodStartDate = period.start.toISOString().slice(0,10);
-  return periodStartDate === client.rolloverPeriodStart ? base + client.rolloverHours : base;
+  if(client.rolloverHours && client.rolloverPeriodStart===periodStartDate) total += client.rolloverHours;
+  (client.extraHours||[]).forEach(e=>{
+    if(e.paid && e.periodStart===periodStartDate) total += (e.hours||0);
+  });
+  return total;
 }
 function hoursUsed(clientId){
   const client = state.clients.find(c=>c.id===clientId);
@@ -1662,7 +1693,7 @@ function promptLogin(kind){
 
 function renderAppShell(){
   const tabs = state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["onboarding","Onboarding"],["team","Team"]]
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
     : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
 
   app.innerHTML = `
@@ -1702,6 +1733,7 @@ function renderMain(){
     case "renewals": return state.role==="admin" ? renderRenewalsTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
+    case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
     default: return "";
   }
 }
@@ -2122,11 +2154,14 @@ function renderTaskMiniList(tasks){
 
 // --- Clients list ---
 function renderClientsList(){
+  const isCancelled = c => c.clientStatus === "cancelled";
+  const activeClients = state.clients.filter(c=>!isCancelled(c));
+  const pastClients = state.clients.filter(isCancelled);
   return `
     <div class="flex-between"><h2>Clients</h2><button onclick="openClientEditor(null)">+ New client</button></div>
     <div class="card">
-      ${state.clients.length===0 ? `<div class="small">No clients yet.</div>` :
-        state.clients.map(c=>{
+      ${activeClients.length===0 ? `<div class="small">No clients yet.</div>` :
+        activeClients.map(c=>{
           const alert = tierAlert(c);
           const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
           const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
@@ -2141,6 +2176,20 @@ function renderClientsList(){
           </div>`;
         }).join("")}
     </div>
+    ${pastClients.length ? `
+    <div class="card">
+      <h3>Past clients</h3>
+      ${pastClients.map(c=>`
+        <div class="list-item">
+          <div><strong>${c.name}</strong> <span class="small">· cancelled${c.cancelledDate ? " " + parseYMD(c.cancelledDate).toLocaleDateString() : ""}</span></div>
+          <div style="display:flex;gap:8px;">
+            <button class="secondary" onclick="openClient('${c.id}')">View</button>
+            <button class="secondary" onclick="updateClientField('${c.id}','clientStatus','active')">Reactivate</button>
+          </div>
+        </div>
+      `).join("")}
+      <div class="small" style="margin-top:6px;">Their past tasks and notes stay on record.</div>
+    </div>` : ""}
   `;
 }
 function openClient(id){ state.selectedClientId = id; state.crmSubTab="tasks"; render(); }
@@ -2705,10 +2754,12 @@ function renderClientMembership(client){
   const used = hoursUsed(client.id);
   const overage = overageFor(client);
   const pkg = effectivePackageHours(client);
-  const rolloverActive = pkg > (client.packageHours||0);
   const currentTier = PACKAGE_TIERS.find(t=>t.hours===client.packageHours && t.price===client.packagePrice);
   const isHomeReset = currentTier && currentTier.key.startsWith("reset_");
   const period = currentBillingPeriod(client);
+  const periodStartDate = period ? period.start.toISOString().slice(0,10) : null;
+  const rolloverActive = !!(periodStartDate && client.rolloverHours && client.rolloverPeriodStart===periodStartDate);
+  const extraActiveHours = periodStartDate ? (client.extraHours||[]).filter(e=>e.paid && e.periodStart===periodStartDate).reduce((s,e)=>s+(e.hours||0),0) : 0;
   return `
     ${needsTermUpdate(client) ? `<div class="alert danger" style="margin-bottom:14px;">This client's contract end date has already passed — if they've signed a new term, update the Term type/start date below (or the overrides) so this clears.</div>` : ""}
     <div class="card">
@@ -2737,7 +2788,7 @@ function renderClientMembership(client){
         <div><label class="small">Package price ($, billed ${cycleLabel(client.cycleType).toLowerCase()}) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
       </div>
       <div class="progress-bar" style="margin-top:10px;"><div style="width:${Math.min(100,(used/(pkg||1))*100)}%;"></div></div>
-      <div class="small">${used.toFixed(1)} / ${pkg} hrs used this ${isHomeReset?'30-day cycle':'period'}${rolloverActive ? ` (includes +${client.rolloverHours} rolled over)` : ''}</div>
+      <div class="small">${used.toFixed(1)} / ${pkg} hrs used this ${isHomeReset?'30-day cycle':'period'}${rolloverActive ? ` (includes +${client.rolloverHours} rolled over)` : ''}${extraActiveHours>0 ? ` (includes +${extraActiveHours} paid add-on)` : ''}</div>
       ${overage.overHours>0 ? `<div class="alert warn" style="margin-top:6px;">${overage.overHours.toFixed(1)} hrs over package — $${overage.amount.toFixed(2)} overage at $${OVERAGE_RATE}/hr, due by the 1st of next month.</div>` : ""}
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small">Hour rollover — one-time extra hours for a specific upcoming/current period</label>
@@ -2746,6 +2797,27 @@ function renderClientMembership(client){
           <div><label class="small">Hours to add</label><input type="number" step="0.25" id="rollover_hrs_${client.id}" placeholder="e.g. 6.5"></div>
           <div><label class="small">Applies to period starting</label><input type="date" id="rollover_start_${client.id}" value="${period?period.start.toISOString().slice(0,10):''}"></div>
           <button class="secondary" onclick="setRollover('${client.id}')">Set rollover</button>
+        </div>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small">Extra hours — add-on hours for the current period (e.g. they're about to run out and want more before it resets). Only counts toward their package once marked paid.</label>
+        ${(client.extraHours||[]).length ? `<div style="margin:6px 0;">
+          ${(client.extraHours||[]).slice().sort((a,b)=> a.periodStart < b.periodStart ? 1 : -1).map(e=>`
+            <div class="small" style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-wrap:wrap;">
+              <span>+${e.hours} hrs &middot; period starting ${parseYMD(e.periodStart).toLocaleDateString()}</span>
+              <label style="display:flex;align-items:center;gap:4px;"><input type="checkbox" ${e.paid?'checked':''} onchange="toggleExtraHoursPaid('${client.id}','${e.id}')"> Paid</label>
+              ${e.paid ? `<span style="color:var(--ok);">✓ counted</span>` : `<span style="color:var(--warn);">⏳ awaiting payment — not counted yet</span>`}
+              <a href="#" onclick="removeExtraHours('${client.id}','${e.id}');return false;">Remove</a>
+            </div>
+          `).join("")}
+        </div>` : ""}
+        <div class="row" style="margin-top:6px;">
+          <div><label class="small">Hours to add</label><input type="number" step="0.25" id="extra_hrs_${client.id}" placeholder="e.g. 20"></div>
+          <div><label class="small">Applies to period starting</label><input type="date" id="extra_start_${client.id}" value="${period?period.start.toISOString().slice(0,10):''}"></div>
+        </div>
+        <div style="margin-top:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <label style="display:flex;align-items:center;gap:6px;"><input type="checkbox" id="extra_paid_${client.id}"> Has client paid for these yet?</label>
+          <button class="secondary" onclick="addExtraHours('${client.id}')">Add hours</button>
         </div>
       </div>
       <div class="row" style="margin-top:10px;">
@@ -2813,6 +2885,27 @@ function setRollover(clientId){
 }
 function clearRollover(clientId){
   upsert("clients", clientId, { rolloverHours: null, rolloverPeriodStart: null });
+}
+function addExtraHours(clientId){
+  const hrsInput = document.getElementById("extra_hrs_"+clientId);
+  const hrs = parseFloat(hrsInput.value);
+  const periodStart = document.getElementById("extra_start_"+clientId).value;
+  const paid = document.getElementById("extra_paid_"+clientId).checked;
+  if(!hrs || hrs<=0){ alert("Enter a positive number of hours to add."); return; }
+  if(!periodStart){ alert("Pick which period these hours apply to."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  const entry = { id:newId("extrahrs"), hours:hrs, periodStart, paid };
+  upsert("clients", clientId, { extraHours: [...(client.extraHours||[]), entry] });
+  hrsInput.value = "";
+}
+function toggleExtraHoursPaid(clientId, entryId){
+  const client = state.clients.find(c=>c.id===clientId);
+  const extraHours = (client.extraHours||[]).map(e=>e.id===entryId ? { ...e, paid: !e.paid } : e);
+  upsert("clients", clientId, { extraHours });
+}
+function removeExtraHours(clientId, entryId){
+  const client = state.clients.find(c=>c.id===clientId);
+  upsert("clients", clientId, { extraHours: (client.extraHours||[]).filter(e=>e.id!==entryId) });
 }
 function selectPackageTier(clientId, val){
   if(val==="custom") return;
@@ -3003,6 +3096,22 @@ const TIME_FILTER_PRESETS = [
   ["today","Today"], ["last30","Last 30 days"], ["period","This pay period"],
   ["custom","Custom range"], ["all","All time"]
 ];
+const TIME_SORT_OPTIONS = [
+  ["clockInDesc","Date (newest first)"], ["clockInAsc","Date (oldest first)"],
+  ["enteredDesc","Entry order (newest first)"], ["enteredAsc","Entry order (oldest first)"]
+];
+function sortTimeEntries(entries, sort){
+  const sorted = entries.slice();
+  if(sort==="clockInAsc") sorted.sort((a,b)=> new Date(a.clockIn) - new Date(b.clockIn));
+  else if(sort==="clockInDesc") sorted.sort((a,b)=> new Date(b.clockIn) - new Date(a.clockIn));
+  else if(sort==="enteredAsc") { /* already oldest-entered-first in state.timeEntries */ }
+  else sorted.reverse(); // enteredDesc — state.timeEntries arrives oldest-entered-first
+  return sorted;
+}
+function setTimeFilterSort(sort){
+  state.timeFilter.sort = sort;
+  render();
+}
 function timeFilterPeriod(){
   const f = state.timeFilter;
   const now = new Date();
@@ -3146,6 +3255,9 @@ function renderTimeTracking(){
           <select style="width:auto;" onchange="setTimeFilterPreset(this.value)">
             ${TIME_FILTER_PRESETS.map(([val,label])=>`<option value="${val}" ${state.timeFilter.preset===val?'selected':''}>${label}</option>`).join("")}
           </select>
+          <select style="width:auto;" onchange="setTimeFilterSort(this.value)">
+            ${TIME_SORT_OPTIONS.map(([val,label])=>`<option value="${val}" ${state.timeFilter.sort===val?'selected':''}>${label}</option>`).join("")}
+          </select>
           ${state.timeFilter.preset==="custom" ? `
             <input type="date" style="width:150px;" value="${state.timeFilter.customStart||''}" onchange="setTimeFilterCustom('start',this.value)">
             <input type="date" style="width:150px;" value="${state.timeFilter.customEnd||''}" onchange="setTimeFilterCustom('end',this.value)">
@@ -3160,7 +3272,7 @@ function renderTimeTracking(){
           <div class="stat-sub">${filtered.length} ${filtered.length===1?'entry':'entries'}${manualCount>0 ? ` · <span style="color:var(--warn);">${manualCount} manually edited</span>` : ""}</div>
         </div>
       </div>
-      ${filtered.slice().reverse().map(e=>{
+      ${sortTimeEntries(filtered, state.timeFilter.sort).map(e=>{
         const task = state.tasks.find(t=>t.id===e.taskId);
         const isAdminWork = e.clientId===INTERNAL_CLIENT_ID;
         return `<div class="list-item">
@@ -3656,6 +3768,219 @@ function saveNewEmployee(){
   closeModal();
 }
 
+// --- Org chart (admin drawing board — arrange seats/roles as the team grows) ---
+// Lives in settings/access alongside `assistants` so it persists the same way,
+// rather than a separate always-empty collection. Only used as a starting
+// point until the first save — after that, state.settings.orgChartRows (from
+// Firestore) is always the source of truth, even if it's edited down to [].
+const DEFAULT_ORG_CHART_ROWS = [
+  { id:"row_top", seats:[
+    { id:"oc_kaylan", title:"Visionary / Owner", name:"Kaylan", dept:"exec", tag:"none", resp:[], flag:"" },
+    { id:"oc_heidi", title:"Executive Assistant to Kaylan", name:"Heidi", dept:"exec", tag:"none",
+      resp:["Direct support to Kaylan — priority focus going forward","Airbnb Operations — check-ins, cleaners, guest messaging"], flag:"" }
+  ]},
+  { id:"row_directors", seats:[
+    { id:"oc_victoria_h", title:"Director of Operations", name:"Victoria", dept:"ops", tag:"none",
+      resp:["Directly oversees all assistants below","No team-lead layer yet — no one's ready to hold it"],
+      flag:"Future team-lead watchlist — revisit as the team grows." },
+    { id:"oc_cherish", title:"Director of Marketing & Sales", name:"Cherish", dept:"mkt", tag:"none",
+      resp:["Social media & content","Kaylan's own personal content"],
+      flag:"Handles this personally — no separate marketing team member yet." }
+  ]},
+  { id:"row_assistants", seats:[
+    { id:"oc_victoria_o", title:"Assistant", name:"Victoria Oser", dept:"ops", tag:"none",
+      resp:["Tracy — Home Resets — 20 hrs/mo"], flag:"Outside job limits capacity. Open to a 2nd client — confirm with her first." },
+    { id:"oc_morgan", title:"Assistant", name:"Morgan", dept:"ops", tag:"new",
+      resp:["Matthew — Home Resets + Airbnbs — 40→20 hrs/mo","Doug — Admin — 20 hrs/mo"],
+      flag:"Ex-director background — high expectations, unproven here." },
+    { id:"oc_natalie", title:"Assistant", name:"Natalie", dept:"ops", tag:"none",
+      resp:["Crystal — 40–60 hrs/mo","Ryan — 20 hrs/mo"],
+      flag:"Strongest long-term team-lead pick, but too new / already at capacity." },
+    { id:"oc_rachel", title:"Assistant", name:"Rachel", dept:"ops", tag:"none",
+      resp:["Josh Hanna — 20 hrs/mo","Susan — 40 hrs/mo","Heather — Home Resets — 12 hrs/mo"],
+      flag:"~72 hrs/mo total. Extremely reliable; untested at giving direction to others." },
+    { id:"oc_olivia", title:"Assistant", name:"Olivia", dept:"ops", tag:"none",
+      resp:["Frankie — 40–60 hrs/mo","Anu — ~40 hrs/mo"],
+      flag:"Heaviest load (80–100 hrs/mo). Solid, but not yet outspoken enough to lead." }
+  ]}
+];
+function getOrgChartRows(){
+  return (state.settings.orgChartRows && state.settings.orgChartRows.length) ? state.settings.orgChartRows : DEFAULT_ORG_CHART_ROWS;
+}
+function saveOrgChartRows(rows){
+  state.settings.orgChartRows = rows;
+  upsert("settings","access", { orgChartRows: rows });
+  render();
+}
+function addOrgChartRow(){
+  saveOrgChartRows([...getOrgChartRows(), { id:newId("ocrow"), seats:[] }]);
+}
+function removeOrgChartRow(rowId){
+  if(!confirm("Delete this whole row and every seat in it?")) return;
+  saveOrgChartRows(getOrgChartRows().filter(r=>r.id!==rowId));
+}
+function moveOrgChartRow(rowId, dir){
+  const rows = getOrgChartRows().slice();
+  const i = rows.findIndex(r=>r.id===rowId);
+  const j = i+dir;
+  if(i<0 || j<0 || j>=rows.length) return;
+  [rows[i], rows[j]] = [rows[j], rows[i]];
+  saveOrgChartRows(rows);
+}
+function addOrgChartSeat(rowId){
+  const seat = { id:newId("ocseat"), title:"Role", name:"Name", dept:"ops", tag:"none", resp:[], flag:"" };
+  const rows = getOrgChartRows().map(r=>r.id===rowId ? { ...r, seats:[...r.seats, seat] } : r);
+  saveOrgChartRows(rows);
+  openOrgChartSeatEditor(rowId, seat.id);
+}
+function removeOrgChartSeat(rowId, seatId){
+  const rows = getOrgChartRows().map(r=>r.id===rowId ? { ...r, seats:r.seats.filter(s=>s.id!==seatId) } : r);
+  saveOrgChartRows(rows);
+}
+function openOrgChartSeatEditor(rowId, seatId){
+  const row = getOrgChartRows().find(r=>r.id===rowId);
+  const seat = row ? row.seats.find(s=>s.id===seatId) : null;
+  if(!seat) return;
+  state.modal = { type:"orgChartSeat", rowId, seat };
+  render();
+}
+function saveOrgChartSeatModal(rowId, seatId){
+  const title = document.getElementById("ocm_title").value.trim();
+  const name = document.getElementById("ocm_name").value.trim();
+  const dept = document.getElementById("ocm_dept").value;
+  const tag = document.getElementById("ocm_tag").value;
+  const resp = document.getElementById("ocm_resp").value.split("\n").map(s=>s.trim()).filter(Boolean);
+  const flag = document.getElementById("ocm_flag").value.trim();
+  const rows = getOrgChartRows().map(r=>r.id!==rowId ? r : {
+    ...r, seats: r.seats.map(s=>s.id!==seatId ? s : { ...s, title, name, dept, tag, resp, flag })
+  });
+  saveOrgChartRows(rows);
+  closeModal();
+}
+// Native HTML5 drag & drop — dragging a seat onto another seat inserts it
+// just before that seat (in the same or a different row); dragging onto the
+// empty space in a row appends it to the end of that row.
+function ocDragStart(e, rowId, seatId){
+  state.ocDrag = { rowId, seatId };
+  e.dataTransfer.effectAllowed = "move";
+}
+function ocMoveSeat(fromRowId, seatId, toRowId, beforeSeatId){
+  const rows = getOrgChartRows().map(r=>({ ...r, seats:[...r.seats] }));
+  const fromRow = rows.find(r=>r.id===fromRowId);
+  const idx = fromRow.seats.findIndex(s=>s.id===seatId);
+  if(idx<0) return;
+  const [seat] = fromRow.seats.splice(idx,1);
+  const toRow = rows.find(r=>r.id===toRowId);
+  const beforeIdx = beforeSeatId ? toRow.seats.findIndex(s=>s.id===beforeSeatId) : -1;
+  if(beforeIdx>=0) toRow.seats.splice(beforeIdx,0,seat);
+  else toRow.seats.push(seat);
+  saveOrgChartRows(rows);
+}
+function ocDrop(e, targetRowId, targetSeatId){
+  e.preventDefault(); e.stopPropagation();
+  const drag = state.ocDrag;
+  state.ocDrag = null;
+  if(!drag || (drag.rowId===targetRowId && drag.seatId===targetSeatId)) return;
+  ocMoveSeat(drag.rowId, drag.seatId, targetRowId, targetSeatId);
+}
+function ocDropOnRow(e, targetRowId){
+  e.preventDefault();
+  const drag = state.ocDrag;
+  state.ocDrag = null;
+  if(!drag) return;
+  ocMoveSeat(drag.rowId, drag.seatId, targetRowId, null);
+}
+function renderOrgChart(){
+  const rows = getOrgChartRows();
+  return `
+    <div class="flex-between"><h2>Org Chart</h2><button onclick="addOrgChartRow()">+ Add row</button></div>
+    <div class="small" style="margin:-6px 0 14px;">Your team's structure, built to edit — drag a seat to move it, or click Edit to change its role, name, department color, tag, clients, or notes. Add a row when a new tier (like team leads) forms.</div>
+    <div class="orgchart-wrap">
+      ${rows.map((row,ri)=>`
+        <div class="orgchart-row">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+            <button class="secondary" style="padding:2px 8px;" title="Move row up" ${ri===0?'disabled':''} onclick="moveOrgChartRow('${row.id}',-1)">↑</button>
+            <button class="secondary" style="padding:2px 8px;" title="Move row down" ${ri===rows.length-1?'disabled':''} onclick="moveOrgChartRow('${row.id}',1)">↓</button>
+            <button class="secondary" style="padding:2px 8px;" onclick="addOrgChartSeat('${row.id}')">+ Add seat</button>
+            <button class="secondary" style="padding:2px 8px;" onclick="removeOrgChartRow('${row.id}')">✕ Delete row</button>
+          </div>
+          ${ri>0 ? `<div class="orgchart-bar"></div>` : ""}
+          <div class="orgchart-seats ${row.seats.length?'':'oc-empty'}" ondragover="event.preventDefault()" ondrop="ocDropOnRow(event,'${row.id}')">
+            ${row.seats.map(seat=>renderOrgChartSeat(row.id, seat)).join("") || `<div class="small">Drop a seat here, or "+ Add seat" above.</div>`}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+function renderOrgChartSeat(rowId, seat){
+  const tagHtml = seat.tag==='new' ? `<span class="oc-tag new">New</span>` : seat.tag==='leaving' ? `<span class="oc-tag leaving">Leaving</span>` : "";
+  const respHtml = (seat.resp||[]).map(line=>{
+    const parts = line.split(" — ");
+    return parts.length>1 ? `<li><b>${parts[0]}</b> — ${parts.slice(1).join(" — ")}</li>` : `<li>${line}</li>`;
+  }).join("");
+  return `
+    <div class="orgchart-seat dept-${seat.dept||'ops'}" draggable="true"
+      ondragstart="ocDragStart(event,'${rowId}','${seat.id}')"
+      ondragover="event.preventDefault()"
+      ondrop="ocDrop(event,'${rowId}','${seat.id}')">
+      <div class="oc-head">
+        <div class="oc-title">${seat.title||''}${tagHtml}</div>
+        <div class="oc-name ${seat.tag==='leaving'?'leaving':''}">${seat.name||'(unnamed)'}</div>
+      </div>
+      ${respHtml || seat.flag ? `
+      <div class="oc-body">
+        ${respHtml ? `<ul class="oc-resp">${respHtml}</ul>` : ""}
+        ${seat.flag ? `<div class="oc-flag">${seat.flag}</div>` : ""}
+      </div>` : ""}
+      <div class="oc-actions">
+        <button class="secondary" style="padding:2px 8px;" onclick="openOrgChartSeatEditor('${rowId}','${seat.id}')">Edit</button>
+      </div>
+    </div>
+  `;
+}
+function renderOrgChartSeatModal(rowId, seat){
+  return `
+    <div class="modal">
+      <h3>Edit seat</h3>
+      <div class="row">
+        <div><label class="small">Role / title</label><input id="ocm_title" value="${seat.title||''}"></div>
+        <div><label class="small">Name</label><input id="ocm_name" value="${seat.name||''}"></div>
+      </div>
+      <div class="row">
+        <div><label class="small">Department (accent color)</label>
+          <select id="ocm_dept">
+            <option value="exec" ${seat.dept==='exec'?'selected':''}>Executive</option>
+            <option value="ops" ${seat.dept==='ops'?'selected':''}>Operations</option>
+            <option value="mkt" ${seat.dept==='mkt'?'selected':''}>Marketing & Sales</option>
+            <option value="other" ${seat.dept==='other'?'selected':''}>Other</option>
+          </select>
+        </div>
+        <div><label class="small">Tag</label>
+          <select id="ocm_tag">
+            <option value="none" ${(!seat.tag||seat.tag==='none')?'selected':''}>None</option>
+            <option value="new" ${seat.tag==='new'?'selected':''}>New</option>
+            <option value="leaving" ${seat.tag==='leaving'?'selected':''}>Leaving</option>
+          </select>
+        </div>
+      </div>
+      <div><label class="small">Clients / responsibilities (one per line — "Name — detail" bolds the name)</label>
+        <textarea id="ocm_resp" rows="4" style="width:100%;">${(seat.resp||[]).join("\n")}</textarea>
+      </div>
+      <div style="margin-top:10px;"><label class="small">Note (shown in italics under the seat)</label>
+        <textarea id="ocm_flag" rows="2" style="width:100%;">${seat.flag||''}</textarea>
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:space-between;gap:8px;">
+        <button class="danger" onclick="removeOrgChartSeat('${rowId}','${seat.id}');closeModal();">Delete seat</button>
+        <div style="display:flex;gap:8px;">
+          <button class="secondary" onclick="closeModal()">Cancel</button>
+          <button onclick="saveOrgChartSeatModal('${rowId}','${seat.id}')">Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // --- Employment agreement gate (first team login) ---
 function employmentAgreementHtml(assistant){
   const todayStr = new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
@@ -3685,7 +4010,7 @@ function employmentAgreementHtml(assistant){
 
     <p><strong>3. COMPENSATION</strong></p>
     <p>Contractor shall be paid:</p>
-    <ul><li>$22.00 per hour</li></ul>
+    <ul><li>$${(assistant.hourlyRate||0).toFixed(2)} per hour</li></ul>
     <p>Hours will vary based on client demand and assigned workload.</p>
     <p>Payment Schedule:</p>
     <ul><li>Semi-monthly (15th and 30th), based on submitted and approved hours.</li></ul>
@@ -4444,7 +4769,16 @@ async function saveTask(taskId){
   }
   // Only ever allocated once — a task keeps the number it was first saved
   // with for its whole life, same as before.
-  const taskNumber = task.taskNumber || await allocateTaskNumber();
+  let taskNumber = task.taskNumber;
+  if(!taskNumber){
+    try {
+      taskNumber = await allocateTaskNumber();
+    } catch(err){
+      console.warn("Task numbering failed:", err);
+      alert("This didn't save — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
+      return;
+    }
+  }
   const payload = {
     title: document.getElementById("tf_title").value.trim(),
     clientId: document.getElementById("tf_client").value,
@@ -4710,6 +5044,7 @@ function renderModal(){
     : state.modal.type==="appGuideReadOnly" ? renderAppGuideReadOnlyModal()
     : state.modal.type==="manualTimeEntry" ? renderManualTimeEntryModal()
     : state.modal.type==="imageViewer" ? renderImageViewerModal(state.modal.dataUrl)
+    : state.modal.type==="orgChartSeat" ? renderOrgChartSeatModal(state.modal.rowId, state.modal.seat)
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
