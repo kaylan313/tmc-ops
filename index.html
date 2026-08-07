@@ -1653,7 +1653,17 @@ function render(){
   }
   const newScrollEl = document.querySelector(".main");
   if(newScrollEl && prevScrollTop) newScrollEl.scrollTop = prevScrollTop;
+
+  // The signature <canvas> only exists in the DOM while a client's Service
+  // Agreement section is open and unsigned — (re)bind to it on every render
+  // since render() always rebuilds the DOM from scratch, which would
+  // otherwise orphan the old canvas's event listeners.
+  if(state.selectedClientId){
+    const canvas = document.getElementById('sigPad_'+state.selectedClientId);
+    if(canvas) initClientSigPad(state.selectedClientId);
+  }
 }
+window.addEventListener('resize', ()=>{ if(typeof resizeClientSigCanvas==='function') resizeClientSigCanvas(); });
 
 function renderLogin(){
   app.innerHTML = `
@@ -2192,7 +2202,7 @@ function renderClientsList(){
     </div>` : ""}
   `;
 }
-function openClient(id){ state.selectedClientId = id; state.crmSubTab="tasks"; render(); }
+function openClient(id){ state.selectedClientId = id; state.crmSubTab="tasks"; state.profileOpenSections = new Set(["visit"]); render(); }
 function openClientEditor(id){
   const c = id ? state.clients.find(x=>x.id===id) : null;
   state.modal = { type:"clientEditor", client:c };
@@ -2204,7 +2214,7 @@ function renderClientCRM(clientId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return `<div class="small">Client not found.</div>`;
   const alert = tierAlert(client);
-  const subtabs = ["profile","tasks","notes","membership"];
+  const subtabs = ["profile","tasks","membership"];
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
     <h2>${client.name}</h2>
@@ -2214,7 +2224,6 @@ function renderClientCRM(clientId){
     </div>
     ${state.crmSubTab==="profile" ? renderClientProfile(client) : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
-    ${state.crmSubTab==="notes" ? renderClientNotes(client) : ""}
     ${state.crmSubTab==="membership" ? renderClientMembership(client) : ""}
   `;
 }
@@ -2223,7 +2232,6 @@ function renderClientCRM(clientId){
 // derived straight from real data below instead of being a checkbox that
 // could silently fall out of sync with reality.
 const CLIENT_ONBOARDING_COMMON = [
-  { id:"contract_signed", text:"Contract signed" },
   { id:"payment_on_file", text:"Payment method on file" },
   { id:"first_period_paid", text:"First month/period paid" },
   { id:"portal_code_sent", text:"Client portal code emailed to client" }
@@ -2263,6 +2271,7 @@ function renderClientOnboardingChecklist(client){
       <div class="small" style="margin-bottom:6px;">Home/business steps shown below are based on "Client type" further down — currently <strong>${serviceType}</strong>. Set it to "Both" for a client like Susan who needs both.</div>
       <div class="checklist-item"><span class="small">${assistantAssigned ? '✅' : '⬜'} Assistant assigned ${assistantAssigned ? '— '+((client.assistantIds||[]).map(assistantName).join(', ')) : '(set on Membership tab)'}</span></div>
       <div class="checklist-item"><span class="small">${portalCodeSet ? '✅' : '⬜'} Client portal code set ${portalCodeSet ? '' : '(set on Membership tab)'}</span></div>
+      <div class="checklist-item"><span class="small">${client.contractSigned ? '✅' : '⬜'} Contract signed ${client.contractSigned ? '— by '+client.contractSignedName : '(sign it on the Service Agreement section below)'}</span></div>
       ${items.map(i=>`
         <div class="checklist-item">
           <input type="checkbox" id="cob_${client.id}_${i.id}" ${i.done?'checked':''} onchange="toggleClientOnboardingItem('${client.id}','${i.id}')">
@@ -2282,6 +2291,950 @@ function toggleClientOnboardingItem(clientId, itemId){
   items[idx] = { ...items[idx], done: !items[idx].done };
   upsert("clients", clientId, { onboardingChecklist: items });
 }
+// Verbatim from the Personal Assistant Services Agreement (Orientation Companion tool) — do not paraphrase, only the render-time fills below touch it.
+const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AGREEMENT</strong></p>
+<p>This Agreement is entered into between:</p>
+<p><strong>The Modern Concierge, LLC</strong> ("Company")<br />
+and<br />
+("Client")</p>
+<p>Services Start Date:</p>
+<p>Services End Date: <strong>days from start date</strong></p>
+<p>Agreement Type:</p>
+<ul>
+<li><blockquote>
+<p>One (1) Month Pilot</p>
+</blockquote>
+<blockquote>
+<p>Three (3) Month Term</p>
+</blockquote>
+<blockquote>
+<p><strong>Twelve (12) Month Term (New)</strong></p>
+</blockquote>
+<blockquote>
+<p>Twelve (12) Month Term (Renewal)</p>
+</blockquote></li>
+</ul>
+<h2 id="scope-of-services"><strong>1. Scope of Services</strong></h2>
+<p><strong>The Modern Concierge</strong> will provide ongoing personal
+and business support services, including but not limited to the
+following:</p>
+<h4 id="business-support-administrative-services"><strong>Business
+Support &amp; Administrative Services</strong></h4>
+<ul>
+<li><blockquote>
+<p>Day-to-day administrative assistance</p>
+</blockquote></li>
+<li><blockquote>
+<p>Email and calendar management</p>
+</blockquote></li>
+<li><blockquote>
+<p>Coordination of meetings, appointments, and scheduling</p>
+</blockquote></li>
+<li><blockquote>
+<p>Vendor communication and management</p>
+</blockquote></li>
+<li><blockquote>
+<p>Invoice processing, payments, and basic bookkeeping support</p>
+</blockquote></li>
+<li><blockquote>
+<p>CRM management and client follow-ups</p>
+</blockquote></li>
+<li><blockquote>
+<p>Document preparation, organization, and filing</p>
+</blockquote></li>
+<li><blockquote>
+<p>Research for business decisions, tools, and opportunities</p>
+</blockquote></li>
+<li><blockquote>
+<p>Oversight and execution of operational tasks</p>
+</blockquote></li>
+</ul>
+<h4 id="business-development-idea-execution"><strong>Business
+Development &amp; Idea Execution</strong></h4>
+<ul>
+<li><blockquote>
+<p>Brainstorming and strategy support for new business ideas</p>
+</blockquote></li>
+<li><blockquote>
+<p>Research and development of potential ventures or projects</p>
+</blockquote></li>
+<li><blockquote>
+<p>Assistance with launching and organizing new initiatives</p>
+</blockquote></li>
+<li><blockquote>
+<p>Workflow creation and process optimization</p>
+</blockquote></li>
+<li><blockquote>
+<p>Accountability and follow-through on ideas and action items</p>
+</blockquote></li>
+</ul>
+<h4 id="personal-assistant-lifestyle-management"><strong>Personal
+Assistant &amp; Lifestyle Management</strong></h4>
+<ul>
+<li><blockquote>
+<p>Errand running and task coordination</p>
+</blockquote></li>
+<li><blockquote>
+<p>Personal scheduling and calendar organization</p>
+</blockquote></li>
+<li><blockquote>
+<p>Travel planning, booking, and itinerary management</p>
+</blockquote></li>
+<li><blockquote>
+<p>Household coordination (vendors, maintenance, deliveries, etc.)</p>
+</blockquote></li>
+<li><blockquote>
+<p>Personal shopping, returns, and general task management</p>
+</blockquote></li>
+<li><blockquote>
+<p>Event planning assistance (personal or professional)</p>
+</blockquote></li>
+</ul>
+<h4 id="general-support"><strong>General Support</strong></h4>
+<ul>
+<li><blockquote>
+<p>Acting as a point of contact for delegated tasks and
+communications</p>
+</blockquote></li>
+<li><blockquote>
+<p>Proactive identification of needs and execution of solutions</p>
+</blockquote></li>
+<li><blockquote>
+<p>Ongoing support tailored to the Client’s evolving personal and
+business needs</p>
+</blockquote></li>
+</ul>
+<h3 id="service-flexibility-clause"><strong>Service Flexibility
+Clause</strong></h3>
+<p>Services are designed to be flexible and may evolve based on the
+Client’s priorities. Tasks outside of the above scope may be
+accommodated at the discretion of The Modern Concierge and within the
+agreed service hours.</p>
+<h3 id="service-notes"><strong>Service Notes</strong></h3>
+<ul>
+<li><blockquote>
+<p>The Modern Concierge operates as a management and administrative
+support partner and does not replace licensed property management or
+legal/accounting professionals.</p>
+</blockquote></li>
+<li><blockquote>
+<p>All vendor services (cleaning, maintenance, etc.) are coordinated on
+behalf of the client but are billed separately unless otherwise
+agreed.</p>
+</blockquote></li>
+<li><blockquote>
+<p>Scope may evolve based on portfolio growth and operational needs.</p>
+</blockquote></li>
+</ul>
+<p>Services are non-licensed administrative support only. Company will
+not perform any activities requiring a license or unethical
+requests.</p>
+<p>Services are limited to agreed hours and defined needs. Company
+provides no guarantee of specific business results.</p>
+<h2 id="membership-types"><strong>2. Membership Types</strong></h2>
+<p>One (1) Month Pilot</p>
+<ul>
+<li><blockquote>
+<p><em>Client may only use once and must be first 30 days of
+service</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>No cancellation permitted during service</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>Client agrees to continue with the Three (3) Month Term or the
+Twelve (12) Month Term unless terminated in writing 7 days prior to
+Pilot service end date</em></p>
+</blockquote></li>
+<li><blockquote>
+<p>Assess workflow needs</p>
+</blockquote></li>
+<li><blockquote>
+<p>Implement foundational systems</p>
+</blockquote></li>
+<li><blockquote>
+<p>Establish communication cadence</p>
+</blockquote></li>
+<li><blockquote>
+<p>Evaluate hour allocation</p>
+</blockquote></li>
+<li><blockquote>
+<p>Perform tasks needed by Client</p>
+</blockquote></li>
+</ul>
+<p>Three (3) Month Term</p>
+<ul>
+<li><blockquote>
+<p><em>Client may only use once and must be the next 90 days of service
+after One Month Pilot</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>No cancellation permitted during service</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>Client agrees to continue with the Twelve (12) Month Term unless
+terminated in writing 30 days prior to Three Month Term Services End
+Date</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>All three (3) months must contain the same amount of hours each
+month</em></p>
+</blockquote></li>
+<li><blockquote>
+<p>Perform tasks needed by Client</p>
+</blockquote></li>
+</ul>
+<p>Twelve (12) Month Term (New)</p>
+<ul>
+<li><blockquote>
+<p><em>Standard agreement after the One Month Pilot and/or Three Month
+Term have been executed and completed</em></p>
+</blockquote></li>
+</ul>
+<ul>
+<li><blockquote>
+<p><em>No cancellation permitted during service</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>Client agrees to renew with the Twelve (12) Month Term (Renewal)
+unless terminated in writing 60 days prior to Twelve Month Term Services
+End Date</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>All twelve (12) months of the Agreement must contain the same
+number of service hours per month unless the Client elects to enter into
+a Custom Agreement as outlined below.</em></p>
+</blockquote></li>
+</ul>
+<blockquote>
+<p><em><strong>Custom Agreement<br />
+</strong>Prior to execution of the twelve (12) month term, the Client
+must select an initial service tier of either twenty (20), forty (40),
+or sixty (60) hours per month. At the time of signing, the Client may
+designate specific months to increase their hours to forty (40) or sixty
+(60) hours to accommodate seasonal or anticipated needs. All monthly
+hour allocations must be finalized prior to execution of the Agreement
+and will remain fixed for the duration of the one-year term. Hours may
+be increased above the initial tier in designated months; however,
+reductions below the initially selected monthly tier are not
+permitted.</em></p>
+</blockquote>
+<ul>
+<li><blockquote>
+<p>Perform tasks needed by Client</p>
+</blockquote></li>
+</ul>
+<p>Twelve (12) Month Term (Renewal)</p>
+<ul>
+<li><blockquote>
+<p><em>Standard agreement after the initial Twelve Month Term has been
+executed and completed.</em></p>
+</blockquote></li>
+</ul>
+<ul>
+<li><blockquote>
+<p><em>Cancellation permitted with a 60-day written notice</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>Client agrees to renew with the Twelve (12) Month Term (Renewal)
+unless terminated in writing 60 days prior to Twelve Month Term Services
+End Date</em></p>
+</blockquote></li>
+<li><blockquote>
+<p><em>All twelve (12) months of the Agreement must contain the same
+number of service hours per month unless the Client elects to enter into
+a Custom Agreement as outlined below.</em></p>
+</blockquote></li>
+</ul>
+<blockquote>
+<p><em><strong>Custom Agreement<br />
+</strong>Prior to execution of the twelve (12) month term, the Client
+must select an initial service tier of either twenty (20), forty (40),
+or sixty (60) hours per month. At the time of signing, the Client may
+designate specific months to increase their hours to forty (40) or sixty
+(60) hours to accommodate seasonal or anticipated needs. All monthly
+hour allocations must be finalized prior to execution of the Agreement
+and will remain fixed for the duration of the one-year term. Hours may
+be increased above the initial tier in designated months; however,
+reductions below the initially selected monthly tier are not
+permitted.</em></p>
+</blockquote>
+<ul>
+<li><blockquote>
+<p>Perform tasks needed by Client</p>
+</blockquote></li>
+</ul>
+<h2 id="membership-levels"><strong>3. Membership Levels</strong></h2>
+<p>Client agrees to enroll in the following membership:</p>
+<ul>
+<li><blockquote>
+<p>One (1) Month Pilot</p>
+</blockquote>
+<ul>
+<li><blockquote>
+<p>20 Hours per Month – $950 per month</p>
+</blockquote>
+<blockquote>
+<p>40 Hours per Month – $1,700 per month</p>
+</blockquote>
+<blockquote>
+<p>60 Hours per Month – $2,400 per month</p>
+</blockquote></li>
+</ul>
+<blockquote>
+<p>Three (3) Month Term</p>
+</blockquote>
+<ul>
+<li><blockquote>
+<p>20 Hours per Month – $950 per month</p>
+</blockquote>
+<blockquote>
+<p>40 Hours per Month – $1,700 per month</p>
+</blockquote>
+<blockquote>
+<p>60 Hours per Month – $2,400 per month</p>
+</blockquote></li>
+</ul>
+<blockquote>
+<p>Twelve (12) Month Term (New)</p>
+</blockquote>
+<ul>
+<li><blockquote>
+<p>20 Hours per Month – $950 per month</p>
+</blockquote>
+<blockquote>
+<p>40 Hours per Month – $1,700 per month</p>
+</blockquote>
+<blockquote>
+<p>60 Hours per Month – $2,400 per month</p>
+</blockquote>
+<blockquote>
+<p>Upgrade Option: May, July, October at 40 hours per month ($1,700 per
+month). Other months may be upgraded, if needed during contract
+period.</p>
+</blockquote></li>
+</ul>
+<blockquote>
+<p>Twelve (12) Month Term (Renewal)</p>
+</blockquote>
+<ul>
+<li><blockquote>
+<p>20 Hours per Month – $950 per month</p>
+</blockquote>
+<blockquote>
+<p>40 Hours per Month – $1,700 per month</p>
+</blockquote>
+<blockquote>
+<p>60 Hours per Month – $2,400 per month</p>
+</blockquote>
+<blockquote>
+<p>Upgrade Option:</p>
+</blockquote></li>
+</ul></li>
+</ul>
+<p>Membership hours reset monthly and any unused hours do not roll over.
+<strong><u>$50 an hour</u></strong> for every hour exceeding monthly
+hour allocation. Overage will be invoiced monthly and is due within
+three (3) calendar days of the invoice date, consistent with the Overage
+Invoice Payment Terms below.</p>
+<p><strong>Home Reset Packages (Standalone Service — Membership Not
+Required)</strong></p>
+<p>Home Reset packages are a standalone service offered by Company and
+are available to any Client, whether or not Client is enrolled in an
+hourly membership above. Client may select one of the following
+flat-rate packages, available as a one-time service or on a recurring
+basis. Recurring Home Reset service carries no term commitment and may
+be cancelled at any time with forty-eight (48) hours’ notice; no early
+termination fee applies. Company will check the box below to indicate
+the package selected prior to signature.</p>
+<p><strong>☐ The Refresh — $325</strong></p>
+<p>6 Hours of Service · Flat Rate · One-Time or Recurring</p>
+<ul>
+<li><blockquote>
+<p><strong>Includes:</strong></p>
+</blockquote>
+<blockquote>
+<p>Bed Making &amp; Linen Reset</p>
+</blockquote>
+<blockquote>
+<p>Dishes &amp; Kitchen Tidy</p>
+</blockquote>
+<blockquote>
+<p>Restocking of Provided Supplies</p>
+</blockquote>
+<blockquote>
+<p>Laundry (Wash &amp; Fold)</p>
+</blockquote>
+<blockquote>
+<p><strong>Does Not Include:</strong></p>
+</blockquote>
+<blockquote>
+<p>Grocery Stocking</p>
+</blockquote>
+<blockquote>
+<p>Errands &amp; Returns</p>
+</blockquote>
+<blockquote>
+<p>Vendor Coordination</p>
+</blockquote></li>
+</ul>
+<p><strong>☐ The Restore — $575</strong></p>
+<p>12 Hours of Service · Flat Rate · One-Time or Recurring</p>
+<ul>
+<li><blockquote>
+<p><strong>Includes:</strong></p>
+</blockquote>
+<blockquote>
+<p>Bed Making &amp; Linen Reset</p>
+</blockquote>
+<blockquote>
+<p>Dishes &amp; Kitchen Tidy</p>
+</blockquote>
+<blockquote>
+<p>Restocking of Provided Supplies</p>
+</blockquote>
+<blockquote>
+<p>Laundry (Wash, Fold &amp; Hang Up)</p>
+</blockquote>
+<blockquote>
+<p>Grocery Stocking</p>
+</blockquote>
+<blockquote>
+<p><strong>Does Not Include:</strong></p>
+</blockquote>
+<blockquote>
+<p>Errands &amp; Returns</p>
+</blockquote>
+<blockquote>
+<p>Vendor Coordination</p>
+</blockquote></li>
+</ul>
+<p><strong>Additional Assistant Authorization</strong></p>
+<p>When a client-assigned task carries a defined deadline that requires
+the deployment of an additional assistant beyond the primary assigned
+assistant, The Modern Concierge will obtain written or verbal client
+approval prior to bringing on the additional team member. Upon approval,
+each assistant actively working on the task will be billed individually
+against the client's monthly membership hours — for example, if two
+assistants each work two (2) hours on a deadline-driven task, four (4)
+total hours will be deducted from the client's monthly membership
+balance. Client approval is required prior to any additional assistant
+hours being billed, without exception.</p>
+<h2
+id="billing-renewal-overage-charges-and-late-payment-policy"><strong>4.
+Billing, Renewal, Overage Charges, and Late Payment Policy</strong>
+</h2>
+<p><em><strong>Automatic Recurring Billing
+Authorization</strong></em></p>
+<blockquote>
+<p>Memberships are billed monthly, in advance.</p>
+<p>Membership services shall commence on the mutually agreed-upon start
+date selected by both parties and shall automatically renew every thirty
+(30) days thereafter, unless otherwise agreed upon in writing by both
+parties. Unless Client provides written notice of non-renewal at least
+five (5) calendar days prior to the end of the current billing period,
+the membership will automatically renew and the card on file will be
+charged for the next thirty (30) day billing cycle.</p>
+<p><strong>Payment is due on the mutually agreed-upon membership start
+date and will be automatically charged to the Client’s card on file
+every thirty (30) days thereafter, unless otherwise agreed upon in
+writing by both parties.</strong></p>
+<p>Client agrees to maintain a valid credit or debit card on file for
+all membership-based services. By signing this Agreement, Client
+authorizes The Modern Concierge to automatically charge the card on file
+on a recurring monthly basis for the selected membership plan.</p>
+<p>Payments are non-refundable once hours are allocated. Hours are
+allocated once an Agreement is signed by both
+parties<strong>.</strong></p>
+</blockquote>
+<h3
+id="membership-renewal-and-cancellation-notice"><em><strong>Membership
+Renewal and Cancellation Notice</strong></em></h3>
+<blockquote>
+<p>All memberships automatically renew at the end of each billing period
+unless Client provides written notice of non-renewal at least
+<strong>five (5) calendar days prior to the end of the current billing
+period.</strong></p>
+<p>If proper notice is not provided within this timeframe, the
+membership will automatically renew and the card on file will be charged
+for the next billing cycle.</p>
+</blockquote>
+<h3 id="included-hours-and-overage-charges"><em><strong>Included Hours
+and Overage Charges</strong></em></h3>
+<blockquote>
+<p>Each membership includes a designated number of service hours per
+billing cycle. Unused hours do not roll over to future billing periods
+unless otherwise stated in writing.</p>
+<p>If Client requires services beyond the included monthly hours,
+additional time will be billed at a rate of <strong>$50.00 per
+hour</strong>, consistent with The Modern Concierge’s standard
+membership overage rate.</p>
+<p>The Modern Concierge will make every reasonable effort to notify the
+Client before exceeding the allotted monthly hours.</p>
+</blockquote>
+<h3 id="overage-invoice-payment-terms"><em><strong>Overage Invoice
+Payment Terms</strong></em></h3>
+<blockquote>
+<p>Overage charges may be billed separately from the monthly membership
+fee and are due within three (3) calendar days of the invoice date.</p>
+</blockquote>
+<h3 id="late-fees-for-unpaid-overage-charges"><em><strong>Late Fees for
+Unpaid Overage Charges</strong></em></h3>
+<blockquote>
+<p>If payment for overage charges is not received within three (3)
+calendar days of the invoice date, Client agrees to pay a late fee equal
+to one and one-half percent (1.5%) per month on the unpaid balance,
+accruing from the invoice due date until paid in full.</p>
+</blockquote>
+<h3 id="suspension-of-services"><em><strong>Suspension of
+Services</strong></em></h3>
+<blockquote>
+<p>If any overage invoice remains unpaid for <strong>ten (10) calendar
+days</strong> after the invoice date, The Modern Concierge reserves the
+right to immediately suspend all services until the account is brought
+current.</p>
+<p>The Modern Concierge shall not be liable for any disruption, delays,
+or missed deadlines resulting from suspension of services due to
+nonpayment.</p>
+</blockquote>
+<h3 id="early-termination-of-fixed-term-agreements"><em><strong>Early
+Termination of Fixed-Term Agreements</strong></em></h3>
+<blockquote>
+<p>If the Client enters into a fixed-term Agreement, including but not
+limited to a three (3) month or twelve (12) month membership commitment,
+and elects to terminate the Agreement prior to the expiration of the
+agreed term, the Client shall be responsible for an Early Termination
+Fee as follows:</p>
+</blockquote>
+<h4 id="three-3-month-agreements"><strong>Three (3) Month
+Agreements</strong></h4>
+<blockquote>
+<p>The Client shall pay an amount equal to fifty percent (50%) of all
+remaining membership fees due for the balance of the Agreement term.</p>
+</blockquote>
+<h4 id="twelve-12-month-agreements"><strong>Twelve (12) Month
+Agreements</strong></h4>
+<blockquote>
+<p>Rather than a fee based on remaining months, the Early Termination
+Fee for Twelve (12) Month Agreements shall be calculated as a tiered
+buyout based on the Client's average monthly billing over the preceding
+three (3) completed months (or all completed months if fewer than three
+have elapsed at the time of cancellation), as follows: (a) Cancellation
+in Months 1 through 3: an amount equal to three (3) months of average
+billing; (b) Cancellation in Months 4 through 6: an amount equal to two
+(2) months of average billing; (c) Cancellation in Months 7 through 12:
+an amount equal to one (1) month of average billing. This structure
+ensures the buyout reflects the Client's actual usage history rather
+than a fixed tier that may not represent the Client's engagement with
+services.</p>
+<p>The Early Termination Fee is intended to compensate The Modern
+Concierge for onboarding costs, administrative setup, staff allocation,
+scheduling commitments, and reserved service capacity.</p>
+<p>The Early Termination Fee shall be due within three (3) calendar days
+of the termination date and may be charged automatically to the Client’s
+card on file.</p>
+<p>Failure to pay the Early Termination Fee within the required
+timeframe will subject the outstanding balance to the late payment
+provisions set forth in this Agreement, including applicable late fees
+and suspension of services.</p>
+<p>Any membership fees already paid are non-refundable, and services
+will continue through the end of the paid billing period unless
+otherwise agreed in writing.</p>
+</blockquote>
+<h3 id="declined-payments"><em><strong>Declined
+Payments</strong></em></h3>
+<blockquote>
+<p>If any automatic membership payment is declined, the client must
+provide updated payment information within <strong>twenty-four (24)
+hours</strong>. Services may be paused until successful payment is
+processed.</p>
+<p>Any fees charged by the payment processor or financial institution
+due to declined payments are the responsibility of the Client.</p>
+</blockquote>
+<p><em><strong>Other Payment Terms</strong></em></p>
+<p>All invoices and payments are processed through QuickBooks Online.
+Clients will receive a secure payment link via email. The following
+processing fees apply:</p>
+<ul>
+<li><blockquote>
+<p>ACH Bank Transfer: $10.00 flat fee per transaction</p>
+</blockquote></li>
+<li><blockquote>
+<p>Credit Card or Debit Card: 2.99% processing fee per transaction</p>
+</blockquote></li>
+<li><blockquote>
+<p><strong>Fees may apply.</strong></p>
+</blockquote></li>
+</ul>
+<blockquote>
+<p>The Client agrees to reimburse the Personal Assistant (“PA”) for all
+reasonable and pre-approved out-of-pocket expenses incurred by the PA in
+the course of performing errands or tasks on behalf of the Client. The
+PA shall provide receipts or reasonable proof of payment for all such
+expenses. Reimbursement shall be made within twenty-four (24) hours of
+the Client’s receipt of documentation. Payment shall be issued through a
+mutually agreed upon payment method, including but not limited to Venmo,
+Zelle, or another agreed electronic transfer method.</p>
+<p>For longer-term Agreements, the Client may, at their discretion,
+provide the Personal Assistant (“PA”) with a credit card issued in the
+PA’s name for the sole purpose of making authorized purchases on behalf
+of the Client. The card shall be used exclusively for pre-approved,
+business-related expenses incurred in the performance of services under
+this Agreement.</p>
+</blockquote>
+<ul>
+<li><blockquote>
+<p>The PA agrees to use the card only within the scope of authorization
+provided by the Client and to maintain accurate records of all
+transactions, including receipts and supporting documentation. The PA
+shall not be personally liable for authorized charges made in accordance
+with this Agreement.</p>
+</blockquote></li>
+<li><blockquote>
+<p>The Client reserves the right to revoke access to the credit card at
+any time upon written notice. Upon termination of this Agreement or
+revocation of authorization, the PA shall promptly return or destroy the
+card as directed by the Client.</p>
+</blockquote></li>
+</ul>
+<h2 id="client-referral-incentive-program"><strong>5. Client Referral
+Incentive Program</strong></h2>
+<p>Clients may receive a referral incentive structured as follows:</p>
+<p>If Client refers a new client to Company and that referral signs a
+Three (3) Month Term or longer contract:</p>
+<ul>
+<li><blockquote>
+<p>The referring client will receive 20% off one month of service during
+their contracted Agreement.</p>
+</blockquote></li>
+</ul>
+<p>There is no limit to the number of referrals Client may make;
+however, discounts cannot be combined within a single month. Each
+successful referral earns 20% off one month of service, so multiple
+referrals will result in multiple separate months discounted at 20%.</p>
+<p>The Company reserves the right to modify or discontinue this
+incentive program at any time.</p>
+<h2 id="communication"><strong>6. Communication</strong></h2>
+<p>Client agrees to:</p>
+<ul>
+<li><blockquote>
+<p>Provide timely access to necessary platforms</p>
+</blockquote></li>
+<li><blockquote>
+<p>Respond to questions within reasonable timeframes</p>
+</blockquote></li>
+<li><blockquote>
+<p>Maintain organized communication channels</p>
+</blockquote></li>
+</ul>
+<p>Company agrees to:</p>
+<ul>
+<li><blockquote>
+<p>Provide timely responses to questions</p>
+</blockquote></li>
+<li><blockquote>
+<p>Complete tasks before or on requested due date; or communicate with
+Client if unforeseen circumstances arise</p>
+</blockquote></li>
+<li><blockquote>
+<p>Provide Client with monthly usage report and notify if any overage is
+to be expected</p>
+</blockquote></li>
+<li><blockquote>
+<p>The best of their ability, to provide accurate and exceptional
+service</p>
+</blockquote></li>
+</ul>
+<h2 id="independent-contractor-status"><strong>7. Independent Contractor
+Status</strong></h2>
+<p>Company operates as an independent contractor. No employment
+relationship is created under this agreement. This includes, but not
+limited to, no benefits, tax withholding, or authority to bind Client.
+Client is responsible for its own compliance and decisions.</p>
+<h2 id="confidentiality"><strong>8. Confidentiality</strong></h2>
+<p>Company agrees to maintain confidentiality regarding Client business
+information, personal information and sensitive data.</p>
+<p>Client agrees to maintain confidentiality regarding any Company
+proprietary information, trade secrets and business strategies.</p>
+<p>This section shall survive termination or expiration of this
+Agreement.</p>
+<p>A Non-Disclosure Agreement (NDA) is available upon request.</p>
+<h2 id="limitation-of-liability"><strong>9. Limitation of
+Liability</strong></h2>
+<p>To the fullest extent permitted by applicable law, Company’s total
+cumulative liability arising out of or relating to this Agreement,
+whether in contract, tort (including negligence), strict liability, or
+otherwise, shall not exceed the total fees actually paid by Client to
+Company during the three (3) months immediately preceding the event
+giving rise to the claim.</p>
+<p>In no event shall Company be liable for any indirect, incidental,
+consequential, special, exemplary, or punitive damages, including but
+not limited to loss of profits, loss of revenue, loss of business
+opportunity, loss of data, or business interruption, arising out of or
+related to this Agreement, even if Company has been advised of the
+possibility of such damages.</p>
+<p>The limitations set forth in this section shall apply regardless of
+the form of action and shall survive termination or expiration of this
+Agreement.</p>
+<p>This section shall survive termination or expiration of this
+Agreement.</p>
+<h2 id="intellectual-property-ownership"><strong>10. Intellectual
+Property Ownership</strong></h2>
+<p>All pre-existing materials, methodologies, templates, processes,
+frameworks, systems, tools, trade secrets, and intellectual property
+owned or developed by Company prior to or independently of this
+Agreement (“Provider Materials”) shall remain the sole and exclusive
+property of Company.</p>
+<p>Upon full payment of all amounts due under this Agreement, Client
+shall own the final deliverables specifically created for Client under
+this Agreement (“Client Deliverables”). Company hereby grants Client a
+non-exclusive, perpetual, non-transferable license to use any
+incorporated Company Materials solely as part of the Client Deliverables
+and solely for Client’s internal business purposes.</p>
+<p>Client shall not resell, sublicense, distribute, or commercially
+exploit Company Materials independent of the Client Deliverables without
+Company’s prior written consent.</p>
+<p>Company retains the right to reuse, modify, and incorporate general
+knowledge, skills, experience, ideas, concepts, and know-how developed
+during the performance of services for other clients, provided that no
+confidential information of Client is disclosed.</p>
+<p>All rights not expressly granted herein are reserved by Company.</p>
+<p>This section shall survive termination or expiration of this
+Agreement.</p>
+<h2 id="indemnification"><strong>11. Indemnification</strong></h2>
+<p>Client agrees to defend, indemnify, and hold harmless Company and its
+owners, officers, employees, contractors, and agents from and against
+any and all claims, demands, actions, damages, liabilities, losses,
+costs, and expenses (including reasonable attorneys’ fees and legal
+costs) arising out of or relating to:</p>
+<ol type="1">
+<li><blockquote>
+<p>Client’s business operations, products, or services;</p>
+</blockquote></li>
+<li><blockquote>
+<p>Any materials, data, content, or information provided by Client to
+Provider;</p>
+</blockquote></li>
+<li><blockquote>
+<p>Client’s misuse, misapplication, or implementation of Provider’s
+services, recommendations, or deliverables;</p>
+</blockquote></li>
+<li><blockquote>
+<p>Client’s breach of this Agreement; or</p>
+</blockquote></li>
+<li><blockquote>
+<p>Any violation of applicable laws or regulations by Client.</p>
+</blockquote></li>
+</ol>
+<p>Company shall promptly notify Client of any claim subject to
+indemnification and shall reasonably cooperate in the defense. Client
+shall have control of the defense and settlement of such claim, provided
+that Client may not settle any claim in a manner that imposes liability
+or admission of fault on Company without Company’s prior written
+consent.</p>
+<p>This indemnification obligation shall survive termination or
+expiration of this Agreement.</p>
+<h2 id="force-majeure"><strong>12. Force Majeure</strong></h2>
+<p>Neither party shall be liable for any failure or delay in performance
+under this Agreement (except for payment obligations) to the extent such
+failure or delay is caused by events beyond the reasonable control of
+the affected party, including but not limited to acts of God, natural
+disasters, fire, flood, war, terrorism, civil unrest, labor disputes,
+government actions, embargoes, pandemics, utility failures, internet or
+telecommunications interruptions, or other unforeseen circumstances
+(“Force Majeure Event”).</p>
+<p>The affected party shall promptly notify the other party in writing
+of the Force Majeure Event and shall use commercially reasonable efforts
+to resume performance as soon as practicable.</p>
+<p>If a Force Majeure Event continues for more than thirty (30)
+consecutive days, either party may terminate this Agreement upon written
+notice without further liability, except for payment obligations accrued
+prior to the effective date of termination.</p>
+<p>This section shall survive termination of this Agreement.</p>
+<h2 id="governing-law-and-dispute-resolution"><strong>13. Governing Law
+and Dispute Resolution</strong></h2>
+<p>This Agreement shall be governed by and construed in accordance with
+the laws of the State of Louisiana, without regard to its conflict of
+law principles.</p>
+<p>The parties agree to first attempt in good faith to resolve any
+dispute arising out of or relating to this Agreement through informal
+negotiations. If the dispute cannot be resolved within thirty (30) days,
+the parties agree to submit the matter to mediation in Lafayette,
+Louisiana before initiating litigation.</p>
+<p>If mediation is unsuccessful, any legal action or proceeding arising
+under this Agreement shall be brought exclusively in the state or
+federal courts located in Lafayette, Louisiana, and the parties hereby
+consent to the personal jurisdiction and venue of such courts.</p>
+<p>The prevailing party in any action to enforce this Agreement shall be
+entitled to recover its reasonable attorneys’ fees and costs.</p>
+<h2 id="termination"><strong>14. Termination</strong></h2>
+<p>Either party may terminate this Agreement prior to the end of the
+applicable term if the other party materially breaches this Agreement
+and fails to cure such breach within ten (10) days after receiving
+written notice describing the breach in reasonable detail.</p>
+<p>Material breach includes, but is not limited to:</p>
+<ul>
+<li><blockquote>
+<p>Failure to make timely payment of fees</p>
+</blockquote></li>
+<li><blockquote>
+<p>Failure to provide necessary access, information, or approvals
+required for performance</p>
+</blockquote></li>
+<li><blockquote>
+<p>Violation of confidentiality obligations</p>
+</blockquote></li>
+<li><blockquote>
+<p>Any unlawful or unethical conduct that materially affects performance
+of services</p>
+</blockquote></li>
+</ul>
+<p>If Client is terminated for cause:</p>
+<ul>
+<li><blockquote>
+<p>All unpaid amounts for length of contract become immediately due and
+payable</p>
+</blockquote></li>
+<li><blockquote>
+<p>Provider reserves the right to invoice for any work completed but not
+yet billed</p>
+</blockquote></li>
+<li><blockquote>
+<p>Any prepaid fees are non-refundable</p>
+</blockquote></li>
+</ul>
+<p>If Provider is terminated for cause:</p>
+<ul>
+<li><blockquote>
+<p>Client shall be responsible only for payment of services properly
+performed through the effective termination date</p>
+</blockquote></li>
+<li><blockquote>
+<p>Provider shall refund any prepaid fees for services not yet
+performed</p>
+</blockquote></li>
+<li><blockquote>
+<p>Total liability is capped at fees paid in the last 3 months of
+services provided</p>
+</blockquote></li>
+<li><blockquote>
+<p>No indirect, incidental, consequential, or lost-profit damages</p>
+</blockquote></li>
+</ul>
+<p>Upon termination:</p>
+<ul>
+<li><blockquote>
+<p>Client remains responsible for payment of all fees incurred through
+the effective termination date</p>
+</blockquote></li>
+<li><blockquote>
+<p>Any unpaid balances become immediately due</p>
+</blockquote></li>
+<li><blockquote>
+<p>No refunds will be issued for partially used months</p>
+</blockquote></li>
+<li><blockquote>
+<p>It is the responsibility of the Client for any collection/legal
+fees</p>
+</blockquote></li>
+</ul>
+<p>This Agreement constitutes the entire agreement between the parties
+and supersedes all prior and contemporaneous agreements, proposals,
+representations, negotiations, and communications, whether written or
+oral, relating to the subject matter hereof.</p>
+<p>Client Signature: Date:</p>
+<p>Company Representative: Date:</p>
+<h2 id="section"></h2>
+<h2 id="credit-card-authorization-for-recurring-payments"><strong>Credit
+Card Authorization for Recurring Payments</strong></h2>
+<p>To streamline our billing process and ensure uninterrupted service,
+Client authorizes The Modern Concierge, LLC ("Company") to securely
+store the payment information provided below and to automatically
+process all recurring membership fees, approved overage charges,
+reimbursable expenses, and any other amounts due under this
+Agreement.</p>
+<p>Membership fees will be charged automatically every thirty (30) days
+on the agreed-upon billing date unless otherwise specified in writing by
+both parties.</p>
+<p>If Client does not wish to renew services for the next billing cycle,
+Client must provide written notice to Company at least five (5) calendar
+days prior to the next scheduled billing date. If such notice is not
+received, the membership will automatically renew and the payment method
+on file will be charged accordingly.</p>
+<p>Client represents and warrants that they are an authorized user of
+the payment method provided below and agrees to keep payment information
+current at all times. If a payment is declined for any reason, Client
+agrees to provide an updated payment method within three (3) calendar
+days. Company reserves the right to suspend services until payment is
+received in full.</p>
+<p><strong>Payment Method Selection</strong></p>
+<p>Credit/Debit Card (2.99% processing fee applies)</p>
+<p>ACH Bank Transfer ($10 flat processing fee per billing cycle)</p>
+<h3 id="authorized-payment-method"><strong>Authorized Payment
+Method</strong></h3>
+<p><strong>Card Type (Visa, Mastercard,Discover, American
+Express):</strong></p>
+<p><strong>Name as Shown on Card:</strong></p>
+<p><strong>Card Number:</strong></p>
+<p><strong>Expiration Date (MM/YY):</strong></p>
+<p><strong>Security Code (CVV):</strong></p>
+<h3 id="billing-address"><strong>Billing Address:</strong></h3>
+<p><strong>Billing Zip Code:</strong></p>
+<h2 id="section-1"></h2>
+<h2 id="ach-payment-authorization-optional"><strong>ACH Payment
+Authorization (Optional)</strong></h2>
+<p><strong>If Client elects to pay via ACH (Automated Clearing House)
+bank transfer, Client authorizes The Modern Concierge, LLC to securely
+store the banking information provided below and initiate recurring ACH
+withdrawals for membership fees, overage charges, approved expenses, and
+any other amounts due under this Agreement.</strong></p>
+<p><strong>Client understands that ACH payments are subject to a flat
+processing fee of $10 per billing cycle and authorizes such fee to be
+charged in addition to the applicable membership amount.</strong></p>
+<h3 id="bank-account-information"><strong>Bank Account
+Information</strong></h3>
+<p><strong>Account Holder Name:</strong></p>
+<p><strong>Bank Name:</strong></p>
+<p><strong>Account Type “Checking or Savings”:</strong></p>
+<p><strong>Routing Number:</strong></p>
+<p><strong>Account Number:</strong></p>
+<h3 id="section-2"></h3>
+<h3 id="section-3"></h3>
+<h3 id="section-4"></h3>
+<h3 id="authorization"><strong>Authorization</strong></h3>
+<p><strong>By signing below, Client authorizes The Modern Concierge, LLC
+to initiate electronic debit entries from the bank account listed above
+for all charges authorized under this Agreement. This authorization
+shall remain in effect until revoked in writing by Client. Client agrees
+to provide updated banking information promptly if account details
+change and understands that failed ACH payments may be subject to late
+fees and service suspension as outlined in this Agreement.</strong></p>
+<p><strong>Client Signature:</strong></p>
+<p><strong>Date:</strong></p>`;
+// --- Profile accordion (Profile + Notes merged into one guided page —
+// same underlying fields/arrays as before, just grouped into collapsible,
+// numbered sections instead of one long scroll of always-open cards) ---
+function profileSectionOpen(key){
+  return (state.profileOpenSections||new Set()).has(key);
+}
+function toggleProfileSection(key){
+  if(!state.profileOpenSections) state.profileOpenSections = new Set();
+  if(state.profileOpenSections.has(key)) state.profileOpenSections.delete(key);
+  else state.profileOpenSections.add(key);
+  render();
+}
+function renderProfileSection(key, title, bodyHtml){
+  const open = profileSectionOpen(key);
+  return `
+    <div class="card">
+      <div class="flex-between" style="cursor:pointer;" onclick="toggleProfileSection('${key}')">
+        <h3 style="margin:0;">${title}</h3>
+        <span class="small">${open ? '▾ Hide' : '▸ Show'}</span>
+      </div>
+      ${open ? `<div style="margin-top:12px;">${bodyHtml}</div>` : ""}
+    </div>
+  `;
+}
 function renderClientProfile(client){
   const p = client.profile || {};
   const serviceType = p.serviceType || "home";
@@ -2291,139 +3244,382 @@ function renderClientProfile(client){
   const priorities = p.topPriorities || ["","",""];
   const specialDates = client.specialDates || [];
   const discountStatus = clientReferralDiscountStatus(client);
+  const notes = client.notes || [];
+  const indexedNotes = notes.map((n,i)=>({n,i})).slice().reverse();
+
+  const visitBody = `
+    <div class="row">
+      <div><label class="small">Client type</label>
+        <select onchange="updateProfileField('${client.id}','serviceType',this.value)">
+          <option value="home" ${serviceType==='home'?'selected':''}>Home / personal concierge</option>
+          <option value="business" ${serviceType==='business'?'selected':''}>Business admin support</option>
+          <option value="both" ${serviceType==='both'?'selected':''}>Both</option>
+        </select>
+      </div>
+      <div><label class="small">Orientation date</label><input type="date" value="${p.orientationDate||''}" onchange="updateProfileField('${client.id}','orientationDate',this.value)"></div>
+      <div><label class="small">Assistant(s) present</label>
+        <select onchange="updateProfileField('${client.id}','orientationAssistantId',this.value)">
+          <option value="">—</option>
+          ${state.settings.assistants.map(a=>`<option value="${a.id}" ${p.orientationAssistantId===a.id?'selected':''}>${a.name}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="small" style="margin-top:4px;">Client type controls which onboarding section shows below.</div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Email</label><input type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
+      <div><label class="small">Phone</label><input value="${p.phone||''}" onchange="updateProfileField('${client.id}','phone',this.value)"></div>
+      <div><label class="small">Emergency contact</label><input value="${p.emergencyContact||''}" onchange="updateProfileField('${client.id}','emergencyContact',this.value)"></div>
+    </div>
+  `;
+
+  const homeBody = `
+    <div class="row">
+      <div><label class="small">Home address</label><input value="${p.homeAddress||''}" onchange="updateProfileField('${client.id}','homeAddress',this.value)"></div>
+    </div>
+    <div style="margin-top:12px;">
+      <label class="small">Family / household members (name & age)</label>
+      ${family.map((f,i)=>`
+        <div class="list-item">
+          <div>${f.name}${f.age?', age '+f.age:''}</div>
+          <button class="danger" onclick="removeFamilyMember('${client.id}',${i})">Remove</button>
+        </div>
+      `).join("") || `<div class="small">None added yet.</div>`}
+      <div style="display:flex;gap:6px;margin-top:6px;">
+        <input id="fam_name_${client.id}" placeholder="Name" style="max-width:180px;">
+        <input id="fam_age_${client.id}" placeholder="Age" style="max-width:80px;">
+        <button class="secondary" onclick="addFamilyMember('${client.id}')">Add</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Home access (hidden key, door code, alarm code, parking, etc.)</label><textarea onchange="updateProfileField('${client.id}','homeAccess',this.value)">${p.homeAccess||''}</textarea></div>
+    </div>
+    <div style="margin-top:12px;">
+      <label class="small">Top 3 priorities to start with</label>
+      ${[0,1,2].map(i=>`<input style="margin-top:4px;" placeholder="Priority ${i+1}" value="${priorities[i]||''}" onchange="updatePriority('${client.id}',${i},this.value)">`).join("")}
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Weekly schedule</label><textarea onchange="updateProfileField('${client.id}','weeklySchedule',this.value)">${p.weeklySchedule||''}</textarea></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Pets (names, feeding/walking, vet info)</label><textarea onchange="updateProfileField('${client.id}','petInfo',this.value)">${p.petInfo||''}</textarea></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Other preferences (groceries, communication style, etc.)</label><textarea onchange="updateProfileField('${client.id}','specialPreferences',this.value)">${p.specialPreferences||''}</textarea></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Preferred communication (method & best times to reach them)</label><input value="${p.communicationPreference||''}" onchange="updateProfileField('${client.id}','communicationPreference',this.value)"></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Budget / reimbursement notes</label><textarea onchange="updateProfileField('${client.id}','budgetNotes',this.value)">${p.budgetNotes||''}</textarea></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Off-limits / things to avoid</label><textarea onchange="updateProfileField('${client.id}','offLimits',this.value)">${p.offLimits||''}</textarea></div>
+    </div>
+  `;
+
+  const businessBody = `
+    <div class="row">
+      <div><label class="small">Office address</label><input value="${p.officeAddress||''}" onchange="updateProfileField('${client.id}','officeAddress',this.value)"></div>
+      <div><label class="small">Office hours</label><input value="${p.officeHours||''}" onchange="updateProfileField('${client.id}','officeHours',this.value)"></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Team member names & roles</label><textarea onchange="updateProfileField('${client.id}','teamMembers',this.value)">${p.teamMembers||''}</textarea></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">Tools/software used (email, calendar, project management, etc.)</label><textarea onchange="updateProfileField('${client.id}','businessTools',this.value)">${p.businessTools||''}</textarea></div>
+    </div>
+    <div class="row" style="margin-top:12px;">
+      <div><label class="small">What they need help with at work / for the business</label><textarea onchange="updateProfileField('${client.id}','businessNeeds',this.value)">${p.businessNeeds||''}</textarea></div>
+    </div>
+  `;
+
+  const datesBody = `
+    <div class="small" style="margin-bottom:6px;">Recurs yearly — also shows up as a reminder on the Dashboard.</div>
+    ${specialDates.map((d,i)=>`
+      <div class="list-item">
+        <div>${d.label}</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="small">${d.date} (recurs yearly)</span>
+          <button class="danger" onclick="removeSpecialDate('${client.id}',${i})">Remove</button>
+        </div>
+      </div>
+    `).join("") || `<div class="small">None recorded yet.</div>`}
+    <div style="display:flex;gap:6px;margin-top:10px;">
+      <input id="sd_label_${client.id}" placeholder="e.g. Mom's birthday, Anniversary">
+      <input id="sd_date_${client.id}" type="date" style="max-width:170px;">
+      <button class="secondary" onclick="addSpecialDate('${client.id}')">Add</button>
+    </div>
+  `;
+
+  const referralsBody = `
+    <div class="row">
+      <div><label class="small">Referred by an assistant</label>
+        <select onchange="updateClientField('${client.id}','referredBy',this.value)">
+          <option value="">None</option>
+          ${state.settings.assistants.map(a=>`<option value="${a.id}" ${client.referredBy===a.id?'selected':''}>${a.name}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    ${client.referredBy ? renderReferralStatus(client) : ""}
+    <div class="small" style="margin:14px 0 8px;">If this client was referred by an existing client, they can earn that client 20% off one month once this account signs a 3-month+ term.</div>
+    <div class="row">
+      <div><label class="small">Referred by another client</label>
+        <select onchange="updateClientField('${client.id}','referredByClientId',this.value)">
+          <option value="">None</option>
+          ${state.clients.filter(c=>c.id!==client.id && c.id!==INTERNAL_CLIENT_ID).map(c=>`<option value="${c.id}" ${client.referredByClientId===c.id?'selected':''}>${c.name}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="small" style="margin-top:10px;">This client's own referral credits: ${discountStatus.earned} referral(s) signed 3-month+, ${discountStatus.redeemed} redeemed, <strong>${discountStatus.available} available</strong>.</div>
+    <button class="secondary" style="margin-top:8px;" ${discountStatus.available<1?'disabled':''} onclick="redeemClientReferralDiscount('${client.id}')">Redeem one 20%-off month</button>
+  `;
+
+  const vendorsBody = `
+    <label class="small">Vendors</label>
+    ${(client.vendors||[]).map((v,i)=>`
+      <div class="list-item">
+        <div>${v.name} — ${v.service}${v.frequencyDays?` <span class="small">(every ${v.frequencyDays}d)</span>`:''}</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="small">last: ${v.lastService||'—'}</span>
+          <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
+        </div>
+      </div>`).join("") || `<div class="small">No vendors on file.</div>`}
+    <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+      <input id="v_name_${client.id}" placeholder="Vendor name" style="max-width:150px;">
+      <input id="v_service_${client.id}" placeholder="Service" style="max-width:130px;">
+      <input id="v_last_${client.id}" type="date" title="Last service date" style="max-width:150px;">
+      <input id="v_freq_${client.id}" type="number" placeholder="Every N days" style="max-width:110px;">
+      <button class="secondary" onclick="addVendor('${client.id}')">Add</button>
+    </div>
+    <label class="small" style="display:block;margin-top:16px;">Inspections</label>
+    ${(client.inspections||[]).map((ins,i)=>`
+      <div class="list-item">
+        <div>${ins.name}</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="small">next due: ${ins.nextDue}</span>
+          <button class="danger" onclick="removeInspection('${client.id}',${i})">Remove</button>
+        </div>
+      </div>`).join("") || `<div class="small">None scheduled.</div>`}
+    <div style="display:flex;gap:6px;margin-top:10px;">
+      <input id="ins_name_${client.id}" placeholder="Inspection name">
+      <input id="ins_due_${client.id}" type="date">
+      <button class="secondary" onclick="addInspection('${client.id}')">Add</button>
+    </div>
+  `;
+
+  const infoBody = `
+    <label class="small">Important info</label>
+    <div class="small" style="margin-bottom:8px;">IDs, membership numbers, card numbers, alarm codes, anything reference-worthy that isn't a running note — add as many rows as you need, any label.</div>
+    ${(client.importantInfo||[]).map((info,i)=>`
+      <div class="list-item">
+        <div><strong>${info.label}</strong>: ${info.value}</div>
+        <button class="danger" onclick="removeImportantInfo('${client.id}',${i})">Remove</button>
+      </div>`).join("") || `<div class="small">Nothing on file.</div>`}
+    <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+      <input id="info_label_${client.id}" placeholder="Label (e.g. Card Number, Driver's License #)" style="max-width:220px;">
+      <input id="info_value_${client.id}" placeholder="Value">
+      <button class="secondary" onclick="addImportantInfo('${client.id}')">Add</button>
+    </div>
+    <label class="small" style="display:block;margin-top:16px;">Website logins</label>
+    <div class="small" style="margin-bottom:8px;">Stored as plain text on this client's record — see note below about locking this down before it's real production data.</div>
+    ${(client.logins||[]).map((l,i)=>`
+      <div class="list-item">
+        <div>
+          <strong>${l.site}</strong>${l.username ? ` — ${l.username}` : ""}
+          ${l.notes ? `<div class="small">${l.notes}</div>` : ""}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="small" style="font-family:monospace;">${state.revealedLogins && state.revealedLogins.has(client.id+'_'+i) ? (l.password||'(none)') : '••••••••'}</span>
+          <button class="secondary" style="padding:2px 8px;" onclick="toggleRevealLogin('${client.id}',${i})">${state.revealedLogins && state.revealedLogins.has(client.id+'_'+i) ? 'Hide' : 'Show'}</button>
+          <button class="danger" onclick="removeLogin('${client.id}',${i})">Remove</button>
+        </div>
+      </div>`).join("") || `<div class="small">None on file.</div>`}
+    <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+      <input id="login_site_${client.id}" placeholder="Site / service" style="max-width:150px;">
+      <input id="login_user_${client.id}" placeholder="Username / email" style="max-width:170px;">
+      <input id="login_pass_${client.id}" placeholder="Password" style="max-width:150px;">
+      <input id="login_notes_${client.id}" placeholder="Notes (optional)" style="max-width:170px;">
+      <button class="secondary" onclick="addLogin('${client.id}')">Add</button>
+    </div>
+  `;
+
+  const notesBody = `
+    <div style="margin-bottom:10px;">
+      <textarea id="newNoteText" placeholder="Add a note... press Enter between separate points to show them as bullets"></textarea>
+      <button style="margin-top:6px;" onclick="addClientNote('${client.id}')">Add note</button>
+    </div>
+    ${indexedNotes.map(({n,i})=>{
+      const editing = state.editingNote && state.editingNote.clientId===client.id && state.editingNote.index===i;
+      if(editing){
+        return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+          <textarea id="edit_note_${i}">${n.text}</textarea>
+          <div style="display:flex;gap:6px;justify-content:flex-end;">
+            <button class="secondary" onclick="cancelEditNote()">Cancel</button>
+            <button onclick="saveEditNote('${client.id}',${i})">Save</button>
+          </div>
+        </div>`;
+      }
+      return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:2px;">
+        <div class="flex-between">
+          <span class="small">${new Date(n.date).toLocaleDateString()}${n.source==='orientation-sync' ? ' <span class="badge">auto-synced</span>' : ''}</span>
+          <div style="display:flex;gap:6px;">
+            <button class="secondary" style="padding:2px 8px;" onclick="startEditNote('${client.id}',${i})">Edit</button>
+            <button class="danger" style="padding:2px 8px;" onclick="deleteClientNote('${client.id}',${i})">Delete</button>
+          </div>
+        </div>
+        ${renderNoteBullets(n.text)}
+      </div>`;
+    }).join("") || `<div class="small">No notes yet.</div>`}
+  `;
 
   return `
     ${renderClientOnboardingChecklist(client)}
-    <div class="card">
-      <h3>Client type</h3>
-      <div class="small">Controls which onboarding questions show below.</div>
-      <select style="margin-top:6px;max-width:280px;" onchange="updateProfileField('${client.id}','serviceType',this.value)">
-        <option value="home" ${serviceType==='home'?'selected':''}>Home / personal concierge</option>
-        <option value="business" ${serviceType==='business'?'selected':''}>Business admin support</option>
-        <option value="both" ${serviceType==='both'?'selected':''}>Both</option>
-      </select>
-    </div>
-
-    <div class="card">
-      <h3>Contact basics</h3>
-      <div class="row">
-        <div><label class="small">Email</label><input type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
-        <div><label class="small">Phone</label><input value="${p.phone||''}" onchange="updateProfileField('${client.id}','phone',this.value)"></div>
-        <div><label class="small">Emergency contact</label><input value="${p.emergencyContact||''}" onchange="updateProfileField('${client.id}','emergencyContact',this.value)"></div>
+    ${renderProfileSection("visit", "1. Client & Visit Details", visitBody)}
+    ${showHome ? renderProfileSection("home", "2. Home Onboarding", homeBody) : ""}
+    ${showBusiness ? renderProfileSection("business", "3. Business Onboarding", businessBody) : ""}
+    ${renderProfileSection("dates", "4. Birthdays & Special Dates", datesBody)}
+    ${renderProfileSection("vendors", "5. Vendors & Inspections", vendorsBody)}
+    ${renderProfileSection("info", "6. Important Info & Logins", infoBody)}
+    ${renderProfileSection("notes", "7. Client Notes", notesBody)}
+    ${renderProfileSection("referrals", "8. Referrals", referralsBody)}
+    ${renderProfileSection("contract", "9. Service Agreement", renderContractSectionBody(client))}
+    ${renderProfileSection("payment", "10. Payment Setup", renderPaymentSectionBody(client))}
+  `;
+}
+// --- Service Agreement + signature (fills the same blanks a human would
+// hand-write during orientation — client name, start date, which term is
+// selected — everything else in CLIENT_SERVICE_AGREEMENT_HTML is untouched,
+// verbatim legal text). The drawn signature below is the same "quick
+// in-person acknowledgment" the old Orientation Companion tool used, NOT a
+// legally binding e-signature — see the disclaimer rendered with it.
+function clientAgreementHtml(client){
+  let html = CLIENT_SERVICE_AGREEMENT_HTML;
+  const name = (client.name||'').trim() || '_______________';
+  html = html.replace('and<br />\n("Client")</p>', 'and<br />\n<strong>'+name+'</strong> ("Client")</p>');
+  const startDate = client.termStartDate ? parseYMD(client.termStartDate).toLocaleDateString() : '_______________';
+  html = html.replace('<p>Services Start Date:</p>', '<p>Services Start Date: <strong>'+startDate+'</strong></p>');
+  const TERM_LINE_MATCH = {
+    pilot: '<p>One (1) Month Pilot</p>',
+    "3month": '<p>Three (3) Month Term</p>',
+    "12month_new": '<p><strong>Twelve (12) Month Term (New)</strong></p>',
+    "12month_renewal": '<p>Twelve (12) Month Term (Renewal)</p>'
+  };
+  const target = TERM_LINE_MATCH[client.termType || 'pilot'];
+  if(target){
+    html = html.replace(target, target.slice(0,-4) + ' ✓ <strong>(selected)</strong></p>');
+  }
+  return html;
+}
+function renderContractSectionBody(client){
+  const signed = !!client.contractSigned;
+  const agreementHtml = signed && client.contractHtml ? client.contractHtml : clientAgreementHtml(client);
+  return `
+    <div class="small" style="margin-bottom:10px;">Review this agreement together with the client, then capture their signature below to confirm they've reviewed and agreed to the terms, including the selected membership tier and/or Home Reset package.</div>
+    <div style="max-height:420px;overflow-y:auto;border:1px solid var(--cream-dark);border-radius:8px;padding:14px 16px;background:#fff;font-size:13px;line-height:1.5;">${agreementHtml}</div>
+    <div class="alert warn" style="margin-top:10px;">The signature captured below is a quick in-person acknowledgment for your records — it is not a legally binding e-signature. For the version that legally binds the agreement, route it through a real e-signature tool (DocuSign, HelloSign, PandaDoc) or a wet-ink signature.</div>
+    ${signed ? `
+      <div class="alert ok" style="margin-top:10px;">✓ Signed by <strong>${client.contractSignedName}</strong> on ${client.contractSignedDate ? parseYMD(client.contractSignedDate).toLocaleDateString() : ''}.</div>
+      ${client.contractSignatureDataUrl ? `<div style="margin-top:8px;"><img src="${client.contractSignatureDataUrl}" style="max-width:280px;border:1px solid var(--cream-dark);border-radius:6px;background:#fff;" alt="Signature"></div>` : ""}
+      <button class="secondary" style="margin-top:10px;" onclick="resetClientAgreement('${client.id}')">Clear signature &amp; re-sign</button>
+    ` : `
+      <div style="margin-top:14px;display:flex;align-items:flex-start;gap:8px;">
+        <input type="checkbox" id="agree_${client.id}" style="margin-top:3px;">
+        <label for="agree_${client.id}" class="small">Client has reviewed the agreement above and agrees to the terms, including the selected membership tier and/or Home Reset package.</label>
       </div>
-    </div>
-
-    ${showHome ? `
-    <div class="card">
-      <h3>Home onboarding</h3>
-      <div class="row">
-        <div><label class="small">Home address</label><input value="${p.homeAddress||''}" onchange="updateProfileField('${client.id}','homeAddress',this.value)"></div>
+      <div class="row" style="margin-top:10px;">
+        <div><label class="small">Client full name</label><input id="sigName_${client.id}" value="${client.name||''}"></div>
+        <div><label class="small">Date</label><input type="date" id="sigDate_${client.id}" value="${new Date().toISOString().slice(0,10)}"></div>
       </div>
-      <div style="margin-top:12px;">
-        <label class="small">Family / household members (name & age)</label>
-        ${family.map((f,i)=>`
-          <div class="list-item">
-            <div>${f.name}${f.age?', age '+f.age:''}</div>
-            <button class="danger" onclick="removeFamilyMember('${client.id}',${i})">Remove</button>
-          </div>
-        `).join("") || `<div class="small">None added yet.</div>`}
-        <div style="display:flex;gap:6px;margin-top:6px;">
-          <input id="fam_name_${client.id}" placeholder="Name" style="max-width:180px;">
-          <input id="fam_age_${client.id}" placeholder="Age" style="max-width:80px;">
-          <button class="secondary" onclick="addFamilyMember('${client.id}')">Add</button>
+      <div style="margin-top:10px;">
+        <label class="small">Signature (draw with mouse, finger, or stylus)</label>
+        <div style="border:1px solid var(--cream-dark);border-radius:8px;background:#fff;touch-action:none;">
+          <canvas id="sigPad_${client.id}" style="width:100%;height:160px;display:block;"></canvas>
+        </div>
+        <div style="margin-top:6px;display:flex;gap:8px;">
+          <button class="secondary" onclick="clearSignaturePad()">Clear</button>
+          <button onclick="saveClientAgreement('${client.id}')">Save signature &amp; sign contract</button>
         </div>
       </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Home access (hidden key, door code, alarm code, parking, etc.)</label><textarea onchange="updateProfileField('${client.id}','homeAccess',this.value)">${p.homeAccess||''}</textarea></div>
-      </div>
-      <div style="margin-top:12px;">
-        <label class="small">Top 3 priorities to start with</label>
-        ${[0,1,2].map(i=>`<input style="margin-top:4px;" placeholder="Priority ${i+1}" value="${priorities[i]||''}" onchange="updatePriority('${client.id}',${i},this.value)">`).join("")}
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Weekly schedule</label><textarea onchange="updateProfileField('${client.id}','weeklySchedule',this.value)">${p.weeklySchedule||''}</textarea></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Pets (names, feeding/walking, vet info)</label><textarea onchange="updateProfileField('${client.id}','petInfo',this.value)">${p.petInfo||''}</textarea></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Other preferences (groceries, communication style, etc.)</label><textarea onchange="updateProfileField('${client.id}','specialPreferences',this.value)">${p.specialPreferences||''}</textarea></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Preferred communication (method & best times to reach them)</label><input value="${p.communicationPreference||''}" onchange="updateProfileField('${client.id}','communicationPreference',this.value)"></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Budget / reimbursement notes</label><textarea onchange="updateProfileField('${client.id}','budgetNotes',this.value)">${p.budgetNotes||''}</textarea></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Off-limits / things to avoid</label><textarea onchange="updateProfileField('${client.id}','offLimits',this.value)">${p.offLimits||''}</textarea></div>
-      </div>
-    </div>` : ""}
-
-    ${showBusiness ? `
-    <div class="card">
-      <h3>Business onboarding</h3>
-      <div class="row">
-        <div><label class="small">Office address</label><input value="${p.officeAddress||''}" onchange="updateProfileField('${client.id}','officeAddress',this.value)"></div>
-        <div><label class="small">Office hours</label><input value="${p.officeHours||''}" onchange="updateProfileField('${client.id}','officeHours',this.value)"></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Team member names & roles</label><textarea onchange="updateProfileField('${client.id}','teamMembers',this.value)">${p.teamMembers||''}</textarea></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">Tools/software used (email, calendar, project management, etc.)</label><textarea onchange="updateProfileField('${client.id}','businessTools',this.value)">${p.businessTools||''}</textarea></div>
-      </div>
-      <div class="row" style="margin-top:12px;">
-        <div><label class="small">What they need help with at work / for the business</label><textarea onchange="updateProfileField('${client.id}','businessNeeds',this.value)">${p.businessNeeds||''}</textarea></div>
-      </div>
-    </div>` : ""}
-
-    <div class="card">
-      <h3>Birthdays & special occasions</h3>
-      <div class="small" style="margin-bottom:6px;">Recurs yearly — also shows up as a reminder on the Notes tab.</div>
-      ${specialDates.map((d,i)=>`
-        <div class="list-item">
-          <div>${d.label}</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span class="small">${d.date} (recurs yearly)</span>
-            <button class="danger" onclick="removeSpecialDate('${client.id}',${i})">Remove</button>
-          </div>
-        </div>
-      `).join("") || `<div class="small">None recorded yet.</div>`}
-      <div style="display:flex;gap:6px;margin-top:10px;">
-        <input id="sd_label_${client.id}" placeholder="e.g. Mom's birthday, Anniversary">
-        <input id="sd_date_${client.id}" type="date" style="max-width:170px;">
-        <button class="secondary" onclick="addSpecialDate('${client.id}')">Add</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>Referred by an assistant</h3>
-      <div class="row">
-        <div><label class="small">Referred by</label>
-          <select onchange="updateClientField('${client.id}','referredBy',this.value)">
-            <option value="">None</option>
-            ${state.settings.assistants.map(a=>`<option value="${a.id}" ${client.referredBy===a.id?'selected':''}>${a.name}</option>`).join("")}
-          </select>
-        </div>
-      </div>
-      ${client.referredBy ? renderReferralStatus(client) : ""}
-    </div>
-
-    <div class="card">
-      <h3>Referred by another client</h3>
-      <div class="small" style="margin-bottom:8px;">If this client was referred by an existing client, they can earn that client 20% off one month once this account signs a 3-month+ term.</div>
-      <div class="row">
-        <div><label class="small">Referred by</label>
-          <select onchange="updateClientField('${client.id}','referredByClientId',this.value)">
-            <option value="">None</option>
-            ${state.clients.filter(c=>c.id!==client.id && c.id!==INTERNAL_CLIENT_ID).map(c=>`<option value="${c.id}" ${client.referredByClientId===c.id?'selected':''}>${c.name}</option>`).join("")}
-          </select>
-        </div>
-      </div>
-      <div class="small" style="margin-top:10px;">This client's own referral credits: ${discountStatus.earned} referral(s) signed 3-month+, ${discountStatus.redeemed} redeemed, <strong>${discountStatus.available} available</strong>.</div>
-      <button class="secondary" style="margin-top:8px;" ${discountStatus.available<1?'disabled':''} onclick="redeemClientReferralDiscount('${client.id}')">Redeem one 20%-off month</button>
-    </div>
+    `}
+  `;
+}
+let csSigCanvas=null, csSigCtx=null, csDrawing=false, csHasDrawn=false;
+function initClientSigPad(clientId){
+  const canvas = document.getElementById('sigPad_'+clientId);
+  if(!canvas) { csSigCanvas=null; csSigCtx=null; return; }
+  if(csSigCanvas !== canvas){
+    csSigCanvas = canvas;
+    const pos = (e)=>{
+      const rect = csSigCanvas.getBoundingClientRect();
+      const t = e.touches ? e.touches[0] : e;
+      return { x: t.clientX-rect.left, y: t.clientY-rect.top };
+    };
+    const start = (e)=>{ csDrawing=true; csHasDrawn=true; const p=pos(e); csSigCtx.beginPath(); csSigCtx.moveTo(p.x,p.y); e.preventDefault(); };
+    const move = (e)=>{ if(!csDrawing) return; const p=pos(e); csSigCtx.lineTo(p.x,p.y); csSigCtx.stroke(); e.preventDefault(); };
+    const end = ()=>{ csDrawing=false; };
+    canvas.addEventListener('mousedown', start);
+    canvas.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', end);
+    canvas.addEventListener('touchstart', start, {passive:false});
+    canvas.addEventListener('touchmove', move, {passive:false});
+    canvas.addEventListener('touchend', end);
+  }
+  resizeClientSigCanvas();
+}
+function resizeClientSigCanvas(){
+  if(!csSigCanvas) return;
+  const rect = csSigCanvas.getBoundingClientRect();
+  if(rect.width===0 || rect.height===0) return;
+  const ratio = window.devicePixelRatio || 1;
+  csSigCanvas.width = rect.width*ratio;
+  csSigCanvas.height = rect.height*ratio;
+  csSigCtx = csSigCanvas.getContext('2d');
+  csSigCtx.scale(ratio, ratio);
+  csSigCtx.strokeStyle = '#241a17';
+  csSigCtx.lineWidth = 2.2;
+  csSigCtx.lineCap = 'round';
+  csHasDrawn = false;
+}
+function clearSignaturePad(){
+  if(!csSigCtx || !csSigCanvas) return;
+  csSigCtx.clearRect(0,0,csSigCanvas.width,csSigCanvas.height);
+  csHasDrawn = false;
+}
+function saveClientAgreement(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const agreeEl = document.getElementById('agree_'+clientId);
+  if(!agreeEl || !agreeEl.checked){ alert("Please check the box confirming the client has reviewed and agreed to the terms first."); return; }
+  if(!csHasDrawn || !csSigCanvas){ alert("Please have the client draw their signature first."); return; }
+  const name = document.getElementById('sigName_'+clientId).value.trim();
+  const date = document.getElementById('sigDate_'+clientId).value;
+  if(!name || !date){ alert("Client full name and date are required."); return; }
+  const signatureDataUrl = csSigCanvas.toDataURL('image/png');
+  const contractHtml = clientAgreementHtml(client);
+  upsert("clients", clientId, {
+    contractSigned: true,
+    contractSignedName: name,
+    contractSignedDate: date,
+    contractSignatureDataUrl: signatureDataUrl,
+    contractHtml
+  });
+}
+function resetClientAgreement(clientId){
+  if(!confirm("Clear this signature so the client can re-sign? This can't be undone.")) return;
+  upsert("clients", clientId, { contractSigned:false, contractSignedName:null, contractSignedDate:null, contractSignatureDataUrl:null, contractHtml:null });
+}
+function renderPaymentSectionBody(client){
+  return `
+    <div class="small" style="margin-bottom:10px;">Confirm payment is set up before this client starts receiving support.</div>
+    <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <input type="checkbox" ${client.salesReceiptCreated?'checked':''} onchange="updateClientField('${client.id}','salesReceiptCreated',this.checked)">
+      Sales receipt created and payment collected in QuickBooks.
+    </label>
+    <div><label class="small">Secure payment link (if used)</label><input value="${client.paymentLink||''}" placeholder="https://…secure payment link…" onchange="updateClientField('${client.id}','paymentLink',this.value)"></div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px;">
+      <input type="checkbox" ${client.paymentConfirmed?'checked':''} onchange="updateClientField('${client.id}','paymentConfirmed',this.checked)">
+      Client has entered payment info and card on file is confirmed.
+    </label>
   `;
 }
 function renderReferralStatus(client){
@@ -2574,116 +3770,6 @@ function renderNoteBullets(text){
   const lines = (text||"").split("\n").map(l=>l.trim()).filter(Boolean);
   if(!lines.length) return "";
   return `<ul style="margin:4px 0 0;padding-left:18px;">${lines.map(l=>`<li>${l}</li>`).join("")}</ul>`;
-}
-function renderClientNotes(client){
-  const notes = client.notes || [];
-  const indexed = notes.map((n,i)=>({n,i})).slice().reverse();
-  return `
-    <div class="card">
-      <h3>Client notes</h3>
-      <div style="margin-bottom:10px;">
-        <textarea id="newNoteText" placeholder="Add a note... press Enter between separate points to show them as bullets"></textarea>
-        <button style="margin-top:6px;" onclick="addClientNote('${client.id}')">Add note</button>
-      </div>
-      ${indexed.map(({n,i})=>{
-        const editing = state.editingNote && state.editingNote.clientId===client.id && state.editingNote.index===i;
-        if(editing){
-          return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
-            <textarea id="edit_note_${i}">${n.text}</textarea>
-            <div style="display:flex;gap:6px;justify-content:flex-end;">
-              <button class="secondary" onclick="cancelEditNote()">Cancel</button>
-              <button onclick="saveEditNote('${client.id}',${i})">Save</button>
-            </div>
-          </div>`;
-        }
-        return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:2px;">
-          <div class="flex-between">
-            <span class="small">${new Date(n.date).toLocaleDateString()}${n.source==='orientation-sync' ? ' <span class="badge">auto-synced</span>' : ''}</span>
-            <div style="display:flex;gap:6px;">
-              <button class="secondary" style="padding:2px 8px;" onclick="startEditNote('${client.id}',${i})">Edit</button>
-              <button class="danger" style="padding:2px 8px;" onclick="deleteClientNote('${client.id}',${i})">Delete</button>
-            </div>
-          </div>
-          ${renderNoteBullets(n.text)}
-        </div>`;
-      }).join("") || `<div class="small">No notes yet.</div>`}
-    </div>
-    <div class="card">
-      <h3>Important info</h3>
-      <div class="small" style="margin-bottom:8px;">IDs, membership numbers, card numbers, alarm codes, anything reference-worthy that isn't a running note — add as many rows as you need, any label.</div>
-      ${(client.importantInfo||[]).map((info,i)=>`
-        <div class="list-item">
-          <div><strong>${info.label}</strong>: ${info.value}</div>
-          <button class="danger" onclick="removeImportantInfo('${client.id}',${i})">Remove</button>
-        </div>`).join("") || `<div class="small">Nothing on file.</div>`}
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-        <input id="info_label_${client.id}" placeholder="Label (e.g. Card Number, Driver's License #)" style="max-width:220px;">
-        <input id="info_value_${client.id}" placeholder="Value">
-        <button class="secondary" onclick="addImportantInfo('${client.id}')">Add</button>
-      </div>
-    </div>
-    <div class="card">
-      <h3>Website logins</h3>
-      <div class="small" style="margin-bottom:8px;">Stored as plain text on this client's record — see note below about locking this down before it's real production data.</div>
-      ${(client.logins||[]).map((l,i)=>`
-        <div class="list-item">
-          <div>
-            <strong>${l.site}</strong>${l.username ? ` — ${l.username}` : ""}
-            ${l.notes ? `<div class="small">${l.notes}</div>` : ""}
-          </div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span class="small" style="font-family:monospace;">${state.revealedLogins && state.revealedLogins.has(client.id+'_'+i) ? (l.password||'(none)') : '••••••••'}</span>
-            <button class="secondary" style="padding:2px 8px;" onclick="toggleRevealLogin('${client.id}',${i})">${state.revealedLogins && state.revealedLogins.has(client.id+'_'+i) ? 'Hide' : 'Show'}</button>
-            <button class="danger" onclick="removeLogin('${client.id}',${i})">Remove</button>
-          </div>
-        </div>`).join("") || `<div class="small">None on file.</div>`}
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-        <input id="login_site_${client.id}" placeholder="Site / service" style="max-width:150px;">
-        <input id="login_user_${client.id}" placeholder="Username / email" style="max-width:170px;">
-        <input id="login_pass_${client.id}" placeholder="Password" style="max-width:150px;">
-        <input id="login_notes_${client.id}" placeholder="Notes (optional)" style="max-width:170px;">
-        <button class="secondary" onclick="addLogin('${client.id}')">Add</button>
-      </div>
-    </div>
-    <div class="card">
-      <h3>Special dates</h3>
-      ${(client.specialDates||[]).map(d=>`<div class="list-item"><div>${d.label}</div><span class="small">${d.date} (recurs yearly)</span></div>`).join("") || `<div class="small">None recorded.</div>`}
-    </div>
-    <div class="card">
-      <h3>Vendors</h3>
-      ${(client.vendors||[]).map((v,i)=>`
-        <div class="list-item">
-          <div>${v.name} — ${v.service}${v.frequencyDays?` <span class="small">(every ${v.frequencyDays}d)</span>`:''}</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span class="small">last: ${v.lastService||'—'}</span>
-            <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
-          </div>
-        </div>`).join("") || `<div class="small">No vendors on file.</div>`}
-      <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-        <input id="v_name_${client.id}" placeholder="Vendor name" style="max-width:150px;">
-        <input id="v_service_${client.id}" placeholder="Service" style="max-width:130px;">
-        <input id="v_last_${client.id}" type="date" title="Last service date" style="max-width:150px;">
-        <input id="v_freq_${client.id}" type="number" placeholder="Every N days" style="max-width:110px;">
-        <button class="secondary" onclick="addVendor('${client.id}')">Add</button>
-      </div>
-    </div>
-    <div class="card">
-      <h3>Inspections</h3>
-      ${(client.inspections||[]).map((ins,i)=>`
-        <div class="list-item">
-          <div>${ins.name}</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span class="small">next due: ${ins.nextDue}</span>
-            <button class="danger" onclick="removeInspection('${client.id}',${i})">Remove</button>
-          </div>
-        </div>`).join("") || `<div class="small">None scheduled.</div>`}
-      <div style="display:flex;gap:6px;margin-top:10px;">
-        <input id="ins_name_${client.id}" placeholder="Inspection name">
-        <input id="ins_due_${client.id}" type="date">
-        <button class="secondary" onclick="addInspection('${client.id}')">Add</button>
-      </div>
-    </div>
-  `;
 }
 function addImportantInfo(clientId){
   const label = document.getElementById("info_label_"+clientId).value.trim();
@@ -4872,6 +5958,7 @@ function saveClient(existingId){
     state.activeTab = "clients";
     state.selectedClientId = id;
     state.crmSubTab = "profile";
+    state.profileOpenSections = new Set(["visit"]);
   }
   render();
 }
