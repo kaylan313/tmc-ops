@@ -3865,10 +3865,10 @@ function renderClientMembership(client){
         </div>
       </div>
       <div class="row" style="margin-top:10px;">
-        <div><label class="small">30-day period start date</label><input type="date" value="${client.renewalDate?client.renewalDate.slice(0,10):''}" onchange="updateClientField('${client.id}','renewalDate',this.value)"></div>
-        <div><label class="small">30-day period end date</label><div style="padding:8px 10px;">${period ? period.end.toLocaleDateString() : "—"}</div></div>
+        <div><label class="small">Billing anchor date</label><input type="date" value="${client.renewalDate?client.renewalDate.slice(0,10):''}" onchange="updateClientField('${client.id}','renewalDate',this.value)"></div>
+        <div><label class="small">Current period</label><div style="padding:8px 10px;">${period ? period.start.toLocaleDateString() + " – " + new Date(period.end.getTime()-1).toLocaleDateString() : "—"}</div></div>
       </div>
-      <div class="small" style="margin-top:4px;">Auto-fills from the contract start date on the Agreement card below — only change the start date above if this client's hours actually reset on a different day than their contract began. ${period ? `Current period: ${period.start.toLocaleDateString()} – ${new Date(period.end.getTime()-1).toLocaleDateString()}.` : ""}</div>
+      <div class="small" style="margin-top:4px;">The anchor date is the original date cycles are calculated from — it's <strong>not</strong> this period's start date, and normally shouldn't need to change once set. Auto-fills from the contract start date on the Agreement card below; only change it if this client's hours actually reset on a different day than their contract began. The "Current period" box on the right always shows the live, rolling 30-day window — that's the one to go by day-to-day.</div>
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
         <div><label class="small">Package price ($, billed ${cycleLabel(client.cycleType).toLowerCase()}) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
