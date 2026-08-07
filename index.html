@@ -1115,48 +1115,18 @@ function clientReportHtml(report){
   </div>
   </body></html>`;
 }
-function clientReportPlainText(report){
-  const { client, week, inProgress, completed } = report;
-  const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
-  const fmt = d => new Date(d).toLocaleDateString();
-  const fmtShort = d => (d.getMonth()+1) + "/" + d.getDate();
-  const noun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
-  const completedWord = isPeriod ? "this period" : "this week";
-  const lines = [];
-  lines.push(noun + " — " + client.name);
-  lines.push(fmt(week.start) + " – " + fmt(new Date(week.end.getTime()-1)));
-  lines.push("");
-  const taskLine = t => "- "+t.title+": "+(t.description||t.title)+(isPeriod ? " ("+formatHoursMinutes(hoursForTask(t.id))+" logged)" : "");
-  lines.push(("COMPLETED " + completedWord).toUpperCase() + ":");
-  lines.push(...(completed.length ? completed.map(taskLine) : ["(nothing completed " + completedWord + ")"]));
-  lines.push("");
-  lines.push("IN PROGRESS:");
-  lines.push(...(inProgress.length ? inProgress.map(taskLine) : ["(nothing in progress)"]));
-  lines.push("");
-  lines.push("MEMBERSHIP HOURS: " + formatHoursMinutes(report.hoursUsed) + " used / " + formatHoursMinutes(report.hoursRemaining) + " remaining / " + report.packageHours + "h total.");
-  if(report.billingPeriod) lines.push("Billing period ends " + fmtShort(report.billingPeriod.end) + ".");
-  lines.push("");
-  lines.push("Please don't hesitate to reach out should you have any questions or require additional information. We appreciate your continued trust and partnership.");
-  lines.push("");
-  lines.push(report.signerName);
-  lines.push("The Modern Concierge");
-  return lines.join("\n");
-}
-// A short cover note to paste into an email when the downloaded (pretty,
-// HTML) report is attached by hand — mailto: links can't attach files or
-// render HTML, so "Email client" can only ever send the plain typed-out
-// version above. This is the practical fix: download the report, attach it
-// yourself, paste this in as the message body.
+// The short message used both as "Email client"'s mailto body and as the
+// standalone "Copy message" text — the itemized task breakdown lives in the
+// downloaded/attached report itself, so the email doesn't repeat it.
 function clientReportCoverNote(report){
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
-  const fmt = d => new Date(d).toLocaleDateString();
-  const noun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
-  const rangeLabel = fmt(report.week.start) + " – " + fmt(new Date(report.week.end.getTime()-1));
+  const noun = isPeriod ? "end-of-period" : "weekly";
   const firstName = (report.client.name||"").split(" ")[0] || report.client.name;
+  const endDate = report.billingPeriod ? new Date(report.billingPeriod.end.getTime()-1).toLocaleDateString() : null;
   return "Hi " + firstName + ",\n\n"
-    + "Attached is your " + noun + " for " + rangeLabel + ". You used " + formatHoursMinutes(report.hoursUsed)
-    + " and have " + formatHoursMinutes(report.hoursRemaining) + " remaining" + (isPeriod ? " this period" : " this billing period") + ".\n\n"
-    + "Let us know if you have any questions!\n\n"
+    + "Your " + noun + " report is attached. You have used " + formatHoursMinutes(report.hoursUsed)
+    + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + ".\n\n"
+    + "Please let me know if you have any questions regarding this report.\n\n"
     + "The Modern Concierge Team";
 }
 function copyReportCoverNote(clientId, kind, btnEl){
@@ -1167,13 +1137,62 @@ function copyReportCoverNote(clientId, kind, btnEl){
   const report = buildClientReport(client, reportWindow, kind);
   const text = clientReportCoverNote(report);
   navigator.clipboard.writeText(text).then(()=>{
+    if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
     if(!btnEl) return;
     const orig = btnEl.textContent;
     btnEl.textContent = "Copied ✓";
     setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
   }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
 }
-// ---- 8d. CSV export ----
+// ---- 8d. Contract renewal email ----
+const NEXT_TERM_TYPE = { pilot:"3month", "3month":"12month_new", "12month_new":"12month_renewal", "12month_renewal":"12month_renewal" };
+function buildRenewalEmail(client){
+  const end = termEndDate(client);
+  const notice = noticeDeadline(client);
+  const currentLabel = TERM_LABELS[client.termType] || "your current term";
+  const nextLabel = TERM_LABELS[NEXT_TERM_TYPE[client.termType]] || "your next term";
+  const firstName = (client.name||"").split(" ")[0] || client.name;
+  const endStr = end ? end.toLocaleDateString() : "[term end date — set on Membership tab]";
+  const noticeStr = notice ? notice.toLocaleDateString() : "[notice deadline — set on Membership tab]";
+  const body = "Hi " + firstName + ",\n\n"
+    + "Just a quick heads-up — your " + currentLabel + " is set to end on " + endStr + ". Per your service agreement, "
+    + "this will automatically continue into your " + nextLabel + " unless we hear from you in writing by " + noticeStr + ".\n\n"
+    + "If you're happy with how things are going and want to keep going — you don't need to do anything on your end, "
+    + "we'll take care of the rest.\n\n"
+    + "If you'd like to make a change (pause, adjust your hours, or step away), just reply to this email by " + noticeStr
+    + " and we'll take care of it from there.\n\n"
+    + "Thanks so much for trusting us with your membership.\n\n"
+    + "Warmly,\nThe Modern Concierge Team";
+  return { subject: "Your Membership Renewal — " + client.name, body };
+}
+// Tracked per term type, not a plain boolean — once the term actually
+// changes (admin advances it after the client renews), the flag no longer
+// matches and the Dashboard alert naturally reappears for the NEXT renewal
+// instead of staying silently cleared forever.
+function markRenewalEmailSent(clientId, termType){
+  upsert("clients", clientId, { renewalEmailSentForTermType: termType });
+}
+function emailClientRenewal(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!client.email){ alert(client.name + " doesn't have an email on file yet — add one on their Membership tab first."); return; }
+  const { subject, body } = buildRenewalEmail(client);
+  window.location.href = "mailto:" + client.email + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+  markRenewalEmailSent(clientId, client.termType);
+}
+function copyRenewalMessage(clientId, btnEl){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const { body } = buildRenewalEmail(client);
+  navigator.clipboard.writeText(body).then(()=>{
+    markRenewalEmailSent(clientId, client.termType);
+    if(!btnEl) return;
+    const orig = btnEl.textContent;
+    btnEl.textContent = "Copied ✓";
+    setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
+  }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
+}
+// ---- 8e. CSV export ----
 function csvEscape(val){
   const s = String(val==null ? "" : val);
   return /[",\n]/.test(s) ? '"' + s.replace(/"/g,'""') + '"' : s;
@@ -1252,6 +1271,13 @@ function downloadClientReport(clientId, kind){
   a.remove();
   URL.revokeObjectURL(url);
 }
+// A period/lastPeriod recap counts as "sent" once emailed or copied — tracked
+// against that specific period's start date so the Dashboard "needs sending"
+// alert clears itself and doesn't nag again until the NEXT period rolls
+// around (a plain boolean would never reset).
+function markPeriodRecapSent(clientId, reportWindow){
+  upsert("clients", clientId, { periodRecapSentForPeriodStart: reportWindow.start.toISOString().slice(0,10) });
+}
 function emailClientReport(clientId, kind){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
@@ -1260,11 +1286,12 @@ function emailClientReport(clientId, kind){
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
   const subject = encodeURIComponent(((kind==="period"||kind==="lastPeriod") ? "Your Membership Period Recap — " : "Your Weekly Update — ") + client.name);
-  const body = encodeURIComponent(clientReportPlainText(report));
+  const body = encodeURIComponent(clientReportCoverNote(report));
   window.location.href = "mailto:" + client.email + "?subject=" + subject + "&body=" + body;
+  if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
 }
 
-// ---- 8e. Payroll report (per assistant, same branded format) ----
+// ---- 8f. Payroll report (per assistant, same branded format) ----
 function buildPayrollReport(assistant, period){
   const entries = state.timeEntries.filter(e=>e.assistantId===assistant.id);
   const inPeriod = entries.filter(e => new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end);
@@ -1533,7 +1560,7 @@ function tasksPastDueDate(){
     .sort((a,b)=>b.daysLate-a.daysLate);
 }
 
-// ---- 8e. Upcoming/overdue reminders (special dates, vendors, inspections) ----
+// ---- 8g. Upcoming/overdue reminders (special dates, vendors, inspections) ----
 function nextYearlyOccurrence(dateStr, now){
   const d = parseYMD(dateStr);
   if(!d || isNaN(d.getTime())) return null;
@@ -1621,6 +1648,46 @@ function clientsRenewingInWindow(window){
     .map(client=>({ client, end: termEndDate(client) }))
     .filter(x=>x.end && x.end>=window.start && x.end<window.end)
     .sort((a,b)=>a.end-b.end);
+}
+// Drives the Dashboard "Emails to send" alert — period recaps and renewal
+// notices that are due soon (or overdue) and haven't been marked sent yet
+// for the specific period/term they're due for. Sending (or copying) either
+// one elsewhere in the app clears it from here automatically.
+function emailsNeededList(){
+  const now = new Date();
+  const items = [];
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active")).forEach(client=>{
+    const period = currentBillingPeriod(client);
+    if(period){
+      const periodEndDisplay = new Date(period.end.getTime()-1);
+      const daysToEnd = daysUntil(periodEndDisplay, now);
+      const sent = client.periodRecapSentForPeriodStart === period.start.toISOString().slice(0,10);
+      if(!sent && daysToEnd<=2){
+        items.push({ client, type:"period", label:"Send end-of-period recap",
+          detail: (daysToEnd<0 ? "period ended " : "period ends ") + periodEndDisplay.toLocaleDateString(), urgent: daysToEnd<0, days: daysToEnd });
+      }
+    }
+    const notice = noticeDeadline(client);
+    if(notice && client.termType){
+      const daysToNotice = daysUntil(notice, now);
+      const sent = client.renewalEmailSentForTermType === client.termType;
+      if(!sent && daysToNotice<=7){
+        items.push({ client, type:"renewal", label:"Send contract renewal email",
+          detail: (daysToNotice<0 ? "notice deadline was " : "notice due ") + notice.toLocaleDateString(), urgent: daysToNotice<0, days: daysToNotice });
+      }
+    }
+  });
+  return items.sort((a,b)=>a.days-b.days);
+}
+function dismissEmailNeeded(clientId, type){
+  if(type==="period"){
+    const client = state.clients.find(c=>c.id===clientId);
+    const period = currentBillingPeriod(client);
+    if(period) markPeriodRecapSent(clientId, period);
+  } else {
+    const client = state.clients.find(c=>c.id===clientId);
+    markRenewalEmailSent(clientId, client.termType);
+  }
 }
 
 // ---- 9. Auth ----
@@ -1868,6 +1935,7 @@ function renderAdminDashboard(){
   const reminders = upcomingReminders(14);
   const renewingThisWeek = clientsRenewingInWindow(currentReportWeek());
   const renewingNextWeek = clientsRenewingInWindow(nextReportWeek());
+  const emailsNeeded = emailsNeededList();
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -1946,6 +2014,20 @@ function renderAdminDashboard(){
           <div>${client.name} <span class="small">(${TERM_LABELS[client.termType]||client.termType||'no term type'})</span></div>
           <span class="small">${end.toLocaleDateString()}</span>
         </div>`).join("")}` : ""}
+    </div>` : ""}
+
+    ${emailsNeeded.length ? `
+    <div class="card">
+      <h3>Emails to send</h3>
+      ${emailsNeeded.map(({client,type,label,detail,urgent})=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientEmailTemplates('${client.id}')">
+          <div>
+            <span class="alert ${urgent?'danger':'warn'}" style="margin:0;padding:2px 8px;">${label}</span>
+            <strong style="margin-left:6px;">${client.name}</strong>
+            <span class="small"> · ${detail}</span>
+          </div>
+          <button class="secondary" style="padding:2px 8px;" onclick="event.stopPropagation();dismissEmailNeeded('${client.id}','${type}');render();" title="Mark as sent without sending from here">Dismiss</button>
+        </div>`).join("")}
     </div>` : ""}
 
     <div class="card">
@@ -2245,18 +2327,25 @@ function renderClientCRM(clientId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return `<div class="small">Client not found.</div>`;
   const alert = tierAlert(client);
-  const subtabs = ["profile","tasks","membership"];
+  const subtabs = [["profile","Profile"],["tasks","Tasks"],["membership","Membership"],["emailTemplates","Email Templates"]];
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
     <h2>${client.name}</h2>
     ${alert ? `<div class="alert ${alert.level}">${alert.text}</div>` : ""}
     <div class="tabs">
-      ${subtabs.map(s=>`<button class="${state.crmSubTab===s?'active':''}" onclick="state.crmSubTab='${s}';render();">${s[0].toUpperCase()+s.slice(1)}</button>`).join("")}
+      ${subtabs.map(([key,label])=>`<button class="${state.crmSubTab===key?'active':''}" onclick="state.crmSubTab='${key}';render();">${label}</button>`).join("")}
     </div>
     ${state.crmSubTab==="profile" ? renderClientProfile(client) : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
     ${state.crmSubTab==="membership" ? renderClientMembership(client) : ""}
+    ${state.crmSubTab==="emailTemplates" ? renderClientEmailTemplates(client) : ""}
   `;
+}
+function viewClientEmailTemplates(clientId){
+  state.activeTab = "clients";
+  state.selectedClientId = clientId;
+  state.crmSubTab = "emailTemplates";
+  render();
 }
 // --- Client onboarding profile (filled out during home orientation) ---
 // Manual steps only — "assistant assigned" and "portal code set" are
@@ -3827,6 +3916,65 @@ function renderClientHoursCard(client){
       </div>
       ${!client.email ? `<div class="small" style="color:var(--danger);margin-top:8px;">No client email on file — add one on the Membership tab before emailing.</div>` : ""}
     </div>`;
+}
+// One place to send every client-facing email for this client — the same
+// Download/Email/Copy actions available elsewhere, plus the one email that
+// isn't tied to a report at all (the contract renewal notice). Each row
+// shows whether it's already been sent for the current period/term so this
+// doubles as the "have I done this yet" check the Dashboard alert also uses.
+function renderClientEmailTemplates(client){
+  const week = currentReportWeek();
+  const periodWindow = currentBillingPeriod(client);
+  const lastPeriodWindow = previousBillingPeriod(client);
+  const periodSent = !!(periodWindow && client.periodRecapSentForPeriodStart === periodWindow.start.toISOString().slice(0,10));
+  const end = termEndDate(client);
+  const notice = noticeDeadline(client);
+  const renewalSent = !!(client.termType && client.renewalEmailSentForTermType === client.termType);
+  const noEmail = !client.email;
+  return `
+    ${noEmail ? `<div class="alert warn">No client email on file — add one on the Membership tab before sending anything below.</div>` : ""}
+    <div class="card">
+      <h3>Weekly Recap</h3>
+      <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
+      <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+      <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','week')">Email client</button>
+      <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Period Recap</h3>
+        ${periodWindow ? `<span class="small" style="color:${periodSent?'var(--ok)':'var(--warn)'};">${periodSent?'✓ Sent for this period':'Not sent yet this period'}</span>` : ""}
+      </div>
+      <div class="small" style="margin-bottom:8px;">${periodWindow ? "Ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Set a renewal date on the Membership tab to enable"}</div>
+      ${periodWindow ? `
+        <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+        <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','period')">Email client</button>
+        <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
+      ` : ""}
+    </div>
+    <div class="card">
+      <h3>Last Period Recap</h3>
+      <div class="small" style="margin-bottom:8px;">${lastPeriodWindow ? formatPeriodRange(lastPeriodWindow) : "Not enough billing history yet"}</div>
+      ${lastPeriodWindow ? `
+        <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+        <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
+        <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
+      ` : ""}
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Contract Renewal</h3>
+        ${client.termType ? `<span class="small" style="color:${renewalSent?'var(--ok)':'var(--warn)'};">${renewalSent?'✓ Sent for this term':'Not sent yet for this term'}</span>` : ""}
+      </div>
+      <div class="small" style="margin-bottom:8px;">
+        ${client.termType ? `${TERM_LABELS[client.termType]} · ends ${end?end.toLocaleDateString():'—'} · notice deadline ${notice?notice.toLocaleDateString():'—'}` : "Set a term type on the Membership tab to enable"}
+      </div>
+      ${client.termType ? `
+        <button ${noEmail?'disabled':''} onclick="emailClientRenewal('${client.id}')">Email client</button>
+        <button class="secondary" onclick="copyRenewalMessage('${client.id}',this)">Copy message</button>
+      ` : ""}
+    </div>
+  `;
 }
 function renderNoteBullets(text){
   const lines = (text||"").split("\n").map(l=>l.trim()).filter(Boolean);
