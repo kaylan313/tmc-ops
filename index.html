@@ -1142,6 +1142,37 @@ function clientReportPlainText(report){
   lines.push("The Modern Concierge");
   return lines.join("\n");
 }
+// A short cover note to paste into an email when the downloaded (pretty,
+// HTML) report is attached by hand — mailto: links can't attach files or
+// render HTML, so "Email client" can only ever send the plain typed-out
+// version above. This is the practical fix: download the report, attach it
+// yourself, paste this in as the message body.
+function clientReportCoverNote(report){
+  const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
+  const fmt = d => new Date(d).toLocaleDateString();
+  const noun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
+  const rangeLabel = fmt(report.week.start) + " – " + fmt(new Date(report.week.end.getTime()-1));
+  const firstName = (report.client.name||"").split(" ")[0] || report.client.name;
+  return "Hi " + firstName + ",\n\n"
+    + "Attached is your " + noun + " for " + rangeLabel + ". You used " + formatHoursMinutes(report.hoursUsed)
+    + " and have " + formatHoursMinutes(report.hoursRemaining) + " remaining" + (isPeriod ? " this period" : " this billing period") + ".\n\n"
+    + "Let us know if you have any questions!\n\n"
+    + "The Modern Concierge Team";
+}
+function copyReportCoverNote(clientId, kind, btnEl){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const reportWindow = reportWindowFor(client, kind);
+  if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
+  const report = buildClientReport(client, reportWindow, kind);
+  const text = clientReportCoverNote(report);
+  navigator.clipboard.writeText(text).then(()=>{
+    if(!btnEl) return;
+    const orig = btnEl.textContent;
+    btnEl.textContent = "Copied ✓";
+    setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
+  }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
+}
 // ---- 8d. CSV export ----
 function csvEscape(val){
   const s = String(val==null ? "" : val);
@@ -3775,12 +3806,14 @@ function renderClientHoursCard(client){
           <div class="small" style="margin-bottom:4px;">Weekly recap &middot; Sat–Fri, week of ${formatPeriodRange(week)}</div>
           <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
           <button onclick="emailClientReport('${client.id}','week')">Email client</button>
+          <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
         </div>
         <div>
           <div class="small" style="margin-bottom:4px;">${periodWindow ? "Period recap &middot; ends " + periodWindow.end.toLocaleDateString() : "Period recap — set a renewal date on the Membership tab"}</div>
           ${periodWindow ? `
             <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
             <button onclick="emailClientReport('${client.id}','period')">Email client</button>
+            <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
           ` : ""}
         </div>
         <div>
@@ -3788,6 +3821,7 @@ function renderClientHoursCard(client){
           ${lastPeriodWindow ? `
             <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
             <button onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
+            <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
           ` : ""}
         </div>
       </div>
@@ -4664,7 +4698,8 @@ function renderReportsTab(){
       <strong>Weekly</strong> covers Saturday–Friday completions for the Friday client update; <strong>Period</strong> covers
       everything completed across the client's full current billing cycle, for their end-of-membership-period recap.
       Download and attach it to an email, or use Email to open a pre-filled message (your email client won't auto-attach the
-      file — attach the download manually).
+      file — attach the download manually). Use Copy message to grab a short cover note for the body — mailto: links can't
+      attach files or send the pretty formatted report, only plain text, so that's the "Email" button's ceiling.
     </div>
     <div class="card">
       ${rows.length===0 ? `<div class="small">No clients yet.</div>` : rows.map(({client, weekReport, periodReport, lastPeriodReport})=>`
@@ -4678,12 +4713,14 @@ function renderReportsTab(){
               <div class="small" style="margin-bottom:4px;">Weekly &middot; ${weekReport.inProgress.length} in progress · ${weekReport.completed.length} completed this week</div>
               <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
               <button onclick="emailClientReport('${client.id}','week')">Email</button>
+              <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
             </div>
             <div>
               <div class="small" style="margin-bottom:4px;">${periodReport ? "Period &middot; " + periodReport.completed.length + " completed &middot; ends " + periodReport.billingPeriod.end.toLocaleDateString() : "Period — set a renewal date on the Membership tab to enable"}</div>
               ${periodReport ? `
                 <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
                 <button onclick="emailClientReport('${client.id}','period')">Email</button>
+                <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
               ` : ""}
             </div>
             <div>
@@ -4691,6 +4728,7 @@ function renderReportsTab(){
               ${lastPeriodReport ? `
                 <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
                 <button onclick="emailClientReport('${client.id}','lastPeriod')">Email</button>
+                <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
               ` : ""}
             </div>
           </div>
