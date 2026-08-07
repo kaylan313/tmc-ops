@@ -827,6 +827,12 @@ function currentBillingPeriod(client, refDate){
 function previousBillingPeriod(client){
   const current = currentBillingPeriod(client);
   if(!current) return null;
+  // If the current period's start IS the renewal anchor itself, this is the
+  // client's very first cycle — there's no real period before it. Without
+  // this check, walking back from current.start-1ms lands back on the
+  // anchor (nothing to advance past) and silently returns the SAME period
+  // as "last period," which looks like a duplicate/overlapping window.
+  if(current.start.getTime() === parseYMD(client.renewalDate).getTime()) return null;
   return currentBillingPeriod(client, new Date(current.start.getTime()-1));
 }
 // A one-off grant of extra hours into a specific upcoming period (e.g. "let
@@ -2165,7 +2171,7 @@ function renderRenewalsTab(){
               <td>${n.client.termType ? (TERM_LABELS[n.client.termType]||n.client.termType) : '—'}</td>
               <td>${n.termEnd ? n.termEnd.toLocaleDateString() : '—'}</td>
               <td>${n.deadline ? n.deadline.toLocaleDateString() : '—'}</td>
-              <td>${n.periodEnd ? n.periodEnd.toLocaleDateString() : '—'}</td>
+              <td>${n.periodEnd ? new Date(n.periodEnd.getTime()-1).toLocaleDateString() : '—'}</td>
               <td>${n.days===null ? `<span style="color:var(--warn);">term/renewal data not set yet</span>` : n.days<0 ? `<span style="color:var(--danger);">deadline passed — will auto-renew</span>` : n.days===0 ? `<span style="color:var(--warn);">today</span>` : `${n.days}d left`}</td>
             </tr>`).join("")}
         </tbody>
@@ -3898,7 +3904,7 @@ function renderClientHoursCard(client){
           <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
         </div>
         <div>
-          <div class="small" style="margin-bottom:4px;">${periodWindow ? "Period recap &middot; ends " + periodWindow.end.toLocaleDateString() : "Period recap — set a renewal date on the Membership tab"}</div>
+          <div class="small" style="margin-bottom:4px;">${periodWindow ? "Period recap &middot; ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Period recap — set a renewal date on the Membership tab"}</div>
           ${periodWindow ? `
             <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
             <button onclick="emailClientReport('${client.id}','period')">Email client</button>
@@ -4864,7 +4870,7 @@ function renderReportsTab(){
               <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
             </div>
             <div>
-              <div class="small" style="margin-bottom:4px;">${periodReport ? "Period &middot; " + periodReport.completed.length + " completed &middot; ends " + periodReport.billingPeriod.end.toLocaleDateString() : "Period — set a renewal date on the Membership tab to enable"}</div>
+              <div class="small" style="margin-bottom:4px;">${periodReport ? "Period &middot; " + periodReport.completed.length + " completed &middot; ends " + new Date(periodReport.billingPeriod.end.getTime()-1).toLocaleDateString() : "Period — set a renewal date on the Membership tab to enable"}</div>
               ${periodReport ? `
                 <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
                 <button onclick="emailClientReport('${client.id}','period')">Email</button>
