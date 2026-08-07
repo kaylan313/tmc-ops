@@ -3377,28 +3377,28 @@ function renderClientProfile(client){
   const vendorsBody = `
     <label class="small">Vendors</label>
     ${(client.vendors||[]).map((v,i)=>`
-      <div class="list-item">
-        <div>${v.name} — ${v.service}${v.frequencyDays?` <span class="small">(every ${v.frequencyDays}d)</span>`:''}</div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span class="small">last: ${v.lastService||'—'}</span>
-          <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
-        </div>
+      <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
+        <input value="${v.name||''}" placeholder="Vendor name" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'name',this.value)">
+        <input value="${v.service||''}" placeholder="Service" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'service',this.value)">
+        <input value="${v.phone||''}" placeholder="Number" style="max-width:130px;" onchange="updateVendorField('${client.id}',${i},'phone',this.value)">
+        <input type="date" value="${v.lastService||''}" title="Last service date" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'lastService',this.value)">
+        <input type="number" value="${v.frequencyDays||''}" placeholder="Every N days" style="max-width:110px;" onchange="updateVendorField('${client.id}',${i},'frequencyDays',parseInt(this.value,10)||0)">
+        <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
       </div>`).join("") || `<div class="small">No vendors on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
       <input id="v_name_${client.id}" placeholder="Vendor name" style="max-width:150px;">
       <input id="v_service_${client.id}" placeholder="Service" style="max-width:130px;">
+      <input id="v_phone_${client.id}" placeholder="Number" style="max-width:130px;">
       <input id="v_last_${client.id}" type="date" title="Last service date" style="max-width:150px;">
       <input id="v_freq_${client.id}" type="number" placeholder="Every N days" style="max-width:110px;">
       <button class="secondary" onclick="addVendor('${client.id}')">Add</button>
     </div>
     <label class="small" style="display:block;margin-top:16px;">Inspections</label>
     ${(client.inspections||[]).map((ins,i)=>`
-      <div class="list-item">
-        <div>${ins.name}</div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span class="small">next due: ${ins.nextDue}</span>
-          <button class="danger" onclick="removeInspection('${client.id}',${i})">Remove</button>
-        </div>
+      <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
+        <input value="${ins.name||''}" placeholder="Inspection name" onchange="updateInspectionField('${client.id}',${i},'name',this.value)">
+        <input type="date" value="${ins.nextDue||''}" onchange="updateInspectionField('${client.id}',${i},'nextDue',this.value)">
+        <button class="danger" onclick="removeInspection('${client.id}',${i})">Remove</button>
       </div>`).join("") || `<div class="small">None scheduled.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;">
       <input id="ins_name_${client.id}" placeholder="Inspection name">
@@ -3520,7 +3520,10 @@ function renderContractSectionBody(client){
     ${signed ? `
       <div class="alert ok" style="margin-top:10px;">✓ Signed by <strong>${client.contractSignedName}</strong> on ${client.contractSignedDate ? parseYMD(client.contractSignedDate).toLocaleDateString() : ''}.</div>
       ${client.contractSignatureDataUrl ? `<div style="margin-top:8px;"><img src="${client.contractSignatureDataUrl}" style="max-width:280px;border:1px solid var(--cream-dark);border-radius:6px;background:#fff;" alt="Signature"></div>` : ""}
-      <button class="secondary" style="margin-top:10px;" onclick="resetClientAgreement('${client.id}')">Clear signature &amp; re-sign</button>
+      <div style="margin-top:10px;display:flex;gap:8px;">
+        <button class="secondary" onclick="downloadClientContract('${client.id}')">Download</button>
+        <button class="secondary" onclick="resetClientAgreement('${client.id}')">Clear signature &amp; re-sign</button>
+      </div>
     ` : `
       <div style="margin-top:14px;display:flex;align-items:flex-start;gap:8px;">
         <input type="checkbox" id="agree_${client.id}" style="margin-top:3px;">
@@ -3607,6 +3610,31 @@ function saveClientAgreement(clientId){
 function resetClientAgreement(clientId){
   if(!confirm("Clear this signature so the client can re-sign? This can't be undone.")) return;
   upsert("clients", clientId, { contractSigned:false, contractSignedName:null, contractSignedDate:null, contractSignatureDataUrl:null, contractHtml:null });
+}
+// Downloadable standalone copy of the signed agreement — open it and use the
+// browser's Print > Save as PDF if what's needed is a PDF for QuickBooks.
+function downloadClientContract(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client || !client.contractSigned) return;
+  const html = `<!doctype html><html><head><meta charset="UTF-8"><title>${client.name} — Signed Service Agreement</title>
+<style>body{font-family:Georgia,serif;max-width:720px;margin:40px auto;padding:0 20px;color:#241a17;line-height:1.5;} .sig-block{margin-top:30px;padding-top:16px;border-top:1px solid #ccc;} img{max-width:280px;display:block;margin-top:8px;}</style>
+</head><body>
+${client.contractHtml}
+<div class="sig-block">
+<p><strong>Signed by:</strong> ${client.contractSignedName}</p>
+<p><strong>Date:</strong> ${client.contractSignedDate ? parseYMD(client.contractSignedDate).toLocaleDateString() : ''}</p>
+${client.contractSignatureDataUrl ? `<img src="${client.contractSignatureDataUrl}" alt="Signature">` : ""}
+</div>
+</body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = client.name.replace(/[^a-z0-9]+/gi,"-") + "-signed-agreement-" + (client.contractSignedDate||new Date().toISOString().slice(0,10)) + ".html";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 function renderPaymentSectionBody(client){
   return `
@@ -3809,11 +3837,12 @@ function toggleRevealLogin(clientId, index){
 function addVendor(clientId){
   const name = document.getElementById("v_name_"+clientId).value.trim();
   const service = document.getElementById("v_service_"+clientId).value.trim();
+  const phone = document.getElementById("v_phone_"+clientId).value.trim();
   const lastService = document.getElementById("v_last_"+clientId).value;
   const frequencyDays = parseInt(document.getElementById("v_freq_"+clientId).value, 10) || 0;
   if(!name){ alert("Please enter a vendor name."); return; }
   const client = state.clients.find(c=>c.id===clientId);
-  const vendor = { name, service, lastService };
+  const vendor = { name, service, phone, lastService };
   if(frequencyDays) vendor.frequencyDays = frequencyDays;
   const vendors = [...(client.vendors||[]), vendor];
   upsert("clients", clientId, { vendors });
@@ -3821,6 +3850,11 @@ function addVendor(clientId){
 function removeVendor(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
   const vendors = (client.vendors||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { vendors });
+}
+function updateVendorField(clientId, index, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  const vendors = (client.vendors||[]).map((v,i)=>i!==index ? v : { ...v, [field]:value });
   upsert("clients", clientId, { vendors });
 }
 function addInspection(clientId){
@@ -3834,6 +3868,11 @@ function addInspection(clientId){
 function removeInspection(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
   const inspections = (client.inspections||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { inspections });
+}
+function updateInspectionField(clientId, index, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  const inspections = (client.inspections||[]).map((ins,i)=>i!==index ? ins : { ...ins, [field]:value });
   upsert("clients", clientId, { inspections });
 }
 function renderClientMembership(client){
