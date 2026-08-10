@@ -978,6 +978,23 @@ function formatHoursMinutes(hrs){
   const totalMinutes = Math.round(Math.max(0,hrs) * 60);
   return Math.floor(totalMinutes/60) + "h " + (totalMinutes % 60) + "m";
 }
+// Receipts live as regular task attachments (however Rachel already uploads
+// them) — this just gathers whichever ones were uploaded during the report
+// window, across all of the client's tasks, rather than only from tasks that
+// happened to be completed in that window (a receipt can land on a task
+// that's still open, or one from before the window).
+function receiptsInWindow(client, window){
+  const receipts = [];
+  state.tasks.filter(t=>t.clientId===client.id).forEach(t=>{
+    (t.attachments||[]).forEach(a=>{
+      const uploaded = new Date(a.uploadedAt);
+      if(uploaded >= window.start && uploaded < window.end){
+        receipts.push({ ...a, taskTitle: t.title });
+      }
+    });
+  });
+  return receipts.sort((a,b)=> new Date(a.uploadedAt) - new Date(b.uploadedAt));
+}
 // kind: "week" (the Friday recap, Saturday–Friday), "period" (the client's
 // current billing cycle), or "lastPeriod" (the cycle just before that, for
 // catching up on a recap that didn't go out in time) — all three share the
@@ -1001,7 +1018,8 @@ function buildClientReport(client, window, kind){
     hoursUsed: used, packageHours: pkg,
     hoursRemaining: Math.max(0, pkg - used),
     billingPeriod: isPeriodKind ? window : currentBillingPeriod(client),
-    signerName: "The Modern Concierge Team"
+    signerName: "The Modern Concierge Team",
+    receipts: client.includeReceiptsInReport ? receiptsInWindow(client, window) : []
   };
 }
 function clientReportHtml(report){
@@ -1092,6 +1110,17 @@ function clientReportHtml(report){
       <div class="section-label">In Progress</div>
       ${inProgress.length ? inProgress.map(t=>item(t,'progress')).join("") : `<div class="item-body" style="margin-bottom:16px;">Nothing in progress right now.</div>`}
 
+      ${report.receipts && report.receipts.length ? `
+      <hr>
+      <div class="section-label">Receipts (${report.receipts.length})</div>
+      ${report.receipts.map(r=>`
+        <div style="margin-bottom:14px;">
+          <div class="item-hours" style="margin-bottom:6px;">${r.taskTitle} &middot; ${new Date(r.uploadedAt).toLocaleDateString()}</div>
+          ${r.type && r.type.startsWith('image/')
+            ? `<img src="${r.dataUrl}" style="max-width:100%;border-radius:6px;display:block;">`
+            : `<a href="${r.dataUrl}" download="${r.name}" style="color:var(--rose-dark);">${r.name}</a>`}
+        </div>`).join("")}` : ""}
+
       <hr>
 
       <div class="section-label">Membership Hours — Billing Period</div>
@@ -1105,7 +1134,7 @@ function clientReportHtml(report){
         <div class="bar-track"><div class="bar-fill" style="width:${pct}%;"></div></div>
         <div class="bar-ends"><span>0h</span><span>${pkg}h</span></div>
         <div class="bar-pct">${pct}% used</div>
-        ${report.billingPeriod ? `<div class="renews">Billing period ends ${fmtShort(report.billingPeriod.end)}</div>` : ""}
+        ${report.billingPeriod ? `<div class="renews">Billing period ends ${fmtShort(new Date(report.billingPeriod.end.getTime()-1))}</div>` : ""}
       </div>
     </div>
     <div class="closing">
@@ -1129,9 +1158,12 @@ function clientReportCoverNote(report){
   const noun = isPeriod ? "end-of-period" : "weekly";
   const firstName = (report.client.name||"").split(" ")[0] || report.client.name;
   const endDate = report.billingPeriod ? new Date(report.billingPeriod.end.getTime()-1).toLocaleDateString() : null;
+  const receiptsLine = report.receipts && report.receipts.length
+    ? " This " + (isPeriod ? "period's" : "week's") + " receipts (" + report.receipts.length + ") are included in the attached report."
+    : "";
   return "Hi " + firstName + ",\n\n"
     + "Your " + noun + " report is attached. You have used " + formatHoursMinutes(report.hoursUsed)
-    + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + ".\n\n"
+    + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + receiptsLine + "\n\n"
     + "Please let me know if you have any questions regarding this report.\n\n"
     + "The Modern Concierge Team";
 }
@@ -3939,6 +3971,14 @@ function renderClientEmailTemplates(client){
   const noEmail = !client.email;
   return `
     ${noEmail ? `<div class="alert warn">No client email on file — add one on the Membership tab before sending anything below.</div>` : ""}
+    <div class="card">
+      <h3>Receipts</h3>
+      <label style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" ${client.includeReceiptsInReport?'checked':''} onchange="updateClientField('${client.id}','includeReceiptsInReport',this.checked)">
+        Include receipts in this client's Download/Email reports
+      </label>
+      <div class="small" style="margin-top:6px;">When on, any receipt uploaded as a task attachment during a report's date range gets pulled into that report automatically (Weekly, Period, and Last Period below) — nothing extra to attach by hand. Most clients don't need this; Rachel's normal per-task attachments are unaffected either way.</div>
+    </div>
     <div class="card">
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
