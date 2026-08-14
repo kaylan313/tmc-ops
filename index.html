@@ -526,7 +526,7 @@ async function boot(){
     // out anything typed into a field that's since been tabbed away from
     // (those values only live in the DOM until Save, nothing holds them
     // through a full re-render except the currently-focused field).
-    subscribe("clients", items=>{ state.clients = items; if(!state.modal) render(); });
+    subscribe("clients", items=>{ state.clients = items; pruneExpiredSignedDocs(); if(!state.modal) render(); });
     subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
     subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
     watchOrientationSync();
@@ -1610,6 +1610,42 @@ function nextYearlyOccurrence(dateStr, now){
 function daysUntil(date, now){
   const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return Math.round((date.getTime() - todayMid.getTime())/86400000);
+}
+// Signed agreements/contracts keep their full text (and, for clients, the
+// signature image) for this many days after signing — long enough to
+// download and file externally — then pruneExpiredSignedDocs() clears just
+// the heavy fields automatically so they don't sit in Firestore forever.
+// The lightweight signed/name/date fields are kept permanently either way,
+// as the record that it happened.
+const SIGNED_DOC_RETENTION_DAYS = 30;
+function daysUntilDocExpiry(signedAtDate){
+  if(!signedAtDate) return null;
+  const expiresAt = new Date(signedAtDate.getTime() + SIGNED_DOC_RETENTION_DAYS*86400000);
+  return daysUntil(expiresAt, new Date());
+}
+function isDocExpired(signedAtDate){
+  if(!signedAtDate) return false;
+  const days = daysUntilDocExpiry(signedAtDate);
+  return days !== null && days <= 0;
+}
+function pruneExpiredSignedDocs(){
+  let assistantsChanged = false;
+  const assistants = state.settings.assistants.map(a=>{
+    if(a.agreementSigned && a.agreementHtml && isDocExpired(new Date(a.agreementSignedAt))){
+      assistantsChanged = true;
+      return { ...a, agreementHtml: null };
+    }
+    return a;
+  });
+  if(assistantsChanged){
+    state.settings.assistants = assistants;
+    upsert("settings","access", { assistants });
+  }
+  state.clients.forEach(client=>{
+    if(client.contractSigned && (client.contractHtml || client.contractSignatureDataUrl) && isDocExpired(parseYMD(client.contractSignedDate))){
+      upsert("clients", client.id, { contractHtml:null, contractSignatureDataUrl:null });
+    }
+  });
 }
 function upcomingReminders(windowDays){
   windowDays = windowDays || 14;
@@ -3533,7 +3569,7 @@ function renderClientProfile(client){
   `;
 
   const vendorsBody = `
-    <label class="small">Vendors</label>
+    <div class="small" style="margin-bottom:8px;">Recurring service providers — lawn care, house cleaning/maid, trash pickup, pool service, etc. Set "Every N days" and a last-service date to get an automatic reminder when the next one's due.</div>
     ${(client.vendors||[]).map((v,i)=>`
       <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
         <input value="${v.name||''}" placeholder="Vendor name" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'name',this.value)">
@@ -3551,15 +3587,18 @@ function renderClientProfile(client){
       <input id="v_freq_${client.id}" type="number" placeholder="Every N days" style="max-width:110px;">
       <button class="secondary" onclick="addVendor('${client.id}')">Add</button>
     </div>
-    <label class="small" style="display:block;margin-top:16px;">Inspections</label>
+  `;
+
+  const homeInspectionBody = `
+    <div class="small" style="margin-bottom:8px;">Periodic home maintenance checks — pest control, HVAC filter replacement, gutter clean-out, pressure washing, etc. Set the next due date and you'll get a reminder as it approaches.</div>
     ${(client.inspections||[]).map((ins,i)=>`
       <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
-        <input value="${ins.name||''}" placeholder="Inspection name" onchange="updateInspectionField('${client.id}',${i},'name',this.value)">
+        <input value="${ins.name||''}" placeholder="e.g. Pest control, HVAC filter, Gutters, Pressure wash" style="min-width:220px;" onchange="updateInspectionField('${client.id}',${i},'name',this.value)">
         <input type="date" value="${ins.nextDue||''}" onchange="updateInspectionField('${client.id}',${i},'nextDue',this.value)">
         <button class="danger" onclick="removeInspection('${client.id}',${i})">Remove</button>
-      </div>`).join("") || `<div class="small">None scheduled.</div>`}
+      </div>`).join("") || `<div class="small">Nothing scheduled.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;">
-      <input id="ins_name_${client.id}" placeholder="Inspection name">
+      <input id="ins_name_${client.id}" placeholder="e.g. Pest control, HVAC filter, Gutters, Pressure wash">
       <input id="ins_due_${client.id}" type="date">
       <button class="secondary" onclick="addInspection('${client.id}')">Add</button>
     </div>
@@ -3636,12 +3675,13 @@ function renderClientProfile(client){
     ${showHome ? renderProfileSection("home", "2. Home Onboarding", homeBody) : ""}
     ${showBusiness ? renderProfileSection("business", "3. Business Onboarding", businessBody) : ""}
     ${renderProfileSection("dates", "4. Birthdays & Special Dates", datesBody)}
-    ${renderProfileSection("vendors", "5. Vendors & Inspections", vendorsBody)}
-    ${renderProfileSection("info", "6. Important Info & Logins", infoBody)}
-    ${renderProfileSection("notes", "7. Client Notes", notesBody)}
-    ${renderProfileSection("referrals", "8. Referrals", referralsBody)}
-    ${renderProfileSection("contract", "9. Service Agreement", renderContractSectionBody(client))}
-    ${renderProfileSection("payment", "10. Payment Setup", renderPaymentSectionBody(client))}
+    ${renderProfileSection("vendors", "5. Vendors & Recurring Services", vendorsBody)}
+    ${renderProfileSection("homeInspection", "6. Home Inspection Calendar", homeInspectionBody)}
+    ${renderProfileSection("info", "7. Important Info & Logins", infoBody)}
+    ${renderProfileSection("notes", "8. Client Notes", notesBody)}
+    ${renderProfileSection("referrals", "9. Referrals", referralsBody)}
+    ${renderProfileSection("contract", "10. Service Agreement", renderContractSectionBody(client))}
+    ${renderProfileSection("payment", "11. Payment Setup", renderPaymentSectionBody(client))}
   `;
 }
 // --- Service Agreement + signature (fills the same blanks a human would
@@ -3678,8 +3718,11 @@ function renderContractSectionBody(client){
     ${signed ? `
       <div class="alert ok" style="margin-top:10px;">✓ Signed by <strong>${client.contractSignedName}</strong> on ${client.contractSignedDate ? parseYMD(client.contractSignedDate).toLocaleDateString() : ''}.</div>
       ${client.contractSignatureDataUrl ? `<div style="margin-top:8px;"><img src="${client.contractSignatureDataUrl}" style="max-width:280px;border:1px solid var(--cream-dark);border-radius:6px;background:#fff;" alt="Signature"></div>` : ""}
+      ${client.contractHtml || client.contractSignatureDataUrl ? `
+        <div class="small" style="margin-top:8px;">On file — auto-clears in ${Math.max(0, daysUntilDocExpiry(parseYMD(client.contractSignedDate)))}d, download &amp; file it before then.</div>
+      ` : `<div class="small" style="margin-top:8px;">Full text/signature auto-cleared after ${SIGNED_DOC_RETENTION_DAYS} days — the signed record above is kept permanently.</div>`}
       <div style="margin-top:10px;display:flex;gap:8px;">
-        <button class="secondary" onclick="downloadClientContract('${client.id}')">Download</button>
+        <button class="secondary" onclick="downloadClientContract('${client.id}')" ${!client.contractHtml?'disabled title="Full text was auto-cleared — nothing to download"':''}>Download</button>
         <button class="secondary" onclick="resetClientAgreement('${client.id}')">Clear signature &amp; re-sign</button>
       </div>
     ` : `
@@ -4972,6 +5015,325 @@ const ONBOARDING_CHECKLIST = [
   "Sign offer letter","Set up email & tools access","Review client assignment",
   "Shadow a clock-in/clock-out cycle","Read client CRM guide","Complete first task"
 ];
+// Verbatim (converted from the Drive doc) — keep both in sync when the policy book changes.
+const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIERGE</h2>
+<h3>Team Policy Book | Effective: April 2026 | Confidential — Internal Use Only</h3>
+<p><em>"Be the assistant you would want if you were the client."</em></p>
+<h3>Welcome</h3>
+<p>Welcome to The Modern Concierge. You are joining a team that holds itself to a higher standard — not because we have to, but because our clients deserve it and our reputation depends on it.</p>
+<p>This policy book is your guide to how we operate, communicate, and represent this brand every single day. Read it thoroughly. Refer back to it often. If something isn't covered here, ask Kaylan — never assume.</p>
+<p>Our clients pay a premium because they expect premium. Your job is to make sure they never question whether it's worth it.</p>
+<h3>Part 1 — Our Mission & Standard</h3>
+<h4>The Mission</h4>
+<p>Our job is to remove stress, save time, and anticipate needs for our clients. Every task should be handled in a way that feels efficient, thoughtful, and professional. Clients should feel like they have someone who is capable, organized, and already thinking three steps ahead.</p>
+<h4>The Standard</h4>
+<p>At The Modern Concierge, we are not order-takers. We are proactive, professional, and present. Every client should feel like they have a dedicated assistant who is one step ahead of them — not waiting to be told what to do.</p>
+<p><strong>The Golden Rule:</strong> Before sending any message, ask yourself: "Does this make the client's life easier?" If yes, you're doing it right.</p>
+<h3>Part 2 — The Request System</h3>
+<p>Every client request should follow this five-step process.</p>
+<p><strong>Step 1 — Understand the Request</strong></p>
+<p>Before doing anything, make sure you clearly understand what the client needs. Ask yourself:</p>
+<ul>
+<li>What exactly are they asking for?</li>
+<li>When do they need it?</li>
+<li>Is there anything obvious they might also need?</li>
+</ul>
+<p><em>Example: If they ask for a dinner reservation, also think about transportation, best nearby options, and timing.</em></p>
+<p><strong>Step 2 — Research & Gather Options</strong></p>
+<p>Never go back to the client empty-handed. Always bring solutions, not questions. Your goal is to find 2–3 solid options with pricing or availability and your recommendation.</p>
+<p><em>"I found three great restaurants within 10 minutes of your hotel. My recommendation would be ___ because of the reviews and availability. Would you like me to reserve a table for 7:30?"</em></p>
+<p><strong>Step 3 — Recommend the Best Option</strong></p>
+<p>Clients appreciate when you use your judgment. Do not just list options — give a recommendation.</p>
+<p><em>"I would recommend Option B — it's slightly higher in price but has an excellent reputation. Worth it to avoid any issues."</em></p>
+<p><strong>Step 4 — Execute Quickly</strong></p>
+<p>Once the client approves, handle it immediately. Confirm reservations, appointments, bookings, vendors, and deliveries — then send a clear confirmation message.</p>
+<p><em>"Your dinner reservation at ___ is confirmed for Friday at 7:30 PM for 4 guests."</em></p>
+<p><strong>Step 5 — Follow Up</strong></p>
+<p>Great service means making sure everything actually happened successfully. Follow up when necessary.</p>
+<p><em>"Just checking that everything went smoothly with the cleaning service today!"</em></p>
+<h3>Part 3 — Weekly Client Rhythm</h3>
+<p>Every client on your roster requires a weekly touchpoint. This is non-negotiable.</p>
+<p><strong>Monday — Weekly Check-In</strong></p>
+<p>Send every active client a brief, warm check-in before 10:00 AM.</p>
+<p><em>"Good morning [First Name]! 😊 Hope you have a great week ahead. I'm ready to hit the ground running for you. Any priorities or tasks you'd like me to tackle this week? I'll also be working on [reference something specific] in the meantime!"</em></p>
+<p>Rules:</p>
+<ul>
+<li>Keep it to 2–3 sentences max</li>
+<li>Always reference something specific to their situation</li>
+<li>Send via their preferred channel (text, email, or the TMC Ops app)</li>
+<li>Do NOT send on holidays or if you already spoke with them that morning</li>
+<li>If no response by Tuesday afternoon — follow up once, then move forward with existing tasks</li>
+</ul>
+<p><strong>Friday — Weekly Report</strong></p>
+<p>Every client gets their official Weekly Report from TMC Ops — clients can also see their open tasks and hours live on their own dashboard at any time, so this is their formal end-of-week recap, not their only visibility into their account.</p>
+<ul>
+<li>Weekly Reports must be sent by 5:00 PM every Friday. No exceptions.</li>
+<li>If something is taking longer than expected or you've hit a roadblock on an ongoing task, communicate that to the client directly and proactively as it happens — do not wait until Friday to surface a problem.</li>
+</ul>
+<p><strong>Hours Usage Alerts</strong></p>
+<p>TMC Ops automatically tracks each client's hours and flags you when they cross 75% and 90% of their package — you don't have to calculate this yourself. When you see the alert, it's on you to pass it along to the client:</p>
+<ul>
+<li>At 75% — let the client know: "You're getting close to your hours for this period — just a heads up!"</li>
+<li>At 90% or over — tell them immediately. Do not wait for Friday.</li>
+</ul>
+<h3>Part 4 — How to Handle a New Task</h3>
+<p><strong>Step 1 — Log the Task in TMC Ops (Immediately)</strong></p>
+<ul>
+<li>Open the client in the TMC Ops app (Clients → select the client → Tasks tab)</li>
+<li>Click "+ New task"</li>
+<li>Name it clearly and specifically (not "call" — use "Call Lexi re: CRM setup follow-up")</li>
+<li>Add a due date and description, and attach any relevant files</li>
+<li>Assign it to yourself under Assignees</li>
+</ul>
+<p><strong>Step 2 — Acknowledge the Task to the Client (Within 2 Hours)</strong></p>
+<p>Never let a task sit unacknowledged. Even if you can't start immediately, let them know you received it.</p>
+<p><em>"Got it! I'll take care of [task] and have it done by [realistic timeframe]. I'll keep you posted! 😊"</em></p>
+<p><strong>Step 3 — Clock In Before You Start</strong></p>
+<p>Every time you begin working on a task — no exceptions — clock in on that specific task in TMC Ops.</p>
+<p>How to clock in:</p>
+<ul>
+<li>Go to the Time Tracking tab (or open the task on the Task Board)</li>
+<li>Search for the task by its # or title in the Clock In box</li>
+<li>Hit Clock In — begin working</li>
+<li>Hit Clock Out when you finish or take a break</li>
+</ul>
+<p>⚠️ If you forget to clock in and do work — use "Log time manually" on the Time Tracking tab. Never let hours go untracked.</p>
+<p><strong>Clock-In Rules — When the Clock Starts</strong></p>
+<p>This matters for both your payroll accuracy and client billing. Follow these guidelines exactly.</p>
+<p><em>Errand-Based / Out-of-Office Tasks</em></p>
+<ul>
+<li>If you are leaving your home specifically to complete a client task — clock in when you leave your house. Your drive time is billable.</li>
+<li>If you are already out in the city (running personal errands, shopping, etc.) and a client contacts you with a task while you're out — clock in when you begin the task itself, not from wherever you were. You were already going to be in town. The client is not billed for time that wasn't spent on their behalf.</li>
+</ul>
+<p><em>Example: You're already at Target doing personal shopping when a client texts you to pick something up nearby. Clock in when you leave to go get their item — not from home, because you were never home.</em></p>
+<p><em>Example: A client asks you to pick up dry cleaning and you drive from home specifically for that task. Clock in when you pull out of your driveway.</em></p>
+<p><em>Office-Based Work</em></p>
+<ul>
+<li>If you are coming into the office for any reason — working on client tasks, a team meeting, or a Kaylan to-do — clock in when you arrive at the office. Commute time to the office is not clocked.</li>
+<li>Once you're in the office and working, every task you work on should be tracked under the appropriate task in TMC Ops.</li>
+</ul>
+<p><em>Meetings & Tasks for Kaylan</em></p>
+<ul>
+<li>Any meeting with Kaylan or any task assigned directly by Kaylan (not for a specific client) should be logged as a task under "Internal / Modern Co." in TMC Ops — or, for work that isn't tied to a specific task, use "Clock in for Admin Work" on the Time Tracking tab.</li>
+<li>Name the entry clearly: "Meeting — [Date]" or "To-Do — [brief description] — [Date]"</li>
+<li>Clock in for these the same way you would any client task — start the timer when the meeting begins or when you start working on the to-do.</li>
+</ul>
+<p><em>The Simple Rule: Clock in when your time genuinely becomes dedicated to TMC work. If you were already headed somewhere for personal reasons, the clock starts when the work starts — not before.</em></p>
+<p><strong>Step 4 — Complete the Task</strong></p>
+<p>Work through the task. If you hit a problem, need access to something, or it's taking longer than expected — communicate with the client immediately. Never go silent.</p>
+<p><strong>Step 5 — Mark Complete & Notify the Client</strong></p>
+<p>When the task is done:</p>
+<ul>
+<li>Mark it Done in TMC Ops</li>
+<li>Send the client a quick completion message</li>
+</ul>
+<p><em>"Done! ✅ [Brief description of what was completed and any relevant outcome]. Let me know if you need anything adjusted or have questions!"</em></p>
+<h3>Part 5 — Proactive Service</h3>
+<p>This is what separates a good assistant from a great one. Don't wait for clients to tell you everything — look for opportunities to add value.</p>
+<p><strong>What Proactive Looks Like</strong></p>
+<ul>
+<li>Noticing a client's listing or profile hasn't been updated → flag it or update it</li>
+<li>Seeing a deadline approaching on their calendar → send a reminder before they ask</li>
+<li>Noticing they're running low on hours → alert them before the period ends</li>
+<li>Remembering something a client mentioned in passing → follow up unprompted</li>
+<li>Seeing a task that logically leads to another → complete both and report back</li>
+</ul>
+<p><strong>The Proactive Rule</strong></p>
+<p>If you identify a task that clearly falls within the client's scope and you have the access to do it — do it, then report it. Don't ask permission for small things. Use judgment for larger or unclear things.</p>
+<p><em>"Hey [First Name]! I noticed [observation] so I went ahead and [action taken]. Let me know if you'd like me to adjust anything! 😊"</em></p>
+<p><strong>Think Ahead — Always Ask Yourself: "What could they need next?"</strong></p>
+<ul>
+<li>Travel → transportation, reservations, itinerary</li>
+<li>Events → vendors, timing, confirmations</li>
+<li>Home services → scheduling and follow-ups</li>
+</ul>
+<h3>Part 6 — Client Communication Standards</h3>
+<p><strong>Tone — Adapt to Each Client</strong></p>
+<table style="width:100%;border-collapse:collapse;margin:10px 0;">
+<tr><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Client Type</th><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">How to Communicate</th></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Busy executive / professional</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Concise, bullet points, no fluff. Get to the point fast.</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Warm/personal client</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Friendly, conversational, personal touches matter.</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Detail-oriented client</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Give more info, not less. They want receipts.</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Laid-back client</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Keep it casual and easy. Don't over-formalize.</td></tr>
+</table>
+<p><em>How to read them: Pay attention to how THEY communicate with you. Match their energy. If they send short texts — keep yours short. If they write paragraphs — give them more detail.</em></p>
+<p><strong>Response Time Standards</strong></p>
+<table style="width:100%;border-collapse:collapse;margin:10px 0;">
+<tr><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Situation</th><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Response Time</th></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Client sends a message</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Within 2 hours during business hours</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Client submits a task</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Acknowledge within 2 hours</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Client asks a question you don't know</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Respond within 1 hour saying you'll find out</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Urgent task flagged</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Same-day response and start</td></tr>
+</table>
+<p><strong>Bundle Communication</strong></p>
+<p>Do not message clients repeatedly throughout the day. Send one organized update when possible.</p>
+<p><em>"Quick update for you today: • House cleaner confirmed for Tuesday • Dinner reservation booked for Friday • Waiting on a quote from the landscaper"</em></p>
+<p><strong>What NOT to Do</strong></p>
+<ul>
+<li>❌ Never leave a message unread and unanswered for more than 2 hours during business hours</li>
+<li>❌ Never tell a client you don't know something without following up with an answer</li>
+<li>❌ Never text a client more than once in the same day unless they initiated</li>
+<li>❌ Never discuss other clients or their information — ever</li>
+<li>❌ Never make a financial commitment on behalf of a client without pre-approval</li>
+<li>❌ Never go silent on a task — always communicate delays proactively</li>
+</ul>
+<h3>Part 7 — Hours Tracking & Accountability</h3>
+<p><strong>Membership Client Hour Tracking</strong></p>
+<p>These clients pay for a set number of hours per month, regardless of package size (20/40/60/80 hrs). Every minute worked must be logged accurately in TMC Ops so the system's tracking stays accurate. TMC Ops automatically flags each client's usage at 50%, 75%, 90%, and 100% — you don't have to calculate this yourself, just watch for the alert and act on it:</p>
+<ul>
+<li>50% / 75% — a heads-up worth passing to the client</li>
+<li>90% or over — tell the client immediately, do not wait for Friday's report</li>
+<li>100% — client moves into overage</li>
+</ul>
+<p>Overage is billed at $50/hr. Clients must be notified before going over. This is non-negotiable.</p>
+<p><strong>Hours Utilization</strong></p>
+<p>If a client has given us tasks to do, their package hours should be used by the end of their billing period — don't sit on real, actionable work while a client's hours go unused. Look ahead each week and make sure there's enough queued up to use what they're paying for.</p>
+<p>That's different from a client who hasn't given us what we need to move forward. If a task is stalled because the client hasn't provided information, access, or a decision we need, and you're at a genuine roadblock — that's not a failure to use hours, that's the client holding things up. Document it, communicate it to the client, and let Kaylan know it's stalled on their end.</p>
+<p><strong>Internal Hour Tracking Only</strong></p>
+<p>Home Reset (flat-rate) clients pay a fixed price rather than an hourly package. Log your time on these clients' tasks as normal in TMC Ops for Kaylan's payroll records, but do not share hour counts with these clients — their billing isn't hours-based.</p>
+<p><strong>End of Pay Period</strong></p>
+<p>Every payroll period ends on the 14th and the last day of the month. All of your time entries must be entered in TMC Ops, correct, and clocked out — no still-running clocks, no missing entries — before the period end date. This is non-negotiable. Payroll is run off exactly what's in the system as of that cutoff, and entries added after the fact will not be included in that payroll run.</p>
+<h3>Part 8 — TMC Ops Workflow</h3>
+<p><strong>Task Statuses — Use These Correctly</strong></p>
+<ul>
+<li>To do — task logged, not started</li>
+<li>Researching — gathering options/information before recommending or executing</li>
+<li>In progress — actively working on it</li>
+<li>Pending approval — a client submitted this themselves and it's awaiting your review (accept or decline it)</li>
+<li>Done — completed and communicated to client</li>
+</ul>
+<p><strong>End of Day Checklist</strong></p>
+<p>Before closing out for the day:</p>
+<ul>
+<li>☐ All tasks updated to the correct status in TMC Ops</li>
+<li>☐ All time entries logged accurately</li>
+<li>☐ Any unanswered client messages responded to</li>
+<li>☐ Tomorrow's priorities noted</li>
+</ul>
+<p><strong>Weekly Schedule at a Glance</strong></p>
+<table style="width:100%;border-collapse:collapse;margin:10px 0;">
+<tr><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Day</th><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Action</th></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Monday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Send weekly check-in to ALL clients by 10am</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Tuesday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Review all open tasks, prioritize the week</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Wednesday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Continue task work; proactively flag any delays directly to affected clients</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Thursday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Proactive scan — any tasks to get ahead of?</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Friday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Send Weekly Report to ALL clients by 5:00 PM</td></tr>
+<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Daily</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Check messages, clock in on tasks, update TMC Ops</td></tr>
+</table>
+<h3>Part 9 — Handling Mistakes & Issues</h3>
+<p>If something goes wrong:</p>
+<ul>
+<li>Fix the issue first if possible</li>
+<li>Then inform the client with a solution already in hand</li>
+</ul>
+<p><em>"The vendor had to reschedule due to weather, but I secured a new appointment for tomorrow morning."</em></p>
+<p>Clients appreciate solutions, not problems.</p>
+<p>If you make a mistake:</p>
+<ul>
+<li>Own it immediately</li>
+<li>Fix it</li>
+<li>Tell Kaylan</li>
+</ul>
+<p>If you're unsure about something — ask Kaylan, not the client.</p>
+<h3>Part 10 — Social Media & Personal Brand Policy</h3>
+<p><strong>Overview</strong></p>
+<p>We understand that our team members have active personal social media lives, and we do not intend to control your personal presence. However, because you represent The Modern Concierge — a brand that professionals and executives trust with their personal lives — your online presence reflects on us whether you intend it to or not.</p>
+<p>This policy applies to all platforms including but not limited to: TikTok, Instagram, Facebook, Snapchat, X (Twitter), Threads, LinkedIn, and YouTube.</p>
+<p><strong>The Core Standard</strong></p>
+<p>Ask yourself before posting anything publicly: <em>"If a client who pays $50 an hour for our services saw this, would they still trust us with their home, their schedule, and their business?"</em></p>
+<p>If there is any doubt — don't post it.</p>
+<p><strong>What Is Acceptable</strong></p>
+<p>You are welcome to:</p>
+<ul>
+<li>Post personal content that is positive, neutral, or lifestyle-oriented</li>
+<li>Share general content about productivity, organization, or professional life</li>
+<li>Post about The Modern Concierge if approved by Kaylan in advance</li>
+<li>Engage authentically with your audience in a way that reflects well on you as a professional</li>
+</ul>
+<p><strong>What Is Not Acceptable</strong></p>
+<p>The following content is not permitted on any public-facing social media account while you are engaged with The Modern Concierge:</p>
+<ul>
+<li>❌ Complaining about being tired, burnt out, overwhelmed, or stressed in a work context</li>
+<li>❌ Vague or direct complaints about clients, tasks, or your job — even without naming names</li>
+<li>❌ Inappropriate, explicit, or reckless content of any kind</li>
+<li>❌ Content depicting excessive alcohol consumption or drug use</li>
+<li>❌ Anything that could be perceived as unprofessional by a current or prospective client</li>
+<li>❌ Sharing, referencing, or hinting at any client information, tasks, or details — this is a confidentiality violation</li>
+<li>❌ Tagging The Modern Concierge or mentioning us in connection with any content that does not reflect our brand standards</li>
+</ul>
+<p><strong>TikTok-Specific Guidelines</strong></p>
+<p>TikTok content has a high potential for virality and is particularly visible. Keep in mind:</p>
+<ul>
+<li>Content created in your personal time can and will be seen by clients, their networks, and prospective clients</li>
+<li>Trending sounds, challenges, or humor that seem harmless in context can appear unprofessional when associated with our brand</li>
+<li>If you mention your work or profession in a TikTok, that content becomes a direct reflection of The Modern Concierge — hold it to that standard</li>
+<li>If you are ever unsure whether a TikTok is appropriate, check with Kaylan before posting</li>
+</ul>
+<p><strong>TMC Brand Content</strong></p>
+<p>If you wish to create content that promotes or references The Modern Concierge:</p>
+<ul>
+<li>You must receive written approval from Kaylan before posting</li>
+<li>All brand-related content must be reviewed for messaging, tone, and accuracy</li>
+<li>Do not use the TMC logo, name, or any client-related details in content without approval</li>
+</ul>
+<h3>Part 11 — Company Apparel Policy</h3>
+<p><strong>Work Shirts & Branded Clothing</strong></p>
+<p>The Modern Concierge work shirts and any other branded company apparel are professional uniforms, not casual wear. They represent our brand and our clients' trust in us.</p>
+<p><strong>Wearing Company Apparel Is NOT Permitted:</strong></p>
+<ul>
+<li>❌ After business hours — work shirts are not leisure wear</li>
+<li>❌ In any bar or nightlife setting — regardless of the time or occasion</li>
+<li>❌ Any time you are consuming alcohol — this is a firm policy with no exceptions</li>
+<li>❌ At events, gatherings, or venues where your behavior may not reflect TMC's professional standard</li>
+</ul>
+<p><strong>Why This Policy Exists</strong></p>
+<p>Our clients are executives, professionals, and high-net-worth individuals. They move in networks. If someone sees a TMC team member in our branded apparel in an unprofessional setting, it directly damages the trust and reputation we have worked hard to build.</p>
+<p>You are always welcome to wear your shirt to and from work and during client-facing or work-related activities. Beyond that, change before you go out.</p>
+<p>When in doubt — take the shirt off.</p>
+<p><strong>Uniform Guidelines</strong></p>
+<p>What you wear depends on what you're doing that day:</p>
+<ul>
+<li><strong>Meeting with a client in person</strong> (orientation, errands out with them, any face-to-face client interaction): dress business casual.</li>
+<li><strong>Manual/physical work</strong> (home resets, organizing, moving boxes, that kind of thing): a put-together comfy-casual look is fine — plain, non-graphic shirts and shorts. Save the graphic tees and loungewear for your own time.</li>
+</ul>
+<p>When in doubt, dress a notch nicer than you think you need to — you can always roll up your sleeves.</p>
+<p><strong>Getting Your Shirt</strong></p>
+<p>The Modern Concierge does not provide work shirts directly. Here's how it works instead:</p>
+<ul>
+<li>You purchase your own shirt(s) — up to four (4).</li>
+<li>The Company covers embroidery on up to four (4) shirts with the TMC logo, done at our designated embroidery partner: <strong>Absolutely Embroidery</strong>, in Lafayette.</li>
+<li>In short: you pay for the shirt, TMC pays for the embroidery.</li>
+</ul>
+<h3>Part 12 — Professionalism & Conduct</h3>
+<p><strong>You Represent The Modern Concierge in Every Interaction</strong></p>
+<ul>
+<li>Your communication reflects the brand — warm, clean, and professional</li>
+<li>If you are having a hard personal day — the client never feels it</li>
+<li>Treat every client like they are your only client</li>
+<li>Never discuss one client's information with another client or with anyone outside of TMC</li>
+<li>Never make assumptions — ask Kaylan</li>
+</ul>
+<p><strong>Language</strong></p>
+<p>No foul or vulgar language while on the clock — this applies to how you speak in person, on the phone, and in any text/email, and it applies especially around clients and any time you're wearing a Modern Co shirt or otherwise visibly representing the brand. If you wouldn't say it in front of a client, don't say it at all while working.</p>
+<p><strong>Confidentiality</strong></p>
+<p>Client information is strictly confidential. This includes:</p>
+<ul>
+<li>Names, addresses, schedules, and preferences</li>
+<li>Tasks completed on their behalf</li>
+<li>Financial information or commitments</li>
+<li>Any personal details shared in the course of your work</li>
+</ul>
+<p>Violating client confidentiality is grounds for immediate termination of your engagement.</p>
+<p><strong>Financial Commitments</strong></p>
+<p>You are never authorized to make a financial commitment on behalf of a client without explicit prior approval. This includes booking, purchasing, or agreeing to any service that involves the client's money.</p>
+<h3>Closing Note</h3>
+<p>Working at The Modern Concierge is a privilege. Our clients trust us with their time, their homes, their businesses, and their lives — and that is not something we take lightly.</p>
+<p>Hold yourself to the standard you would expect if you were the client. Show up with intention every single day. Be proactive, be professional, and be someone your clients can count on without question.</p>
+<p>We are not just assistants. We are the reason our clients can breathe easier.</p>
+<p><em>Questions about anything in this policy book? Ask Kaylan before assuming.</em></p>
+<p><em>This document is reviewed and updated regularly.</em></p>
+<p><em>The Modern Concierge — support@themodernconcierge.co</em></p>
+<p><em>Confidential — Internal</em></p>`;
 function renderOnboarding(){
   return `
     <h2>Onboarding</h2>
@@ -4981,6 +5343,13 @@ function renderOnboarding(){
         <button class="secondary" onclick="openAppGuide()">View app guide</button>
       </div>
       <div class="small">A step-by-step tour of the Dashboard, Task Board, Time Tracking, and client pages.</div>
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Team Policy Book</h3>
+        <button class="secondary" onclick="openPolicyBook()">View policy book</button>
+      </div>
+      <div class="small">How we operate, communicate, and represent the brand — client rhythm, task workflow, hours tracking, uniform/apparel, and conduct standards. Come back to this any time.</div>
     </div>
     <div class="card">
       <h3>New team member checklist</h3>
@@ -5032,6 +5401,9 @@ function renderTeamAdmin(){
 function renderAssistantRow(a){
   const onboarding = a.onboarding || [];
   const doneCount = onboarding.filter(i=>i.done).length;
+  const stillOnFile = a.agreementSigned && a.agreementHtml;
+  const purged = a.agreementSigned && !a.agreementHtml;
+  const expiresIn = stillOnFile ? daysUntilDocExpiry(new Date(a.agreementSignedAt)) : null;
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
       <div class="flex-between">
@@ -5041,6 +5413,13 @@ function renderAssistantRow(a){
           <button class="danger" onclick="removeEmployee('${a.id}')">Remove</button>
         </div>
       </div>
+      ${a.agreementSigned ? `
+        <div class="small" style="display:flex;align-items:center;gap:10px;">
+          ${stillOnFile ? `
+            <button class="secondary" style="padding:2px 8px;" onclick="downloadEmployeeAgreement('${a.id}')">Download agreement</button>
+            <span>on file — auto-clears in ${expiresIn!==null ? Math.max(0,expiresIn) : '?'}d, download &amp; file it before then</span>
+          ` : purged ? `<span>full text auto-cleared after 30 days — signed ${a.agreementSignedAt?new Date(a.agreementSignedAt).toLocaleDateString():''} by ${a.agreementSignedName||a.name} is still on record</span>` : ""}
+        </div>` : ""}
       <div class="row">
         <div><label class="small">Hourly rate ($)</label><input type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
@@ -5434,7 +5813,7 @@ function employmentAgreementHtml(assistant){
     <p>This Agreement represents the entire understanding between the parties and supersedes prior discussions.<br>Any modifications must be in writing and signed by both parties.</p>
 
     <p><strong>SIGNATURES</strong></p>
-    <p>The Modern Co, LLC<br>By: Kaylan Olivier<br>Name: Kaylan Olivier<br>Title: Founder</p>
+    <p>The Modern Co, LLC<br>By: Kaylan Ogle<br>Name: Kaylan Ogle<br>Title: Founder</p>
     <p>Contractor<br>Name: ${assistant.name}<br>Signature: (typed name below)<br>Date: ${todayStr}</p>
   `;
 }
@@ -5463,13 +5842,44 @@ function signAgreement(assistantId){
   state.settings.assistants = state.settings.assistants.map(a=>{
     if(a.id!==assistantId) return a;
     const onboarding = (a.onboarding||[]).map(it=>it.id==="agreement"?{...it,done:true}:it);
-    return { ...a, agreementSigned:true, agreementSignedName:name, agreementSignedAt:new Date().toISOString(), onboarding };
+    // Freeze the exact text they agreed to (today's date, their rate at the
+    // time) rather than leaving it to be recomputed live later — a rate
+    // change or viewing it next year shouldn't silently rewrite history.
+    return { ...a, agreementSigned:true, agreementSignedName:name, agreementSignedAt:new Date().toISOString(), agreementHtml: employmentAgreementHtml(a), onboarding };
   });
   state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
   upsert("settings","access", { assistants: state.settings.assistants });
   state.modal = state.currentAssistant && !state.currentAssistant.hasSeenAppGuide
     ? { type:"appGuide", assistant: state.currentAssistant } : null;
   render();
+}
+// Admin downloads this within 30 days to file externally — pruneExpiredAgreements()
+// clears the heavy snapshot after that so it doesn't sit in Firestore forever.
+// The lightweight signed/name/date fields are kept permanently as the record
+// that it happened, even after the full text is purged.
+function downloadEmployeeAgreement(assistantId){
+  const a = state.settings.assistants.find(x=>x.id===assistantId);
+  if(!a || !a.agreementSigned) return;
+  const html = a.agreementHtml || employmentAgreementHtml(a);
+  const signedDate = a.agreementSignedAt ? new Date(a.agreementSignedAt).toLocaleDateString() : "";
+  const full = `<!doctype html><html><head><meta charset="UTF-8"><title>${a.name} — Independent Contractor Agreement</title>
+<style>body{font-family:Georgia,serif;max-width:720px;margin:40px auto;padding:0 20px;color:#241a17;line-height:1.5;}</style>
+</head><body>
+${html}
+<div style="margin-top:24px;padding-top:14px;border-top:1px solid #ccc;">
+<p><strong>Signed by:</strong> ${a.agreementSignedName||a.name}</p>
+<p><strong>Date:</strong> ${signedDate}</p>
+</div>
+</body></html>`;
+  const blob = new Blob([full], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const el = document.createElement("a");
+  el.href = url;
+  el.download = a.name.replace(/[^a-z0-9]+/gi,"-") + "-independent-contractor-agreement.html";
+  document.body.appendChild(el);
+  el.click();
+  el.remove();
+  URL.revokeObjectURL(url);
 }
 
 // --- App guide (shown once per assistant on first login after this was added; re-openable anytime from the Onboarding tab) ---
@@ -5530,6 +5940,23 @@ function renderAppGuideReadOnlyModal(){
       <h3>App guide</h3>
       <div class="agreement-text" style="max-height:400px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px;font-size:13px;background:var(--cream);">
         ${appGuideHtml()}
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button class="secondary" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  `;
+}
+function openPolicyBook(){
+  state.modal = { type:"policyBook" };
+  render();
+}
+function renderPolicyBookModal(){
+  return `
+    <div class="modal" style="width:640px;">
+      <h3>Team Policy Book</h3>
+      <div class="agreement-text" style="max-height:520px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px 18px;font-size:13px;background:var(--cream);">
+        ${TEAM_POLICY_BOOK_HTML}
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;">
         <button class="secondary" onclick="closeModal()">Close</button>
@@ -6400,6 +6827,7 @@ function renderModal(){
     : state.modal.type==="timeEntryEditor" ? renderTimeEntryEditorModal(state.modal.entry)
     : state.modal.type==="appGuide" ? renderAppGuideModal(state.modal.assistant)
     : state.modal.type==="appGuideReadOnly" ? renderAppGuideReadOnlyModal()
+    : state.modal.type==="policyBook" ? renderPolicyBookModal()
     : state.modal.type==="manualTimeEntry" ? renderManualTimeEntryModal()
     : state.modal.type==="imageViewer" ? renderImageViewerModal(state.modal.dataUrl)
     : state.modal.type==="orgChartSeat" ? renderOrgChartSeatModal(state.modal.rowId, state.modal.seat)
