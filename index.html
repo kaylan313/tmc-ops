@@ -862,8 +862,7 @@ function effectivePackageHours(client){
 function hoursUsed(clientId){
   const client = state.clients.find(c=>c.id===clientId);
   const period = client ? currentBillingPeriod(client) : null;
-  return state.timeEntries
-    .filter(t=>t.clientId===clientId)
+  return entriesForClient(clientId)
     .filter(t=> !period || (new Date(t.clockIn) >= period.start && new Date(t.clockIn) < period.end))
     .reduce((sum,t)=> sum + entryDurationHours(t), 0);
 }
@@ -940,8 +939,17 @@ function hoursInPeriod(entries, period){
     .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
     .reduce((sum,e)=> sum + entryDurationHours(e), 0);
 }
+// Derives each entry's client from its TASK's current clientId, not the
+// entry's own stored clientId — that field is only a snapshot taken at
+// clock-in time, so if a task's client ever gets reassigned afterward, old
+// entries silently keep the stale client forever and drop out of the real
+// client's totals even though the task now correctly belongs to them.
+function entriesForClient(clientId){
+  const taskIds = new Set(state.tasks.filter(t=>t.clientId===clientId).map(t=>t.id));
+  return state.timeEntries.filter(e=>taskIds.has(e.taskId) || (!e.taskId && e.clientId===clientId));
+}
 function hoursForClientInPeriod(clientId, period){
-  return hoursInPeriod(state.timeEntries.filter(t=>t.clientId===clientId), period);
+  return hoursInPeriod(entriesForClient(clientId), period);
 }
 const CLIENT_HOURS_FILTER_PRESETS = [
   ["week","Last 7 days"], ["twoWeeks","Last 14 days"], ["days30","Last 30 days"],
@@ -1018,10 +1026,12 @@ function buildClientReport(client, window, kind){
   const isPeriodKind = kind==="period" || kind==="lastPeriod";
   const used = isPeriodKind ? hoursForClientInPeriod(client.id, window) : hoursUsed(client.id);
   const pkg = effectivePackageHours(client);
+  const overHours = Math.max(0, used - pkg);
   return {
     kind, client, week: window, inProgress, completed,
     hoursUsed: used, packageHours: pkg,
     hoursRemaining: Math.max(0, pkg - used),
+    overHours, overageAmount: overHours * OVERAGE_RATE,
     billingPeriod: isPeriodKind ? window : currentBillingPeriod(client),
     signerName: "The Modern Concierge Team",
     receipts: client.includeReceiptsInReport ? receiptsInWindow(client, window) : []
@@ -1139,6 +1149,7 @@ function clientReportHtml(report){
         <div class="bar-track"><div class="bar-fill" style="width:${pct}%;"></div></div>
         <div class="bar-ends"><span>0h</span><span>${pkg}h</span></div>
         <div class="bar-pct">${pct}% used</div>
+        ${report.overHours>0 ? `<div class="renews" style="color:#e8b4a8;font-style:normal;">${formatHoursMinutes(report.overHours)} over package — $${report.overageAmount.toFixed(2)} overage at $${OVERAGE_RATE}/hr</div>` : ""}
         ${report.billingPeriod ? `<div class="renews">Billing period ends ${fmtShort(new Date(report.billingPeriod.end.getTime()-1))}</div>` : ""}
       </div>
     </div>
@@ -1166,9 +1177,13 @@ function clientReportCoverNote(report){
   const receiptsLine = report.receipts && report.receipts.length
     ? " This " + (isPeriod ? "period's" : "week's") + " receipts (" + report.receipts.length + ") are included in the attached report."
     : "";
+  const overageLine = report.overHours>0
+    ? " You went over your package by " + formatHoursMinutes(report.overHours) + " this " + (isPeriod?"period":"week")
+      + " — that's a $" + report.overageAmount.toFixed(2) + " overage at $" + OVERAGE_RATE + "/hr."
+    : "";
   return "Hi " + firstName + ",\n\n"
     + "Your " + noun + " report is attached. You have used " + formatHoursMinutes(report.hoursUsed)
-    + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + receiptsLine + "\n\n"
+    + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + overageLine + receiptsLine + "\n\n"
     + "Please let me know if you have any questions regarding this report.\n\n"
     + "The Modern Concierge Team";
 }
@@ -3976,7 +3991,7 @@ function renderClientHoursCard(client){
   const period = clientHoursFilterPeriod(client);
   const periodLabel = CLIENT_HOURS_FILTER_PRESETS.find(([v])=>v===chf.preset)[1];
   const periodWindow = currentBillingPeriod(client);
-  const entries = state.timeEntries.filter(e=>e.clientId===client.id)
+  const entries = entriesForClient(client.id)
     .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end));
   const total = entries.reduce((s,e)=>s+entryDurationHours(e),0);
   const byAssistant = {};
