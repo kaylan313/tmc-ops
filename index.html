@@ -848,11 +848,19 @@ function previousBillingPeriod(client){
 // (e.g. a client buying 20 more hours because they're about to run out) —
 // each entry only counts once `paid` is checked, so hours a client hasn't
 // actually paid for yet don't inflate their package.
-function effectivePackageHours(client){
+// `period` defaults to the client's CURRENT billing period (today), which is
+// right for live views (Membership tab, client portal, Dashboard) — but a
+// report about a PAST period must pass that period in explicitly. Rollover
+// and extra-hours are matched against a specific period's start date, and
+// once "today" has moved on to a later period, the default would silently
+// stop seeing rollover/extra-hours that legitimately applied back then —
+// a last-period report generated after the fact would under-report the
+// package (and therefore overstate overage) for exactly that reason.
+function effectivePackageHours(client, period){
   let total = client.packageHours || 0;
-  const period = currentBillingPeriod(client);
-  if(!period) return total;
-  const periodStartDate = period.start.toISOString().slice(0,10);
+  const p = period || currentBillingPeriod(client);
+  if(!p) return total;
+  const periodStartDate = p.start.toISOString().slice(0,10);
   if(client.rolloverHours && client.rolloverPeriodStart===periodStartDate) total += client.rolloverHours;
   (client.extraHours||[]).forEach(e=>{
     if(e.paid && e.periodStart===periodStartDate) total += (e.hours||0);
@@ -1030,7 +1038,7 @@ function buildClientReport(client, window, kind){
   });
   const isPeriodKind = kind==="period" || kind==="lastPeriod";
   const used = isPeriodKind ? hoursForClientInPeriod(client.id, window) : hoursUsed(client.id);
-  const pkg = effectivePackageHours(client);
+  const pkg = isPeriodKind ? effectivePackageHours(client, window) : effectivePackageHours(client);
   const overHours = Math.max(0, used - pkg);
   return {
     kind, client, week: window, inProgress, completed,
