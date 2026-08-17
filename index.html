@@ -5386,6 +5386,14 @@ function renderOnboarding(){
       </div>
       <div class="small">How we operate, communicate, and represent the brand — client rhythm, task workflow, hours tracking, uniform/apparel, and conduct standards. Come back to this any time.</div>
     </div>
+    ${state.role==="admin" ? `
+    <div class="card">
+      <div class="flex-between">
+        <h3>New Market Playbook</h3>
+        <button class="secondary" onclick="openMarketPlaybook()">View playbook</button>
+      </div>
+      <div class="small">Repeatable steps for opening a new city — when to appoint a local team lead, when growth/onboarding hands off from you, and when to reconsider the whole structure as markets multiply.</div>
+    </div>` : ""}
     <div class="card">
       <h3>New team member checklist</h3>
       ${ONBOARDING_CHECKLIST.map((item,i)=>`
@@ -5994,6 +6002,62 @@ function renderAppGuideReadOnlyModal(){
 function openPolicyBook(){
   state.modal = { type:"policyBook" };
   render();
+}
+const NEW_MARKET_PLAYBOOK_HTML = `
+<h3 style="text-align:center;">New Market Playbook</h3>
+<p><em>Written 8/16 — a repeatable process for opening a new city, so growth doesn't get reinvented (or bottlenecked on one person) every time you expand.</em></p>
+
+<h4>Phase 1 — Launch (0–2 clients, 1 assistant)</h4>
+<ul>
+  <li><strong>Who runs it:</strong> Kaylan (or Tory, once fully ramped back in) personally handles sales consultations and client onboarding/orientation visits in the new market. Early on, someone has to physically establish what "TMC quality" looks like in a brand-new city — that's a founder/director-level job, not something to delegate on day one.</li>
+  <li>Goal: prove out real demand, hire the first local assistant, get the first 1-2 clients fully onboarded correctly.</li>
+  <li>Tag the new market in TMC Ops (client + assistant Market field) as soon as the first client/assistant signs, so it shows up in Dashboard/Team/Client reporting from day one.</li>
+  <li>Watch hours-per-client against standard package math closely — you want to know early if local assistant capacity is going to run short as more clients sign on, not find out after they're already overbooked.</li>
+</ul>
+
+<h4>Phase 2 — Growth (~3–5 clients, 2+ assistants)</h4>
+<ul>
+  <li><strong>Trigger to check:</strong> once a market crosses ~3 clients or gets a 2nd assistant, evaluate appointing a <strong>Local Team Lead</strong> from the assistants already there.</li>
+  <li>Local Team Lead handles: day-to-day coordination between assistants in that market, first-line questions, and — once trained — can start sitting in on, then eventually running, new client orientations themselves.</li>
+  <li>Sales/lead follow-up for new clients in that market can start transitioning from Kaylan to whoever owns growth company-wide (Tory), rather than staying only with Kaylan.</li>
+  <li>Recruiting additional local assistants follows the same process as anywhere else — just sourced locally.</li>
+</ul>
+
+<h4>Phase 3 — Mature (self-sustaining)</h4>
+<ul>
+  <li>Local team lead runs orientations independently; the central growth function (Tory, or eventually a dedicated Expansion Lead) is only looped in for exceptions and escalations.</li>
+  <li>The market runs day-to-day the same way Lafayette does.</li>
+</ul>
+
+<h4>When to reconsider the whole structure</h4>
+<p>If you're opening a 4th or 5th market, revisit whether one Director of Operations can still personally launch every new city — even with local leads handling steady-state. At that point, consider whether Tory should specialize into a dedicated Expansion/Growth role (if she has the appetite for travel and launch work), or whether that becomes a separate hire from day-to-day operations oversight of already-established markets.</p>
+
+<h4>Checklist for opening any new market</h4>
+<ul>
+  <li>☐ First client signed + first assistant hired</li>
+  <li>☐ Assistant and client both tagged with the correct Market in TMC Ops</li>
+  <li>☐ Assistant completes standard onboarding (Independent Contractor Agreement, W9, payroll setup)</li>
+  <li>☐ Client completes standard orientation (contract signed, portal code set, home/business intake — same process as any other city)</li>
+  <li>☐ Revisit at 3 clients / 2 assistants: appoint a Local Team Lead?</li>
+  <li>☐ Revisit at 5+ clients: is growth/onboarding for this market fully handed off from Kaylan/Tory to the local lead?</li>
+</ul>
+`;
+function openMarketPlaybook(){
+  state.modal = { type:"marketPlaybook" };
+  render();
+}
+function renderMarketPlaybookModal(){
+  return `
+    <div class="modal" style="width:640px;">
+      <h3>New Market Playbook</h3>
+      <div class="agreement-text" style="max-height:520px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px 18px;font-size:13px;background:var(--cream);">
+        ${NEW_MARKET_PLAYBOOK_HTML}
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button class="secondary" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  `;
 }
 function renderPolicyBookModal(){
   return `
@@ -6872,6 +6936,7 @@ function renderModal(){
     : state.modal.type==="appGuide" ? renderAppGuideModal(state.modal.assistant)
     : state.modal.type==="appGuideReadOnly" ? renderAppGuideReadOnlyModal()
     : state.modal.type==="policyBook" ? renderPolicyBookModal()
+    : state.modal.type==="marketPlaybook" ? renderMarketPlaybookModal()
     : state.modal.type==="manualTimeEntry" ? renderManualTimeEntryModal()
     : state.modal.type==="imageViewer" ? renderImageViewerModal(state.modal.dataUrl)
     : state.modal.type==="orgChartSeat" ? renderOrgChartSeatModal(state.modal.rowId, state.modal.seat)
