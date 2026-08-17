@@ -2233,22 +2233,30 @@ function renderRenewalsTab(){
 
     <div class="card">
       <h3>Renewal &amp; cancellation notice deadlines</h3>
-      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged. Every active client is listed here — soonest deadline first, anyone still missing term data at the bottom.</div>
-      ${noticeDeadlines.length===0 ? `<div class="small">No active clients yet.</div>` : `
-      <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Client</th><th>Term</th><th>Term ends</th><th>Notice deadline</th><th>30-day period end date</th><th>Status</th></tr></thead>
-        <tbody>
-          ${noticeDeadlines.map(n=>`
-            <tr style="cursor:pointer;" onclick="viewClientMembership('${n.client.id}')">
-              <td>${n.client.name}</td>
-              <td>${n.client.termType ? (TERM_LABELS[n.client.termType]||n.client.termType) : '—'}</td>
-              <td>${n.termEnd ? n.termEnd.toLocaleDateString() : '—'}</td>
-              <td>${n.deadline ? n.deadline.toLocaleDateString() : '—'}</td>
-              <td>${n.periodEnd ? new Date(n.periodEnd.getTime()-1).toLocaleDateString() : '—'}</td>
-              <td>${n.days===null ? `<span style="color:var(--warn);">term/renewal data not set yet</span>` : n.days<0 ? `<span style="color:var(--danger);">deadline passed — will auto-renew</span>` : n.days===0 ? `<span style="color:var(--warn);">today</span>` : `${n.days}d left`}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table></div>`}
+      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged. Grouped by term — soonest deadline first within each group.</div>
+      ${noticeDeadlines.length===0 ? `<div class="small">No active clients yet.</div>` :
+        [...Object.keys(TERM_LABELS), null].map(termType=>{
+          const group = noticeDeadlines.filter(n => (n.client.termType||null) === termType);
+          if(!group.length) return "";
+          const label = termType ? TERM_LABELS[termType] : "No term type set";
+          return `
+          <div style="margin-top:16px;">
+            <div class="small" style="font-weight:600;margin-bottom:6px;">${label} <span style="font-weight:400;">(${group.length})</span></div>
+            <div class="table-scroll"><table class="data-table">
+              <thead><tr><th>Client</th><th>Term ends</th><th>Notice deadline</th><th>30-day period end date</th><th>Status</th></tr></thead>
+              <tbody>
+                ${group.map(n=>`
+                  <tr style="cursor:pointer;" onclick="viewClientMembership('${n.client.id}')">
+                    <td>${n.client.name}</td>
+                    <td>${n.termEnd ? n.termEnd.toLocaleDateString() : '—'}</td>
+                    <td>${n.deadline ? n.deadline.toLocaleDateString() : '—'}</td>
+                    <td>${n.periodEnd ? new Date(n.periodEnd.getTime()-1).toLocaleDateString() : '—'}</td>
+                    <td>${n.days===null ? `<span style="color:var(--warn);">term/renewal data not set yet</span>` : n.days<0 ? `<span style="color:var(--danger);">deadline passed — will auto-renew</span>` : n.days===0 ? `<span style="color:var(--warn);">today</span>` : `${n.days}d left`}</td>
+                  </tr>`).join("")}
+              </tbody>
+            </table></div>
+          </div>`;
+        }).join("")}
     </div>
   `;
 }
