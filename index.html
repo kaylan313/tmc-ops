@@ -1689,14 +1689,21 @@ function termEndDate(client){
   // A manual override always wins — the 30/90/365-day formula is a default,
   // not every real contract lines up with it exactly.
   if(client.termEndOverride) return parseYMD(client.termEndOverride);
-  if(!client.termStartDate || !client.termType || !TERM_LENGTH_DAYS[client.termType]) return null;
-  return new Date(parseYMD(client.termStartDate).getTime() + TERM_LENGTH_DAYS[client.termType]*24*3600000);
+  // Unset termType defaults to "pilot" — matches the Membership tab dropdown,
+  // which already shows Pilot pre-selected for any client with no term type
+  // saved yet. That default was previously only visual (the dropdown looked
+  // set but nothing was actually written), which silently dropped these
+  // clients out of every term-based computation and out of the Renewals
+  // tab's Pilot group entirely.
+  const termType = client.termType || "pilot";
+  if(!client.termStartDate || !TERM_LENGTH_DAYS[termType]) return null;
+  return new Date(parseYMD(client.termStartDate).getTime() + TERM_LENGTH_DAYS[termType]*24*3600000);
 }
 function noticeDeadline(client){
   if(client.noticeDeadlineOverride) return parseYMD(client.noticeDeadlineOverride);
   const end = termEndDate(client);
   if(!end) return null;
-  return new Date(end.getTime() - (TERM_NOTICE_DAYS[client.termType]||0)*24*3600000);
+  return new Date(end.getTime() - (TERM_NOTICE_DAYS[client.termType||"pilot"]||0)*24*3600000);
 }
 function upcomingNoticeDeadlines(windowDays){
   // windowDays === null means "no limit" — every active client, not just
@@ -2084,13 +2091,13 @@ function renderAdminDashboard(){
       ${renewingThisWeek.length ? `<div class="small" style="font-weight:600;margin-bottom:4px;">This week</div>
       ${renewingThisWeek.map(({client,end})=>`
         <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
-          <div>${client.name} <span class="small">(${TERM_LABELS[client.termType]||client.termType||'no term type'})</span></div>
+          <div>${client.name} <span class="small">(${TERM_LABELS[client.termType||'pilot']})</span></div>
           <span class="alert warn" style="margin:0;">${end.toLocaleDateString()}</span>
         </div>`).join("")}` : ""}
       ${renewingNextWeek.length ? `<div class="small" style="font-weight:600;margin:${renewingThisWeek.length?'12px':'0'} 0 4px;">Next week</div>
       ${renewingNextWeek.map(({client,end})=>`
         <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
-          <div>${client.name} <span class="small">(${TERM_LABELS[client.termType]||client.termType||'no term type'})</span></div>
+          <div>${client.name} <span class="small">(${TERM_LABELS[client.termType||'pilot']})</span></div>
           <span class="small">${end.toLocaleDateString()}</span>
         </div>`).join("")}` : ""}
     </div>` : ""}
@@ -2225,7 +2232,7 @@ function renderRenewalsTab(){
           const daysAgo = end ? Math.round((Date.now()-end.getTime())/86400000) : null;
           return `
           <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
-            <div>${c.name} <span class="small">(${TERM_LABELS[c.termType]||c.termType||'no term type'})</span></div>
+            <div>${c.name} <span class="small">(${TERM_LABELS[c.termType||'pilot']})</span></div>
             <span class="alert danger" style="margin:0;">contract ended ${daysAgo!==null?daysAgo+'d ago':''}</span>
           </div>`;
         }).join("")}
@@ -2233,12 +2240,12 @@ function renderRenewalsTab(){
 
     <div class="card">
       <h3>Renewal &amp; cancellation notice deadlines</h3>
-      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged. Grouped by term — soonest deadline first within each group.</div>
+      <div class="small" style="margin-bottom:8px;">Per the service agreement, missing the written-notice deadline means the term auto-renews and the card on file gets charged. Grouped by term — soonest deadline first within each group. A client with no term type picked yet defaults to Pilot, same as the Membership tab.</div>
       ${noticeDeadlines.length===0 ? `<div class="small">No active clients yet.</div>` :
-        [...Object.keys(TERM_LABELS), null].map(termType=>{
-          const group = noticeDeadlines.filter(n => (n.client.termType||null) === termType);
+        Object.keys(TERM_LABELS).map(termType=>{
+          const group = noticeDeadlines.filter(n => (n.client.termType||'pilot') === termType);
           if(!group.length) return "";
-          const label = termType ? TERM_LABELS[termType] : "No term type set";
+          const label = TERM_LABELS[termType];
           return `
           <div style="margin-top:16px;">
             <div class="small" style="font-weight:600;margin-bottom:6px;">${label} <span style="font-weight:400;">(${group.length})</span></div>
