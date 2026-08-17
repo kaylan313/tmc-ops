@@ -2360,8 +2360,11 @@ function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
   const marketFilter = state.clientMarketFilter;
   const matchesMarket = c => marketFilter==="all" || (c.market||"Lafayette")===marketFilter;
-  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c));
-  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c));
+  // Assistants only see clients they're actually assigned to — not the
+  // whole client list. Admin still sees everyone.
+  const matchesAssignment = c => state.role==="admin" || (c.assistantIds||[]).includes(state.currentAssistant?.id);
+  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c) && matchesAssignment(c));
+  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c) && matchesAssignment(c));
   return `
     <div class="flex-between">
       <h2>Clients</h2>
@@ -2418,7 +2421,13 @@ function renderClientCRM(clientId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return `<div class="small">Client not found.</div>`;
   const alert = tierAlert(client);
-  const subtabs = [["profile","Profile"],["tasks","Tasks"],["membership","Membership"],["emailTemplates","Email Templates"]];
+  // Membership (package price, overage $, billing) is admin-only — assistants
+  // don't need to see what a client pays, and shouldn't be the ones editing
+  // billing/contract terms anyway. Hours used/remaining (what they DO need)
+  // is still visible on the Tasks tab's hours card, no $ attached.
+  const subtabs = [["profile","Profile"],["tasks","Tasks"]];
+  if(state.role==="admin") subtabs.push(["membership","Membership"]);
+  subtabs.push(["emailTemplates","Email Templates"]);
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
     <h2>${client.name}</h2>
@@ -2428,7 +2437,7 @@ function renderClientCRM(clientId){
     </div>
     ${state.crmSubTab==="profile" ? renderClientProfile(client) : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
-    ${state.crmSubTab==="membership" ? renderClientMembership(client) : ""}
+    ${state.crmSubTab==="membership" && state.role==="admin" ? renderClientMembership(client) : ""}
     ${state.crmSubTab==="emailTemplates" ? renderClientEmailTemplates(client) : ""}
   `;
 }
