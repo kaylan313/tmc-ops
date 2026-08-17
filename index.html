@@ -2375,11 +2375,8 @@ function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
   const marketFilter = state.clientMarketFilter;
   const matchesMarket = c => marketFilter==="all" || (c.market||"Lafayette")===marketFilter;
-  // Assistants only see clients they're actually assigned to — not the
-  // whole client list. Admin still sees everyone.
-  const matchesAssignment = c => state.role==="admin" || (c.assistantIds||[]).includes(state.currentAssistant?.id);
-  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c) && matchesAssignment(c));
-  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c) && matchesAssignment(c));
+  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c));
+  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c));
   return `
     <div class="flex-between">
       <h2>Clients</h2>
