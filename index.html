@@ -260,6 +260,10 @@ const SEED_SETTINGS = {
 };
 
 const INTERNAL_CLIENT_ID = "internal";
+// Home base (Lafayette) is the implicit default for anyone/anything that
+// existed before markets were tracked — new markets get added here as they
+// open rather than needing a schema change.
+const MARKETS = ["Lafayette","Baton Rouge","Denver","Virtual"];
 const STATUSES = ["To do","Researching","In progress","Pending approval","Done"];
 const TIER_THRESHOLDS = [50,75,90,100];
 // Real rate card from the Personal Assistant Services Agreement — same
@@ -297,6 +301,7 @@ let state = {
   payrollReportPeriod: "period", // "period" (current) or "lastPeriod" — which payroll period the per-assistant report/email download covers
   clientHoursFilter: { preset: "week" },
   kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true },
+  clientMarketFilter: "all",
   // The client request form's fields used to be uncontrolled (no value=
   // binding), so a background render() — from any other client/assistant's
   // unrelated Firestore write, or the 60-second timer refresh — silently
@@ -2350,14 +2355,26 @@ function renderTaskMiniList(tasks){
 }
 
 // --- Clients list ---
+function setClientMarketFilter(val){ state.clientMarketFilter = val; render(); }
 function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
-  const activeClients = state.clients.filter(c=>!isCancelled(c));
-  const pastClients = state.clients.filter(isCancelled);
+  const marketFilter = state.clientMarketFilter;
+  const matchesMarket = c => marketFilter==="all" || (c.market||"Lafayette")===marketFilter;
+  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c));
+  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c));
   return `
-    <div class="flex-between"><h2>Clients</h2><button onclick="openClientEditor(null)">+ New client</button></div>
+    <div class="flex-between">
+      <h2>Clients</h2>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select onchange="setClientMarketFilter(this.value)">
+          <option value="all" ${marketFilter==='all'?'selected':''}>All markets</option>
+          ${MARKETS.map(m=>`<option value="${m}" ${marketFilter===m?'selected':''}>${m}</option>`).join("")}
+        </select>
+        <button onclick="openClientEditor(null)">+ New client</button>
+      </div>
+    </div>
     <div class="card">
-      ${activeClients.length===0 ? `<div class="small">No clients yet.</div>` :
+      ${activeClients.length===0 ? `<div class="small">No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.</div>` :
         activeClients.map(c=>{
           const alert = tierAlert(c);
           const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
@@ -2365,7 +2382,7 @@ function renderClientsList(){
           return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
             <div>
               <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
-              <div class="small">${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
+              <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
                 const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
               }).join(", ")}</div>
             </div>
@@ -3455,6 +3472,11 @@ function renderClientProfile(client){
         <select onchange="updateProfileField('${client.id}','orientationAssistantId',this.value)">
           <option value="">—</option>
           ${state.settings.assistants.map(a=>`<option value="${a.id}" ${p.orientationAssistantId===a.id?'selected':''}>${a.name}</option>`).join("")}
+        </select>
+      </div>
+      <div><label class="small">Market</label>
+        <select onchange="updateClientField('${client.id}','market',this.value)">
+          ${MARKETS.map(m=>`<option value="${m}" ${(client.market||'Lafayette')===m?'selected':''}>${m}</option>`).join("")}
         </select>
       </div>
     </div>
@@ -5378,13 +5400,17 @@ const NEW_HIRE_ONBOARDING = [
 function renderTeamAdmin(){
   const active = state.settings.assistants.filter(a=>a.active!==false);
   const former = state.settings.assistants.filter(a=>a.active===false);
+  const byMarket = {};
+  MARKETS.forEach(m=>byMarket[m]=[]);
+  active.forEach(a=>{ const m = a.market||"Lafayette"; (byMarket[m]=byMarket[m]||[]).push(a); });
   return `
     <div class="flex-between"><h2>Team</h2><button onclick="openEmployeeEditor()">+ Add employee</button></div>
+    ${MARKETS.filter(m=>byMarket[m] && byMarket[m].length).map(m=>`
     <div class="card">
-      <h3>Assistants & access codes</h3>
-      ${active.map(renderAssistantRow).join("")}
+      <h3>${m} <span class="small">(${byMarket[m].length})</span></h3>
+      ${byMarket[m].map(renderAssistantRow).join("")}
       <div class="small" style="margin-top:10px;">Changes save to Firestore <code>settings/access</code>.</div>
-    </div>
+    </div>`).join("")}
     ${former.length ? `
     <div class="card">
       <h3>Former employees</h3>
@@ -5428,6 +5454,11 @@ function renderAssistantRow(a){
         <div><label class="small">Hourly rate ($)</label><input type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
         <div><label class="small">Email (for payroll reports)</label><input type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
+        <div><label class="small">Market</label>
+          <select onchange="updateAssistantField('${a.id}','market',this.value)">
+            ${MARKETS.map(m=>`<option value="${m}" ${(a.market||'Lafayette')===m?'selected':''}>${m}</option>`).join("")}
+          </select>
+        </div>
       </div>
       ${onboarding.length ? `
         <div>
