@@ -946,7 +946,12 @@ function hoursInPeriod(entries, period){
 // client's totals even though the task now correctly belongs to them.
 function entriesForClient(clientId){
   const taskIds = new Set(state.tasks.filter(t=>t.clientId===clientId).map(t=>t.id));
-  return state.timeEntries.filter(e=>taskIds.has(e.taskId) || (!e.taskId && e.clientId===clientId));
+  const existingTaskIds = new Set(state.tasks.map(t=>t.id));
+  return state.timeEntries.filter(e=>{
+    if(taskIds.has(e.taskId)) return true; // task currently belongs to this client
+    if(e.taskId && existingTaskIds.has(e.taskId)) return false; // task exists but belongs to someone else now — don't double-count it there too
+    return e.clientId===clientId; // task was deleted (or entry never had one) — fall back to what was recorded at the time
+  });
 }
 function hoursForClientInPeriod(clientId, period){
   return hoursInPeriod(entriesForClient(clientId), period);
