@@ -2478,7 +2478,10 @@ function renderClientCRM(clientId){
   subtabs.push(["emailTemplates","Email Templates"]);
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
-    <h2>${client.name}</h2>
+    <div class="flex-between" style="align-items:center;">
+      <h2 style="margin:0;">${client.name}</h2>
+      ${state.role==="admin" ? `<button class="secondary" onclick="openClientEditor('${client.id}')">Edit name</button>` : ""}
+    </div>
     ${alert ? `<div class="alert ${alert.level}">${alert.text}</div>` : ""}
     <div class="tabs">
       ${subtabs.map(([key,label])=>`<button class="${state.crmSubTab===key?'active':''}" onclick="state.crmSubTab='${key}';render();">${label}</button>`).join("")}
@@ -6849,7 +6852,7 @@ function saveClient(existingId){
     packageHours: parseFloat(document.getElementById("cf_pkg").value)||0,
     cycleType: document.getElementById("cf_cycle").value,
     assistantIds,
-    notes: [], specialDates: [], vendors: [], inspections: []
+    ...(existingId ? {} : { notes: [], specialDates: [], vendors: [], inspections: [] })
   });
   state.modal = null;
   // Land straight on the new client's onboarding Profile tab — that's the
