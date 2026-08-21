@@ -2492,9 +2492,12 @@ function viewClientEmailTemplates(clientId){
 // derived straight from real data below instead of being a checkbox that
 // could silently fall out of sync with reality.
 const CLIENT_ONBOARDING_COMMON = [
-  { id:"payment_on_file", text:"Payment method on file" },
+  { id:"contract_sent", text:"Contract prepared and sent to client" },
+  { id:"payment_on_file", text:"Payment information collected" },
+  { id:"qb_profile_created", text:"QuickBooks profile created" },
   { id:"first_period_paid", text:"First month/period paid" },
-  { id:"portal_code_sent", text:"Client portal code emailed to client" }
+  { id:"portal_code_sent", text:"Client portal code + how-to guide emailed to client" },
+  { id:"start_date_confirmed", text:"Start date confirmed with client" }
 ];
 const CLIENT_ONBOARDING_HOME = [
   { id:"home_orientation_done", text:"Home orientation visit scheduled or completed" },
@@ -4290,6 +4293,20 @@ function renderClientMembership(client){
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Client portal code</label><input value="${client.portalCode||''}" onchange="updateClientField('${client.id}','portalCode',this.value)"></div>
         <div><label class="small">Client email (for weekly reports)</label><input type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small">Payment method on file — which saved method should we charge for this client?</label>
+        <div class="row" style="margin-top:6px;">
+          <div><label class="small">Method</label>
+            <select onchange="updateClientField('${client.id}','paymentMethodType',this.value)">
+              <option value="" ${!client.paymentMethodType?'selected':''}>— Select —</option>
+              <option value="credit_card" ${client.paymentMethodType==='credit_card'?'selected':''}>Credit Card</option>
+              <option value="ach" ${client.paymentMethodType==='ach'?'selected':''}>ACH</option>
+            </select>
+          </div>
+          <div><label class="small">Reference (e.g. "Visa ending 4242" or "Chase checking ending 1234")</label><input value="${client.paymentMethodNote||''}" onchange="updateClientField('${client.id}','paymentMethodNote',this.value)" placeholder="Card/account nickname or last 4 only"></div>
+        </div>
+        <div class="small" style="margin-top:4px;color:var(--warn);">Reference only — never enter a full card number, CVV, or bank account number here. Look up the actual method in QuickBooks when charging; this field is just so we always know which saved method is current.</div>
       </div>
     </div>
     <div class="card">
