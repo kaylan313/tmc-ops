@@ -300,7 +300,7 @@ let state = {
   payrollFilter: { preset: "period", assistantId: "all", adminOnly: false },
   payrollReportPeriod: "period", // "period" (current) or "lastPeriod" — which payroll period the per-assistant report/email download covers
   clientHoursFilter: { preset: "week" },
-  kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true },
+  kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true, sort: "priority", search: "" },
   clientMarketFilter: "all",
   // The client request form's fields used to be uncontrolled (no value=
   // binding), so a background render() — from any other client/assistant's
@@ -4484,13 +4484,32 @@ function deleteClientNote(clientId, index){
 }
 
 // --- Kanban ---
+const KANBAN_SORT_OPTIONS = [
+  ["priority","Priority first"], ["oldest","Oldest to newest"], ["newest","Newest to oldest"]
+];
+function sortKanbanTasks(tasks, sort){
+  const sorted = tasks.slice();
+  const created = t => t.createdAt ? new Date(t.createdAt).getTime() : 0;
+  if(sort==="oldest") sorted.sort((a,b)=> created(a) - created(b));
+  else if(sort==="newest") sorted.sort((a,b)=> created(b) - created(a));
+  else sorted.sort((a,b)=>{
+    if(!!a.priority !== !!b.priority) return a.priority ? -1 : 1;
+    return created(a) - created(b);
+  });
+  return sorted;
+}
 function renderKanban(){
   const f = state.kanbanFilter;
+  const search = (f.search||"").trim().toLowerCase();
   const filtered = state.tasks.filter(t=>{
     if(f.clientId!=="all" && t.clientId!==f.clientId) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
     if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
     if(f.hideDone && t.status==="Done") return false;
+    if(search){
+      const hay = (t.title||"").toLowerCase() + " #" + (t.taskNumber||"");
+      if(!hay.includes(search)) return false;
+    }
     return true;
   });
   const doneCount = state.tasks.filter(t=>{
@@ -4504,6 +4523,16 @@ function renderKanban(){
   return `
     <div class="flex-between"><h2>Task Board</h2><button onclick="openTaskEditor(null,null)">+ New task</button></div>
     <div class="row" style="margin-bottom:14px;">
+      <div>
+        <label class="small">Search</label>
+        <input id="kanbanSearch" type="text" style="width:200px;" placeholder="Title or #number..." value="${(f.search||'').replace(/"/g,'&quot;')}" oninput="setKanbanFilter('search',this.value)">
+      </div>
+      <div>
+        <label class="small">Sort</label>
+        <select onchange="setKanbanFilter('sort',this.value)">
+          ${KANBAN_SORT_OPTIONS.map(([val,label])=>`<option value="${val}" ${(f.sort||'priority')===val?'selected':''}>${label}</option>`).join("")}
+        </select>
+      </div>
       <div>
         <label class="small">Client</label>
         <select onchange="setKanbanFilter('clientId',this.value)">
@@ -4537,7 +4566,7 @@ function renderKanban(){
       ${visibleStatuses.map(status=>`
         <div class="kanban-col">
           <h4>${status}</h4>
-          ${filtered.filter(t=>t.status===status).map(renderKanbanCard).join("")}
+          ${sortKanbanTasks(filtered.filter(t=>t.status===status), f.sort).map(renderKanbanCard).join("")}
         </div>
       `).join("")}
     </div>
