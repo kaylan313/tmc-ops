@@ -1031,6 +1031,7 @@ function receiptsInWindow(client, window){
 function buildClientReport(client, window, kind){
   const tasks = state.tasks.filter(t=>t.clientId===client.id);
   const inProgress = tasks.filter(t=>t.status==="In progress");
+  const todo = tasks.filter(t=>t.status==="To do");
   const completed = tasks.filter(t=>{
     if(t.status!=="Done" || !t.completedAt) return false;
     const d = new Date(t.completedAt);
@@ -1041,7 +1042,7 @@ function buildClientReport(client, window, kind){
   const pkg = isPeriodKind ? effectivePackageHours(client, window) : effectivePackageHours(client);
   const overHours = Math.max(0, used - pkg);
   return {
-    kind, client, week: window, inProgress, completed,
+    kind, client, week: window, inProgress, todo, completed,
     hoursUsed: used, packageHours: pkg,
     hoursRemaining: Math.max(0, pkg - used),
     overHours, overageAmount: overHours * OVERAGE_RATE,
@@ -1051,7 +1052,7 @@ function buildClientReport(client, window, kind){
   };
 }
 function clientReportHtml(report){
-  const { client, week, inProgress, completed } = report;
+  const { client, week, inProgress, todo, completed } = report;
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
   const recapLabel = isPeriod ? "END-OF-PERIOD RECAP" : "END-OF-WEEK RECAP";
   const recapNoun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
@@ -1065,10 +1066,10 @@ function clientReportHtml(report){
   const pct = pkg ? Math.min(100, Math.round((report.hoursUsed/pkg)*100)) : 0;
 
   const item = (t, itemKind) => `
-    <div class="item ${itemKind==='progress'?'progress':''}">
+    <div class="item ${itemKind==='progress'?'progress':''}${itemKind==='todo'?'todo':''}">
       <div class="item-label">${(t.title||'').toUpperCase()}</div>
       <div class="item-body">${(t.description||t.title||'').trim()}</div>
-      ${isPeriod ? `<div class="item-hours">${formatHoursMinutes(hoursForTask(t.id))} logged</div>` : ""}
+      ${isPeriod && itemKind!=='todo' ? `<div class="item-hours">${formatHoursMinutes(hoursForTask(t.id))} logged</div>` : ""}
     </div>`;
 
   return `<!doctype html><html><head><meta charset="UTF-8"><title>${client.name} — ${isPeriod ? 'Period' : 'Weekly'} Recap</title>
@@ -1093,8 +1094,10 @@ function clientReportHtml(report){
     .section-label{font-size:11px;letter-spacing:2px;color:var(--rose-dark);font-weight:600;margin-bottom:12px;text-transform:uppercase;}
     .item{background:var(--cream);border-left:4px solid var(--ok);padding:14px 16px;margin-bottom:10px;}
     .item.progress{border-left-color:var(--rose-dark);}
+    .item.todo{border-left-color:#8a7a72;}
     .item-label{font-size:12px;letter-spacing:1px;font-weight:600;color:var(--ok);margin-bottom:4px;}
     .item.progress .item-label{color:var(--rose-dark);}
+    .item.todo .item-label{color:#8a7a72;}
     .item-body{font-size:15px;color:var(--text);}
     .item-hours{font-size:12px;color:#8a7a72;margin-top:6px;letter-spacing:0.5px;}
     .hours-box{background:var(--brown-dark);color:var(--cream);border-radius:4px;padding:24px 28px;}
@@ -1137,6 +1140,11 @@ function clientReportHtml(report){
 
       <div class="section-label">In Progress</div>
       ${inProgress.length ? inProgress.map(t=>item(t,'progress')).join("") : `<div class="item-body" style="margin-bottom:16px;">Nothing in progress right now.</div>`}
+
+      ${todo && todo.length ? `
+      <hr>
+      <div class="section-label">On Our List</div>
+      ${todo.map(t=>item(t,'todo')).join("")}` : ""}
 
       ${report.receipts && report.receipts.length ? `
       <hr>
