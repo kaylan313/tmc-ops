@@ -3769,7 +3769,7 @@ function renderClientProfile(client){
     ${renderProfileSection("info", "7. Important Info & Logins", infoBody)}
     ${renderProfileSection("notes", "8. Client Notes", notesBody)}
     ${renderProfileSection("referrals", "9. Referrals", referralsBody)}
-    ${renderProfileSection("contract", "10. Service Agreement", renderContractSectionBody(client))}
+    ${state.role==="admin" ? renderProfileSection("contract", "10. Service Agreement", renderContractSectionBody(client)) : ""}
     ${renderProfileSection("payment", "11. Payment Setup", renderPaymentSectionBody(client))}
   `;
 }
@@ -3779,7 +3779,14 @@ function renderClientProfile(client){
 // verbatim legal text). The drawn signature below is the same "quick
 // in-person acknowledgment" the old Orientation Companion tool used, NOT a
 // legally binding e-signature — see the disclaimer rendered with it.
-function clientAgreementHtml(client){
+function escHtml(s){
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+// paymentInfo is only ever passed at the moment of signing (see
+// saveClientAgreement) — it's never persisted as its own field anywhere.
+// It gets baked into this one-time contractHtml snapshot, which lives only
+// until Heidi downloads it and clears it via clearDownloadedContract.
+function clientAgreementHtml(client, paymentInfo){
   let html = CLIENT_SERVICE_AGREEMENT_HTML;
   const name = (client.name||'').trim() || '_______________';
   html = html.replace('and<br />\n("Client")</p>', 'and<br />\n<strong>'+name+'</strong> ("Client")</p>');
@@ -3794,6 +3801,22 @@ function clientAgreementHtml(client){
   const target = TERM_LINE_MATCH[client.termType || 'pilot'];
   if(target){
     html = html.replace(target, target.slice(0,-4) + ' ✓ <strong>(selected)</strong></p>');
+  }
+  if(paymentInfo && paymentInfo.method==='card'){
+    html = html.replace('<p>Credit/Debit Card (2.99% processing fee applies)</p>', '<p>Credit/Debit Card (2.99% processing fee applies) &#10003; <strong>(selected)</strong></p>');
+    html = html.replace('Card Type (Visa, Mastercard,Discover, American\nExpress):', 'Card Type (Visa, Mastercard,Discover, American\nExpress): <strong>'+escHtml(paymentInfo.cardType)+'</strong>');
+    html = html.replace('Name as Shown on Card:', 'Name as Shown on Card: <strong>'+escHtml(paymentInfo.nameOnCard)+'</strong>');
+    html = html.replace('Card Number:', 'Card Number: <strong>'+escHtml(paymentInfo.cardNumber)+'</strong>');
+    html = html.replace('Expiration Date (MM/YY):', 'Expiration Date (MM/YY): <strong>'+escHtml(paymentInfo.exp)+'</strong>');
+    html = html.replace('Security Code (CVV):', 'Security Code (CVV): <strong>'+escHtml(paymentInfo.cvv)+'</strong>');
+    html = html.replace('Billing Zip Code:', 'Billing Zip Code: <strong>'+escHtml(paymentInfo.zip)+'</strong>');
+  } else if(paymentInfo && paymentInfo.method==='ach'){
+    html = html.replace('<p>ACH Bank Transfer ($10 flat processing fee per billing cycle)</p>', '<p>ACH Bank Transfer ($10 flat processing fee per billing cycle) &#10003; <strong>(selected)</strong></p>');
+    html = html.replace('Account Holder Name:', 'Account Holder Name: <strong>'+escHtml(paymentInfo.achName)+'</strong>');
+    html = html.replace('Bank Name:', 'Bank Name: <strong>'+escHtml(paymentInfo.bankName)+'</strong>');
+    html = html.replace('Account Type “Checking or Savings”:', 'Account Type “Checking or Savings”: <strong>'+escHtml(paymentInfo.acctType)+'</strong>');
+    html = html.replace('Routing Number:', 'Routing Number: <strong>'+escHtml(paymentInfo.routing)+'</strong>');
+    html = html.replace('Account Number:', 'Account Number: <strong>'+escHtml(paymentInfo.acctNumber)+'</strong>');
   }
   return html;
 }
@@ -3822,6 +3845,43 @@ function renderContractSectionBody(client){
       <div style="margin-top:14px;display:flex;align-items:flex-start;gap:8px;">
         <input type="checkbox" id="agree_${client.id}" style="margin-top:3px;">
         <label for="agree_${client.id}" class="small">${isStaff ? "Client has reviewed the agreement above and agrees to the terms, including the selected membership tier and/or Home Reset package." : "I have reviewed the agreement above and agree to the terms, including my selected membership tier and/or Home Reset package."}</label>
+      </div>
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Authorized Payment Method — fills in the Credit Card / ACH Authorization pages of the agreement above</label>
+        <div class="row" style="margin-top:6px;">
+          <div><label class="small">Method</label>
+            <select id="cc_method_${client.id}" onchange="document.getElementById('cc_card_${client.id}').style.display=this.value==='card'?'':'none';document.getElementById('cc_ach_${client.id}').style.display=this.value==='ach'?'':'none';">
+              <option value="card">Credit/Debit Card</option>
+              <option value="ach">ACH Bank Transfer</option>
+            </select>
+          </div>
+        </div>
+        <div id="cc_card_${client.id}" style="margin-top:8px;">
+          <div class="row">
+            <div><label class="small">Card type</label><input id="cc_cardType_${client.id}" placeholder="Visa, Mastercard, Discover, Amex" autocomplete="off"></div>
+            <div><label class="small">Name on card</label><input id="cc_nameOnCard_${client.id}" value="${client.name||''}" autocomplete="off"></div>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <div><label class="small">Card number</label><input id="cc_cardNumber_${client.id}" inputmode="numeric" autocomplete="off" placeholder="Card number"></div>
+            <div><label class="small">Expiration (MM/YY)</label><input id="cc_exp_${client.id}" placeholder="MM/YY" autocomplete="off" style="max-width:100px;"></div>
+            <div><label class="small">CVV</label><input id="cc_cvv_${client.id}" inputmode="numeric" autocomplete="off" style="max-width:80px;"></div>
+            <div><label class="small">Billing zip</label><input id="cc_zip_${client.id}" autocomplete="off" style="max-width:100px;"></div>
+          </div>
+        </div>
+        <div id="cc_ach_${client.id}" style="margin-top:8px;display:none;">
+          <div class="row">
+            <div><label class="small">Account holder name</label><input id="cc_achName_${client.id}" value="${client.name||''}" autocomplete="off"></div>
+            <div><label class="small">Bank name</label><input id="cc_bankName_${client.id}" autocomplete="off"></div>
+            <div><label class="small">Account type</label>
+              <select id="cc_acctType_${client.id}"><option value="Checking">Checking</option><option value="Savings">Savings</option></select>
+            </div>
+          </div>
+          <div class="row" style="margin-top:8px;">
+            <div><label class="small">Routing number</label><input id="cc_routing_${client.id}" inputmode="numeric" autocomplete="off"></div>
+            <div><label class="small">Account number</label><input id="cc_acctNumber_${client.id}" inputmode="numeric" autocomplete="off"></div>
+          </div>
+        </div>
+        <div class="small" style="margin-top:6px;color:var(--warn);">This is written directly into the signed agreement below and is permanently removed from the app the moment ${isStaff ? "it's" : "Heidi has"} downloaded and filed it — it's never stored anywhere else in the system.</div>
       </div>
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Client full name</label><input id="sigName_${client.id}" value="${client.name||''}"></div>
@@ -3891,8 +3951,27 @@ function saveClientAgreement(clientId){
   const name = document.getElementById('sigName_'+clientId).value.trim();
   const date = document.getElementById('sigDate_'+clientId).value;
   if(!name || !date){ alert("Client full name and date are required."); return; }
+  const method = document.getElementById('cc_method_'+clientId).value;
+  const paymentInfo = method==='card' ? {
+    method: 'card',
+    cardType: document.getElementById('cc_cardType_'+clientId).value.trim(),
+    nameOnCard: document.getElementById('cc_nameOnCard_'+clientId).value.trim(),
+    cardNumber: document.getElementById('cc_cardNumber_'+clientId).value.trim(),
+    exp: document.getElementById('cc_exp_'+clientId).value.trim(),
+    cvv: document.getElementById('cc_cvv_'+clientId).value.trim(),
+    zip: document.getElementById('cc_zip_'+clientId).value.trim()
+  } : {
+    method: 'ach',
+    achName: document.getElementById('cc_achName_'+clientId).value.trim(),
+    bankName: document.getElementById('cc_bankName_'+clientId).value.trim(),
+    acctType: document.getElementById('cc_acctType_'+clientId).value,
+    routing: document.getElementById('cc_routing_'+clientId).value.trim(),
+    acctNumber: document.getElementById('cc_acctNumber_'+clientId).value.trim()
+  };
+  const paymentNumberEntered = method==='card' ? paymentInfo.cardNumber : paymentInfo.acctNumber;
+  if(!paymentNumberEntered){ alert("Please enter the client's " + (method==='card' ? "card number" : "bank account number") + " before signing."); return; }
   const signatureDataUrl = csSigCanvas.toDataURL('image/png');
-  const contractHtml = clientAgreementHtml(client);
+  const contractHtml = clientAgreementHtml(client, paymentInfo);
   upsert("clients", clientId, {
     contractSigned: true,
     contractSignedName: name,
