@@ -1682,11 +1682,14 @@ function pruneExpiredSignedDocs(){
     state.settings.assistants = assistants;
     upsert("settings","access", { assistants });
   }
-  state.clients.forEach(client=>{
-    if(client.contractSigned && (client.contractHtml || client.contractSignatureDataUrl) && isDocExpired(parseYMD(client.contractSignedDate))){
-      upsert("clients", client.id, { contractHtml:null, contractSignatureDataUrl:null });
-    }
-  });
+  // Client contracts are NOT auto-purged on a timer — Heidi downloads and
+  // files the signed copy, then explicitly clears it from the app herself
+  // (see clearDownloadedContract). A blind timer previously wiped these
+  // before anyone downloaded them, losing the signed contract entirely.
+}
+function clearDownloadedContract(clientId){
+  if(!confirm("Confirm you've downloaded and saved this contract (QuickBooks + shared drive) before removing it from the app — this can't be undone.")) return;
+  upsert("clients", clientId, { contractHtml:null, contractSignatureDataUrl:null });
 }
 function upcomingReminders(windowDays){
   windowDays = windowDays || 14;
@@ -1878,9 +1881,10 @@ function render(){
   // Agreement section is open and unsigned — (re)bind to it on every render
   // since render() always rebuilds the DOM from scratch, which would
   // otherwise orphan the old canvas's event listeners.
-  if(state.selectedClientId){
-    const canvas = document.getElementById('sigPad_'+state.selectedClientId);
-    if(canvas) initClientSigPad(state.selectedClientId);
+  const sigClientId = state.selectedClientId || (state.role==="client" ? state.currentClientId : null);
+  if(sigClientId){
+    const canvas = document.getElementById('sigPad_'+sigClientId);
+    if(canvas) initClientSigPad(sigClientId);
   }
 }
 window.addEventListener('resize', ()=>{ if(typeof resizeClientSigCanvas==='function') resizeClientSigCanvas(); });
@@ -3795,25 +3799,29 @@ function clientAgreementHtml(client){
 }
 function renderContractSectionBody(client){
   const signed = !!client.contractSigned;
+  const isStaff = state.role!=="client";
   const agreementHtml = signed && client.contractHtml ? client.contractHtml : clientAgreementHtml(client);
   return `
-    <div class="small" style="margin-bottom:10px;">Review this agreement together with the client, then capture their signature below to confirm they've reviewed and agreed to the terms, including the selected membership tier and/or Home Reset package.</div>
+    <div class="small" style="margin-bottom:10px;">${isStaff ? "Review this agreement together with the client, then capture their signature below to confirm they've reviewed and agreed to the terms, including the selected membership tier and/or Home Reset package." : "Please review this agreement, then sign below to confirm you agree to the terms, including your selected membership tier and/or Home Reset package."}</div>
     <div style="max-height:420px;overflow-y:auto;border:1px solid var(--cream-dark);border-radius:8px;padding:14px 16px;background:#fff;font-size:13px;line-height:1.5;">${agreementHtml}</div>
-    <div class="alert warn" style="margin-top:10px;">The signature captured below is a quick in-person acknowledgment for your records — it is not a legally binding e-signature. For the version that legally binds the agreement, route it through a real e-signature tool (DocuSign, HelloSign, PandaDoc) or a wet-ink signature.</div>
+    <div class="alert warn" style="margin-top:10px;">The signature captured below is a quick acknowledgment for our records — it is not a legally binding e-signature. For the version that legally binds the agreement, route it through a real e-signature tool (DocuSign, HelloSign, PandaDoc) or a wet-ink signature.</div>
     ${signed ? `
       <div class="alert ok" style="margin-top:10px;">✓ Signed by <strong>${client.contractSignedName}</strong> on ${client.contractSignedDate ? parseYMD(client.contractSignedDate).toLocaleDateString() : ''}.</div>
       ${client.contractSignatureDataUrl ? `<div style="margin-top:8px;"><img src="${client.contractSignatureDataUrl}" style="max-width:280px;border:1px solid var(--cream-dark);border-radius:6px;background:#fff;" alt="Signature"></div>` : ""}
+      ${isStaff ? `
       ${client.contractHtml || client.contractSignatureDataUrl ? `
-        <div class="small" style="margin-top:8px;">On file — auto-clears in ${Math.max(0, daysUntilDocExpiry(parseYMD(client.contractSignedDate)))}d, download &amp; file it before then.</div>
-      ` : `<div class="small" style="margin-top:8px;">Full text/signature auto-cleared after ${SIGNED_DOC_RETENTION_DAYS} days — the signed record above is kept permanently.</div>`}
+        <div class="small" style="margin-top:8px;">On file — download it, save it in QuickBooks and the shared drive, then remove it from the app.</div>
+      ` : `<div class="small" style="margin-top:8px;">Full text/signature already removed from the app — the signed record above is kept permanently.</div>`}
       <div style="margin-top:10px;display:flex;gap:8px;">
-        <button class="secondary" onclick="downloadClientContract('${client.id}')" ${!client.contractHtml?'disabled title="Full text was auto-cleared — nothing to download"':''}>Download</button>
+        <button class="secondary" onclick="downloadClientContract('${client.id}')" ${!client.contractHtml?'disabled title="Already removed — nothing to download"':''}>Download</button>
+        ${client.contractHtml || client.contractSignatureDataUrl ? `<button class="secondary" onclick="clearDownloadedContract('${client.id}')">Downloaded — remove from app</button>` : ""}
         <button class="secondary" onclick="resetClientAgreement('${client.id}')">Clear signature &amp; re-sign</button>
       </div>
+      ` : ""}
     ` : `
       <div style="margin-top:14px;display:flex;align-items:flex-start;gap:8px;">
         <input type="checkbox" id="agree_${client.id}" style="margin-top:3px;">
-        <label for="agree_${client.id}" class="small">Client has reviewed the agreement above and agrees to the terms, including the selected membership tier and/or Home Reset package.</label>
+        <label for="agree_${client.id}" class="small">${isStaff ? "Client has reviewed the agreement above and agrees to the terms, including the selected membership tier and/or Home Reset package." : "I have reviewed the agreement above and agree to the terms, including my selected membership tier and/or Home Reset package."}</label>
       </div>
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Client full name</label><input id="sigName_${client.id}" value="${client.name||''}"></div>
@@ -6363,6 +6371,10 @@ function renderClientPortal(){
             <div><label class="small">Attach a photo (optional) — a return label, reference image, etc.</label><input type="file" id="reqImage" accept="image/*"></div>
           </div>
           <button style="margin-top:10px;" id="reqSubmitBtn" onclick="submitClientTaskRequest('${client.id}')">Submit request</button>
+        </div>
+        <div class="card">
+          <h3>Service Agreement</h3>
+          ${renderContractSectionBody(client)}
         </div>
         <div class="card">
           <h3>Your membership</h3>
