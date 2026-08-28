@@ -6,10 +6,10 @@
 <title>The Modern Concierge — Ops</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
-
-<!-- Firebase (compat SDK, single-file friendly) -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<!-- Warm up the connection to Firebase's CDN as early as possible so the
+     scripts below (now loaded further down, after body/CSS) spend less
+     time on DNS/TLS handshake once the browser reaches them. -->
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
 
 <style>
   :root{
@@ -194,7 +194,14 @@
 </style>
 </head>
 <body>
-<div id="app"></div>
+<div id="app"><div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;color:#8a7a72;font-size:15px;">Loading The Modern Concierge…</div></div>
+
+<!-- Firebase (compat SDK, single-file friendly) — loaded here, after the
+     CSS and the loading placeholder above, instead of in <head>, so the
+     browser can paint something immediately instead of sitting on a blank
+     white screen while these two scripts download from Google's CDN. -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 
 <script>
 /* =========================================================================
