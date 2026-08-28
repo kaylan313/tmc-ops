@@ -538,7 +538,7 @@ async function boot(){
     // out anything typed into a field that's since been tabbed away from
     // (those values only live in the DOM until Save, nothing holds them
     // through a full re-render except the currently-focused field).
-    subscribe("clients", items=>{ state.clients = items; pruneExpiredSignedDocs(); if(!state.modal) render(); });
+    subscribe("clients", items=>{ state.clients = items; if(!state.modal) render(); });
     subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
     subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
     watchOrientationSync();
@@ -1659,44 +1659,20 @@ function daysUntil(date, now){
   const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   return Math.round((date.getTime() - todayMid.getTime())/86400000);
 }
-// Signed agreements/contracts keep their full text (and, for clients, the
-// signature image) for this many days after signing — long enough to
-// download and file externally — then pruneExpiredSignedDocs() clears just
-// the heavy fields automatically so they don't sit in Firestore forever.
-// The lightweight signed/name/date fields are kept permanently either way,
-// as the record that it happened.
-const SIGNED_DOC_RETENTION_DAYS = 30;
-function daysUntilDocExpiry(signedAtDate){
-  if(!signedAtDate) return null;
-  const expiresAt = new Date(signedAtDate.getTime() + SIGNED_DOC_RETENTION_DAYS*86400000);
-  return daysUntil(expiresAt, new Date());
-}
-function isDocExpired(signedAtDate){
-  if(!signedAtDate) return false;
-  const days = daysUntilDocExpiry(signedAtDate);
-  return days !== null && days <= 0;
-}
-function pruneExpiredSignedDocs(){
-  let assistantsChanged = false;
-  const assistants = state.settings.assistants.map(a=>{
-    if(a.agreementSigned && a.agreementHtml && isDocExpired(new Date(a.agreementSignedAt))){
-      assistantsChanged = true;
-      return { ...a, agreementHtml: null };
-    }
-    return a;
-  });
-  if(assistantsChanged){
-    state.settings.assistants = assistants;
-    upsert("settings","access", { assistants });
-  }
-  // Client contracts are NOT auto-purged on a timer — Heidi downloads and
-  // files the signed copy, then explicitly clears it from the app herself
-  // (see clearDownloadedContract). A blind timer previously wiped these
-  // before anyone downloaded them, losing the signed contract entirely.
-}
+// Neither employee agreements nor client contracts are auto-purged on a
+// timer — a blind timer previously wiped these before anyone had downloaded
+// them, losing the signed document entirely. Whoever handles onboarding
+// downloads and files the signed copy, then explicitly clears it from the
+// app themselves (see clearDownloadedAgreement / clearDownloadedContract).
 function clearDownloadedContract(clientId){
   if(!confirm("Confirm you've downloaded and saved this contract (QuickBooks + shared drive) before removing it from the app — this can't be undone.")) return;
   upsert("clients", clientId, { contractHtml:null, contractSignatureDataUrl:null });
+}
+function clearDownloadedAgreement(assistantId){
+  if(!confirm("Confirm you've downloaded and filed this signed agreement before removing it from the app — this can't be undone.")) return;
+  const assistants = state.settings.assistants.map(a=> a.id===assistantId ? { ...a, agreementHtml:null } : a);
+  state.settings.assistants = assistants;
+  upsert("settings","access", { assistants });
 }
 function upcomingReminders(windowDays){
   windowDays = windowDays || 14;
@@ -5651,7 +5627,6 @@ function renderAssistantRow(a){
   const doneCount = onboarding.filter(i=>i.done).length;
   const stillOnFile = a.agreementSigned && a.agreementHtml;
   const purged = a.agreementSigned && !a.agreementHtml;
-  const expiresIn = stillOnFile ? daysUntilDocExpiry(new Date(a.agreementSignedAt)) : null;
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
       <div class="flex-between">
@@ -5665,8 +5640,9 @@ function renderAssistantRow(a){
         <div class="small" style="display:flex;align-items:center;gap:10px;">
           ${stillOnFile ? `
             <button class="secondary" style="padding:2px 8px;" onclick="downloadEmployeeAgreement('${a.id}')">Download agreement</button>
-            <span>on file — auto-clears in ${expiresIn!==null ? Math.max(0,expiresIn) : '?'}d, download &amp; file it before then</span>
-          ` : purged ? `<span>full text auto-cleared after 30 days — signed ${a.agreementSignedAt?new Date(a.agreementSignedAt).toLocaleDateString():''} by ${a.agreementSignedName||a.name} is still on record</span>` : ""}
+            <button class="secondary" style="padding:2px 8px;" onclick="clearDownloadedAgreement('${a.id}')">Downloaded — remove from app</button>
+            <span>on file — download it, file it, then remove it from the app</span>
+          ` : purged ? `<span>full text removed from the app — signed ${a.agreementSignedAt?new Date(a.agreementSignedAt).toLocaleDateString():''} by ${a.agreementSignedName||a.name} is still on record</span>` : ""}
         </div>` : ""}
       <div class="row">
         <div><label class="small">Hourly rate ($)</label><input type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
