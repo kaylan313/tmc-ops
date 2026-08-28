@@ -73,7 +73,7 @@
     background:transparent;color:var(--cream);text-align:left;padding:10px 12px;border-radius:8px;
   }
   .sidebar button.active,.sidebar button:hover{background:rgba(255,255,255,0.12);}
-  .sidebar .who{margin-top:auto;font-size:12px;opacity:.7;padding:10px 12px;}
+  .sidebar .who{font-size:12px;opacity:.7;padding:8px 12px 14px;border-bottom:1px solid rgba(255,255,255,0.12);margin-bottom:6px;}
   .main{flex:1;padding:26px 32px;overflow-y:auto;}
   .card{
     background:#fff;border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);margin-bottom:16px;
@@ -1944,12 +1944,12 @@ function renderAppShell(){
           <div class="logo">TMC Ops</div>
           <button class="nav-toggle" onclick="toggleMobileNav()">☰</button>
         </div>
+        <div class="who">
+          ${state.role==="admin" ? "Admin" : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
+          <div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div>
+        </div>
         <div class="nav-links">
           ${tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("")}
-          <div class="who">
-            ${state.role==="admin" ? "Admin" : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
-            <div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div>
-          </div>
         </div>
       </div>
       <div class="main" id="main">
@@ -2454,7 +2454,11 @@ function renderClientsList(){
     </div>
     ${pastClients.length ? `
     <div class="card">
-      <h3>Past clients</h3>
+      <div class="flex-between" style="cursor:pointer;" onclick="state.showPastClients=!state.showPastClients;render();">
+        <h3 style="margin:0;">Past clients (${pastClients.length})</h3>
+        <span class="small">${state.showPastClients ? "Hide ▲" : "Show ▼"}</span>
+      </div>
+      ${state.showPastClients ? `
       ${pastClients.map(c=>`
         <div class="list-item">
           <div><strong>${c.name}</strong> <span class="small">· cancelled${c.cancelledDate ? " " + parseYMD(c.cancelledDate).toLocaleDateString() : ""}</span></div>
@@ -2465,6 +2469,7 @@ function renderClientsList(){
         </div>
       `).join("")}
       <div class="small" style="margin-top:6px;">Their past tasks and notes stay on record.</div>
+      ` : ""}
     </div>` : ""}
   `;
 }
@@ -5621,7 +5626,11 @@ function renderTeamAdmin(){
     </div>`).join("")}
     ${former.length ? `
     <div class="card">
-      <h3>Former employees</h3>
+      <div class="flex-between" style="cursor:pointer;" onclick="state.showFormerEmployees=!state.showFormerEmployees;render();">
+        <h3 style="margin:0;">Former employees (${former.length})</h3>
+        <span class="small">${state.showFormerEmployees ? "Hide ▲" : "Show ▼"}</span>
+      </div>
+      ${state.showFormerEmployees ? `
       ${former.map(a=>`
         <div class="list-item">
           <div>${a.name}</div>
@@ -5629,6 +5638,7 @@ function renderTeamAdmin(){
         </div>
       `).join("")}
       <div class="small" style="margin-top:6px;">Their past tasks and time entries stay on record; they just can't log in or be assigned new work.</div>
+      ` : ""}
     </div>` : ""}
     <div class="card">
       <h3>Admin passcode</h3>
