@@ -64,6 +64,14 @@ Internal operations platform for The Modern Concierge (TMC), a virtual assistant
 - `clickup_filter_tasks` with `list_ids` arrays and `include_closed: True`, paginating pages 0–3, is the reliable pattern
 - Previously imported: 10 team members, ~20 clients, 169 tasks (filtered to the last two 30-day periods via status date-range labels), ~127 hours of logged time matched via ClickUp task IDs embedded in task notes
 
+## Backend (Cloud Functions)
+
+- `functions/` — the one exception to "single-file app": auto-files signed client contracts and employee agreements into Google Drive so nobody has to manually download + re-upload them. See `functions/index.js` for the two triggers (`fileClientContractToDrive`, `fileEmployeeAgreementToDrive`) and their doc comments for exactly how/when they fire.
+- Requires the Blaze (pay-as-you-go) Firebase plan, the Drive API enabled, and the Cloud Function's runtime service account shared as Editor on the "Clients" and "TMC Employees" Drive folders.
+- Config (`CLIENTS_FOLDER_ID`, `EMPLOYEES_FOLDER_ID`) lives in `functions/.env.modern-co-dashboard` (gitignored, not committed — folder IDs aren't secret but there's no reason to hardcode them in source).
+- Deploy with `firebase deploy --only functions` from the `tmc-ops/` root (requires `firebase login` once, interactively, on whichever machine deploys).
+- If Drive is unreachable for any reason, the functions log the error and leave the signed doc in Firestore untouched — the manual Download / "Downloaded — remove from app" buttons in the app remain a working fallback.
+
 ## Working Conventions
 
 - This is a single-file app — keep it that way unless explicitly asked to split it up.

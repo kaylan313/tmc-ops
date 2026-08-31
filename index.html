@@ -3820,8 +3820,10 @@ function renderContractSectionBody(client){
       <div class="alert ok" style="margin-top:10px;">✓ Signed by <strong>${client.contractSignedName}</strong> on ${client.contractSignedDate ? parseYMD(client.contractSignedDate).toLocaleDateString() : ''}.</div>
       ${client.contractSignatureDataUrl ? `<div style="margin-top:8px;"><img src="${client.contractSignatureDataUrl}" style="max-width:280px;border:1px solid var(--cream-dark);border-radius:6px;background:#fff;" alt="Signature"></div>` : ""}
       ${isStaff ? `
-      ${client.contractHtml || client.contractSignatureDataUrl ? `
-        <div class="small" style="margin-top:8px;">On file — download it, save it in QuickBooks and the shared drive, then remove it from the app.</div>
+      ${client.driveContractUrl ? `
+        <div class="small" style="margin-top:8px;">✓ Filed automatically to Google Drive — <a href="${client.driveContractUrl}" target="_blank" rel="noopener">open in Drive</a>.</div>
+      ` : client.contractHtml || client.contractSignatureDataUrl ? `
+        <div class="small" style="margin-top:8px;">On file — download it, save it in QuickBooks and the shared drive, then remove it from the app. (Filing to Drive automatically — this should clear on its own within a minute or two once that's set up; if it's been longer, use the manual buttons below.)</div>
       ` : `<div class="small" style="margin-top:8px;">Full text/signature already removed from the app — the signed record above is kept permanently.</div>`}
       <div style="margin-top:10px;display:flex;gap:8px;">
         <button class="secondary" onclick="downloadClientContract('${client.id}')" ${!client.contractHtml?'disabled title="Already removed — nothing to download"':''}>Download</button>
@@ -5638,7 +5640,9 @@ function renderAssistantRow(a){
       </div>
       ${a.agreementSigned ? `
         <div class="small" style="display:flex;align-items:center;gap:10px;">
-          ${stillOnFile ? `
+          ${a.driveAgreementUrl ? `
+            <span>✓ Filed automatically to Google Drive — <a href="${a.driveAgreementUrl}" target="_blank" rel="noopener">open in Drive</a>.</span>
+          ` : stillOnFile ? `
             <button class="secondary" style="padding:2px 8px;" onclick="downloadEmployeeAgreement('${a.id}')">Download agreement</button>
             <button class="secondary" style="padding:2px 8px;" onclick="clearDownloadedAgreement('${a.id}')">Downloaded — remove from app</button>
             <span>on file — download it, file it, then remove it from the app</span>
