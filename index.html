@@ -278,13 +278,24 @@ const TIER_THRESHOLDS = [50,75,90,100];
 // picks ONE package tier — Home Reset is an alternative tier, not an add-on
 // stacked on top of an hourly membership — so it shares the exact same
 // packageHours/packagePrice/cycle machinery as the hourly tiers below.
+// Pricing restructure, Sept 2026 (see TMC-Pricing-Reference.docx). Old
+// tiers are kept below (marked Legacy) rather than removed — matching is by
+// hours+price, not key, so grandfathered clients already on a since-removed
+// tier keep showing their real tier name instead of falling back to
+// "Custom." Only offer non-legacy tiers to new clients.
 const PACKAGE_TIERS = [
-  { key:"m20", label:"Membership — 20 hrs/mo", hours:20, price:950 },
-  { key:"m40", label:"Membership — 40 hrs/mo", hours:40, price:1700 },
-  { key:"m60", label:"Membership — 60 hrs/mo", hours:60, price:2400 },
-  { key:"m80", label:"Membership — 80 hrs/mo", hours:80, price:3200 },
+  { key:"pilot20", label:"Pilot — 20 hrs/mo (1-month only)", hours:20, price:950 },
+  { key:"ongoing25", label:"Ongoing 25 — 25 hrs/mo", hours:25, price:1150 },
+  { key:"ongoing35", label:"Ongoing 35 — 35 hrs/mo (Most Popular)", hours:35, price:1600 },
+  { key:"ongoing45", label:"Ongoing 45 — 45 hrs/mo", hours:45, price:2000 },
+  { key:"ongoing60", label:"Ongoing 60 — 60 hrs/mo", hours:60, price:2400 },
+  { key:"ongoing80", label:"Ongoing 80 — 80 hrs/mo", hours:80, price:3200 },
+  { key:"legacy_m40", label:"Legacy — 40 hrs/mo (grandfathered only)", hours:40, price:1700 },
   { key:"reset_refresh", label:"Home Reset — The Refresh", hours:6, price:325 },
-  { key:"reset_restore", label:"Home Reset — The Restore", hours:12, price:575 }
+  { key:"reset_restore", label:"Home Reset — The Restore (Most Popular)", hours:12, price:575 },
+  { key:"setup_unpack", label:"New Home Setup — The Unpack", hours:8, price:550 },
+  { key:"setup_settle", label:"New Home Setup — The Settle (Most Popular)", hours:16, price:950 },
+  { key:"setup_fullmovein", label:"New Home Setup — The Full Move-In (Assistant + Handyman)", hours:30, price:2500 }
 ];
 const OVERAGE_RATE = 50; // $/hr beyond the package
 
@@ -4313,7 +4324,7 @@ function renderClientMembership(client){
   const overage = overageFor(client);
   const pkg = effectivePackageHours(client);
   const currentTier = PACKAGE_TIERS.find(t=>t.hours===client.packageHours && t.price===client.packagePrice);
-  const isHomeReset = currentTier && currentTier.key.startsWith("reset_");
+  const isHomeReset = currentTier && (currentTier.key.startsWith("reset_") || currentTier.key.startsWith("setup_"));
   const period = currentBillingPeriod(client);
   const periodStartDate = period ? period.start.toISOString().slice(0,10) : null;
   const rolloverActive = !!(periodStartDate && client.rolloverHours && client.rolloverPeriodStart===periodStartDate);
