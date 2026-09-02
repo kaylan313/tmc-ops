@@ -299,6 +299,30 @@ const PACKAGE_TIERS = [
 ];
 const OVERAGE_RATE = 50; // $/hr beyond the package
 
+// Business Systems & Software add-ons (Sept 2026 pricing doc) — a separate
+// project/flat-fee tracking system from the hourly PACKAGE_TIERS above.
+// Offered to existing recurring/hourly-package clients as add-ons, not sold
+// standalone. flatFee is null for the two "custom quoted, from $X" tiers —
+// noteDefault carries the "from $X" figure as a starting point, but the
+// actual fee is always entered per-client since those are individually quoted.
+const ADDON_CATALOG = [
+  { key:"sop_standard", category:"SOP", label:"Standard SOP", flatFee:450, maintenance:0, note:"Single process, single system" },
+  { key:"sop_complex", category:"SOP", label:"Complex SOP", flatFee:750, maintenance:0, note:"Multi-step, cross-system, incl. research/interviews" },
+  { key:"build_small", category:"Software Build", label:"Small Build", flatFee:3500, maintenance:150, note:"Single-purpose tool (dashboard, tracker, booking system)" },
+  { key:"build_medium", category:"Software Build", label:"Medium Build", flatFee:7500, maintenance:250, note:"Multi-feature system, several integrations" },
+  { key:"build_large", category:"Software Build", label:"Large Build", flatFee:null, noteDefault:15000, maintenance:450, note:"Full consolidation platform — from $15,000, custom quoted" },
+  { key:"ai_quick", category:"AI Integration", label:"Quick Automation", flatFee:650, maintenance:100, note:"Single automated workflow" },
+  { key:"ai_workflow", category:"AI Integration", label:"AI Workflow Build", flatFee:2200, maintenance:200, note:"Multi-step automation, AI decision-making, 3–5 systems" },
+  { key:"ai_custom", category:"AI Integration", label:"Custom AI System", flatFee:null, noteDefault:4500, maintenance:350, note:"Full AI agent/integration across multiple platforms — from $4,500, custom quoted" },
+  { key:"product_simple_license", category:"Productized Software", label:"Simple — License Only", flatFee:1500, maintenance:0, note:"Full source code + setup docs, no support" },
+  { key:"product_simple_custom", category:"Productized Software", label:"Simple — Customize-For-You", flatFee:2700, maintenance:0, note:"License $1,500 + customization $1,200" },
+  { key:"product_mid_license", category:"Productized Software", label:"Mid — License Only", flatFee:3000, maintenance:0, note:"Full source code + setup docs, no support" },
+  { key:"product_mid_custom", category:"Productized Software", label:"Mid — Customize-For-You", flatFee:5500, maintenance:0, note:"License $3,000 + customization $2,500" },
+  { key:"product_complex_license", category:"Productized Software", label:"Complex — License Only", flatFee:5500, maintenance:0, note:"Full source code + setup docs, no support" },
+  { key:"product_complex_custom", category:"Productized Software", label:"Complex — Customize-For-You", flatFee:9500, maintenance:0, note:"License $5,500 + customization $4,000" }
+];
+const ADDON_STATUSES = ["Proposed","Active","Completed","Cancelled"];
+
 // ---- 3. App state ----
 let state = {
   view: "login",
@@ -1921,7 +1945,7 @@ function promptLogin(kind){
 
 function renderAppShell(){
   const tabs = state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
     : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
 
   app.innerHTML = `
@@ -1959,6 +1983,7 @@ function renderMain(){
     case "payroll": return state.role==="admin" ? renderPayrollTool() : "";
     case "reports": return state.role==="admin" ? renderReportsTab() : "";
     case "renewals": return state.role==="admin" ? renderRenewalsTab() : "";
+    case "addons": return state.role==="admin" ? renderAddOnsTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
     case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
@@ -2251,6 +2276,48 @@ function renderAdminDashboard(){
 
 // --- Renewals & membership info (admin only, moved off the dashboard so it
 // stays quick-glance — full detail lives here instead) ---
+function allClientAddOns(){
+  const rows = [];
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).forEach(client=>{
+    (client.addOns||[]).forEach(addOn=>rows.push({ client, addOn }));
+  });
+  return rows;
+}
+function renderAddOnsTab(){
+  const rows = allClientAddOns();
+  const activeMaintenanceTotal = rows
+    .filter(r=>r.addOn.status==="Active" && r.addOn.monthlyMaintenance>0 && r.addOn.maintenanceActive!==false)
+    .reduce((sum,r)=>sum+r.addOn.monthlyMaintenance,0);
+  const statusFilter = state.addOnsStatusFilter || "all";
+  const filtered = statusFilter==="all" ? rows : rows.filter(r=>r.addOn.status===statusFilter);
+  return `
+    <h2>Business Systems &amp; Software Add-Ons</h2>
+    <div class="small" style="margin-bottom:14px;">Company-wide view of every SOP, custom build, AI automation, and productized software add-on across all clients. Add or edit one from a client's Membership tab.</div>
+    <div class="stat-row">
+      <div class="stat-tile"><div class="stat-label">Total add-ons</div><div class="stat-value">${rows.length}</div></div>
+      <div class="stat-tile"><div class="stat-label">Active monthly maintenance</div><div class="stat-value">$${activeMaintenanceTotal.toFixed(0)}</div></div>
+    </div>
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:10px;">
+        <h3 style="margin:0;">All add-ons</h3>
+        <select onchange="state.addOnsStatusFilter=this.value;render();">
+          <option value="all" ${statusFilter==='all'?'selected':''}>All statuses</option>
+          ${ADDON_STATUSES.map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join("")}
+        </select>
+      </div>
+      ${filtered.length===0 ? `<div class="small">No add-ons${statusFilter!=='all'?' with status '+statusFilter:''} yet.</div>` :
+        filtered.map(({client,addOn})=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+          <div>
+            <strong>${client.name}</strong> — ${addOn.category}: ${addOn.label}
+            <div class="small">$${(addOn.flatFee||0).toFixed(0)} flat${addOn.monthlyMaintenance>0 ? ` + $${addOn.monthlyMaintenance}/mo maintenance${addOn.maintenanceActive===false?' (paused)':''}` : ''} · added ${addOn.addedDate ? parseYMD(addOn.addedDate).toLocaleDateString() : '—'}</div>
+          </div>
+          <span class="badge" style="background:${addOn.status==='Active'?'var(--ok)':addOn.status==='Proposed'?'var(--warn)':addOn.status==='Cancelled'?'var(--danger)':'#8a7a72'};">${addOn.status}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
 function renderRenewalsTab(){
   const noticeDeadlines = upcomingNoticeDeadlines(null);
   const termUpdateClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c));
@@ -4449,7 +4516,97 @@ function renderClientMembership(client){
       </div>
       <div class="small">${(client.assistantIds||[]).map(assistantName).join(", ") || "No assistant assigned yet."}</div>
     </div>
+    ${renderClientAddOnsSection(client)}
   `;
+}
+function renderClientAddOnsSection(client){
+  const addOns = client.addOns || [];
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <h3>Business Systems &amp; Software Add-Ons</h3>
+        <button class="secondary" onclick="addClientAddOn('${client.id}')">+ Add add-on</button>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Project-based add-ons (SOPs, custom builds, AI automations, productized software) — separate from this client's hourly package above. Offered to existing recurring clients, not sold standalone.</div>
+      ${addOns.length ? addOns.map(a=>renderAddOnRow(client.id, a)).join("") : `<div class="small">No add-ons yet.</div>`}
+    </div>
+  `;
+}
+function renderAddOnRow(clientId, a){
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <div class="row">
+        <div><label class="small">Category</label>
+          <select onchange="updateAddOnCatalog('${clientId}','${a.id}',this.value)">
+            ${ADDON_CATALOG.map(c=>`<option value="${c.key}" ${a.catalogKey===c.key?'selected':''}>${c.category} — ${c.label}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Status</label>
+          <select onchange="updateAddOnField('${clientId}','${a.id}','status',this.value)">
+            ${ADDON_STATUSES.map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div><label class="small">Flat fee ($)</label><input type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Monthly maintenance ($)</label><input type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Date added</label><input type="date" value="${a.addedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','addedDate',this.value)"></div>
+      </div>
+      ${a.monthlyMaintenance>0 ? `
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <input type="checkbox" ${a.maintenanceActive!==false?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','maintenanceActive',this.checked)">
+        Monthly maintenance currently active/billing
+      </label>` : ""}
+      <div><label class="small">Notes</label><textarea onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
+      <div><button class="secondary" onclick="removeClientAddOn('${clientId}','${a.id}')">Remove</button></div>
+    </div>
+  `;
+}
+function addClientAddOn(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const catalogItem = ADDON_CATALOG[0];
+  const addOn = {
+    id: newId("addon"),
+    catalogKey: catalogItem.key,
+    category: catalogItem.category,
+    label: catalogItem.label,
+    flatFee: catalogItem.flatFee || catalogItem.noteDefault || 0,
+    monthlyMaintenance: catalogItem.maintenance || 0,
+    maintenanceActive: true,
+    status: "Proposed",
+    addedDate: new Date().toISOString().slice(0,10),
+    notes: catalogItem.note || ""
+  };
+  upsert("clients", clientId, { addOns: [...(client.addOns||[]), addOn] });
+}
+function updateAddOnCatalog(clientId, addOnId, catalogKey){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const catalogItem = ADDON_CATALOG.find(c=>c.key===catalogKey);
+  if(!catalogItem) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? {
+    ...a,
+    catalogKey: catalogItem.key,
+    category: catalogItem.category,
+    label: catalogItem.label,
+    flatFee: catalogItem.flatFee || catalogItem.noteDefault || 0,
+    monthlyMaintenance: catalogItem.maintenance || 0,
+    notes: catalogItem.note || a.notes
+  } : a);
+  upsert("clients", clientId, { addOns });
+}
+function updateAddOnField(clientId, addOnId, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, [field]: value } : a);
+  upsert("clients", clientId, { addOns });
+}
+function removeClientAddOn(clientId, addOnId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!confirm("Remove this add-on from the client's record?")) return;
+  upsert("clients", clientId, { addOns: (client.addOns||[]).filter(a=>a.id!==addOnId) });
 }
 function updateClientField(id, field, value){ upsert("clients", id, { [field]: value }); }
 // One date drives everything: setting the contract/term start date also
