@@ -2521,18 +2521,29 @@ function renderLeadOrganizerTab(){
   const statusFilter = state.leadsStatusFilter || "all";
   const filtered = statusFilter==="all" ? leads : leads.filter(l=>l.status===statusFilter);
   const sorted = filtered.slice().sort((a,b)=> (a.nextFollowUpDate||'9999') < (b.nextFollowUpDate||'9999') ? -1 : 1);
-  const sourceCounts = {};
-  LEAD_SOURCES.forEach(s=>sourceCounts[s]=0);
-  leads.forEach(l=>{ const s = l.source||"Other"; sourceCounts[s] = (sourceCounts[s]||0)+1; });
-  const pausedClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.clientStatus==="paused");
+  const leadSourceCounts = {};
+  const clientSourceCounts = {};
+  LEAD_SOURCES.forEach(s=>{ leadSourceCounts[s]=0; clientSourceCounts[s]=0; });
+  leads.forEach(l=>{ const s = l.source||"Other"; leadSourceCounts[s] = (leadSourceCounts[s]||0)+1; });
+  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
+  realClients.forEach(c=>{ if(c.leadSource) clientSourceCounts[c.leadSource] = (clientSourceCounts[c.leadSource]||0)+1; });
+  const pausedClients = realClients.filter(c=>c.clientStatus==="paused");
   return `
     <h2>Lead Organizer</h2>
     <div class="small" style="margin-bottom:14px;">Prospects to follow up with, paused clients to win back, and where people are finding out about us.</div>
 
     <div class="card">
-      <h3>How people are finding us</h3>
+      <h3>How people are finding us — leads not yet converted</h3>
       <div class="stat-row">
-        ${LEAD_SOURCES.map(s=>`<div class="stat-tile"><div class="stat-label">${s}</div><div class="stat-value">${sourceCounts[s]}</div></div>`).join("")}
+        ${LEAD_SOURCES.map(s=>`<div class="stat-tile"><div class="stat-label">${s}</div><div class="stat-value">${leadSourceCounts[s]}</div></div>`).join("")}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>How signed clients found us</h3>
+      <div class="small" style="margin-bottom:8px;">Set per-client on the Profile tab (Client &amp; Visit Details). ${realClients.filter(c=>!c.leadSource).length} of ${realClients.length} clients don't have a source set yet.</div>
+      <div class="stat-row">
+        ${LEAD_SOURCES.map(s=>`<div class="stat-tile"><div class="stat-label">${s}</div><div class="stat-value">${clientSourceCounts[s]}</div></div>`).join("")}
       </div>
     </div>
 
@@ -3906,6 +3917,12 @@ function renderClientProfile(client){
       <div><label class="small">Market</label>
         <select onchange="updateClientField('${client.id}','market',this.value)">
           ${MARKETS.map(m=>`<option value="${m}" ${(client.market||'Lafayette')===m?'selected':''}>${m}</option>`).join("")}
+        </select>
+      </div>
+      <div><label class="small">How did you hear about us?</label>
+        <select onchange="updateClientField('${client.id}','leadSource',this.value)">
+          <option value="">—</option>
+          ${LEAD_SOURCES.map(s=>`<option value="${s}" ${client.leadSource===s?'selected':''}>${s}</option>`).join("")}
         </select>
       </div>
     </div>
