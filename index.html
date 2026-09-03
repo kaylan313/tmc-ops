@@ -327,6 +327,12 @@ const ADDON_CATALOG = [
 ];
 const ADDON_STATUSES = ["Proposed","Active","Completed","Cancelled"];
 
+// Lead Organizer — prospects to follow up with, plus paused clients to
+// re-engage. A separate top-level collection (not nested under a client)
+// since most leads never become one.
+const LEAD_SOURCES = ["Facebook","Instagram","TikTok","Word of Mouth","Search Engine","Other"];
+const LEAD_STATUSES = ["New","Contacted","Follow-up Needed","Not Interested","Converted"];
+
 // ---- 3. App state ----
 let state = {
   view: "login",
@@ -338,6 +344,7 @@ let state = {
   clients: [],
   tasks: [],
   timeEntries: [],
+  leads: [],
   activeTab: "dashboard",
   crmSubTab: "tasks",
   selectedClientId: null,
@@ -580,6 +587,7 @@ async function boot(){
     subscribe("clients", items=>{ state.clients = items; if(!state.modal) render(); });
     subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
     subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
+    subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
     watchOrientationSync();
   }
 
@@ -1953,7 +1961,7 @@ function renderAppShell(){
   const tabs = isContentCreator
     ? [["content","Content Calendar"]]
     : state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
     : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
 
   app.innerHTML = `
@@ -1993,6 +2001,7 @@ function renderMain(){
     case "renewals": return state.role==="admin" ? renderRenewalsTab() : "";
     case "addons": return state.role==="admin" ? renderAddOnsTab() : "";
     case "content": return (state.role==="admin" || (state.currentAssistant && state.currentAssistant.isContentCreator)) ? renderContentCalendarTab() : "";
+    case "leads": return state.role==="admin" ? renderLeadOrganizerTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
     case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
@@ -2499,6 +2508,105 @@ function updateContentGoal(id, field, value){
 }
 function removeContentGoal(id){
   upsert("settings","access", { contentGoals: (state.settings.contentGoals||[]).filter(g=>g.id!==id) });
+}
+// --- Lead Organizer (admin only) ---
+function renderLeadOrganizerTab(){
+  const leads = state.leads || [];
+  const statusFilter = state.leadsStatusFilter || "all";
+  const filtered = statusFilter==="all" ? leads : leads.filter(l=>l.status===statusFilter);
+  const sorted = filtered.slice().sort((a,b)=> (a.nextFollowUpDate||'9999') < (b.nextFollowUpDate||'9999') ? -1 : 1);
+  const sourceCounts = {};
+  LEAD_SOURCES.forEach(s=>sourceCounts[s]=0);
+  leads.forEach(l=>{ const s = l.source||"Other"; sourceCounts[s] = (sourceCounts[s]||0)+1; });
+  const pausedClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.clientStatus==="paused");
+  return `
+    <h2>Lead Organizer</h2>
+    <div class="small" style="margin-bottom:14px;">Prospects to follow up with, paused clients to win back, and where people are finding out about us.</div>
+
+    <div class="card">
+      <h3>How people are finding us</h3>
+      <div class="stat-row">
+        ${LEAD_SOURCES.map(s=>`<div class="stat-tile"><div class="stat-label">${s}</div><div class="stat-value">${sourceCounts[s]}</div></div>`).join("")}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Leads &amp; Prospects</h3>
+        <div style="display:flex;gap:8px;">
+          <select onchange="state.leadsStatusFilter=this.value;render();">
+            <option value="all" ${statusFilter==='all'?'selected':''}>All statuses</option>
+            ${LEAD_STATUSES.map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+          <button onclick="addLead()">+ Add lead</button>
+        </div>
+      </div>
+      ${sorted.length ? sorted.map(renderLeadRow).join("") : `<div class="small">No leads${statusFilter!=='all'?' with status '+statusFilter:''} yet.</div>`}
+    </div>
+
+    <div class="card">
+      <h3>Paused Clients — Reach Back Out</h3>
+      <div class="small" style="margin-bottom:10px;">Pulled live from Clients — set a client's status to Paused on their Membership tab and they'll show up here automatically.</div>
+      ${pausedClients.length ? pausedClients.map(renderPausedClientRow).join("") : `<div class="small">No paused clients right now.</div>`}
+    </div>
+  `;
+}
+function renderLeadRow(l){
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="row">
+        <div><label class="small">Name</label><input value="${l.name||''}" onchange="updateLeadField('${l.id}','name',this.value)"></div>
+        <div><label class="small">Email</label><input type="email" value="${l.email||''}" onchange="updateLeadField('${l.id}','email',this.value)"></div>
+        <div><label class="small">Phone</label><input value="${l.phone||''}" onchange="updateLeadField('${l.id}','phone',this.value)"></div>
+      </div>
+      <div class="row">
+        <div><label class="small">Found us via</label>
+          <select onchange="updateLeadField('${l.id}','source',this.value)">
+            ${LEAD_SOURCES.map(s=>`<option value="${s}" ${(l.source||'Other')===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Status</label>
+          <select onchange="updateLeadField('${l.id}','status',this.value)">
+            ${LEAD_STATUSES.map(s=>`<option value="${s}" ${(l.status||'New')===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Next follow-up</label><input type="date" value="${l.nextFollowUpDate||''}" onchange="updateLeadField('${l.id}','nextFollowUpDate',this.value)"></div>
+      </div>
+      <div><label class="small">Notes</label><textarea onchange="updateLeadField('${l.id}','notes',this.value)" placeholder="What was discussed, when last contacted, etc.">${l.notes||''}</textarea></div>
+      <div><button class="secondary" onclick="removeLead('${l.id}')">Remove</button></div>
+    </div>
+  `;
+}
+function addLead(){
+  const lead = {
+    id: newId("lead"),
+    name: "", email: "", phone: "",
+    source: "Other", status: "New",
+    nextFollowUpDate: "", notes: "",
+    createdDate: new Date().toISOString().slice(0,10)
+  };
+  upsert("leads", lead.id, lead);
+}
+function updateLeadField(id, field, value){ upsert("leads", id, { [field]: value }); }
+function removeLead(id){
+  if(!confirm("Remove this lead?")) return;
+  remove("leads", id);
+}
+function renderPausedClientRow(c){
+  const daysSince = c.cancelledDate ? Math.round((Date.now()-parseYMD(c.cancelledDate).getTime())/86400000) : null;
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="flex-between">
+        <strong>${c.name}</strong>
+        <span class="small">${c.cancelledDate ? `paused since ${parseYMD(c.cancelledDate).toLocaleDateString()}${daysSince!==null?` (${daysSince}d ago)`:''}` : 'paused date not set'}</span>
+      </div>
+      <div class="row">
+        <div><label class="small">Last re-engagement contact</label><input type="date" value="${c.lastReengagementDate||''}" onchange="updateClientField('${c.id}','lastReengagementDate',this.value)"></div>
+      </div>
+      <div><label class="small">Re-engagement notes</label><textarea onchange="updateClientField('${c.id}','reengagementNotes',this.value)" placeholder="What's been tried, their response, when to try again">${c.reengagementNotes||''}</textarea></div>
+      <div><button class="secondary" onclick="openClient('${c.id}')">View client</button></div>
+    </div>
+  `;
 }
 function renderRenewalsTab(){
   const noticeDeadlines = upcomingNoticeDeadlines(null);
