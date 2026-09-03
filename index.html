@@ -263,7 +263,11 @@ const SEED_ASSISTANTS = [
 const SEED_SETTINGS = {
   adminPasscode: "melain10",
   assistants: SEED_ASSISTANTS,
-  internalHoursBudget: 0
+  internalHoursBudget: 0,
+  contentPlan: [],
+  socialLogins: [],
+  contentInsights: [],
+  contentGoals: []
 };
 
 const INTERNAL_CLIENT_ID = "internal";
@@ -1564,7 +1568,7 @@ function emailPayrollReport(assistantId){
 // so an existing assignment to someone who's left stays visible for context.
 function assignableAssistants(alreadyIds){
   const already = new Set(alreadyIds||[]);
-  return state.settings.assistants.filter(a=>a.active!==false || already.has(a.id));
+  return state.settings.assistants.filter(a=>(a.active!==false && !a.isContentCreator) || already.has(a.id));
 }
 // A client's package hours are quoted on their own (monthly/quarterly/annual)
 // billing cycle, not on the semi-monthly payroll calendar. To compare what a
@@ -1842,7 +1846,8 @@ function tryAdminLogin(code){
 function tryTeamLogin(code){
   const match = state.settings.assistants.find(a=>a.active!==false && a.accessCode && a.accessCode===code);
   if(match){
-    state.role = "team"; state.currentAssistant = match; state.view="app"; state.activeTab="dashboard";
+    state.role = "team"; state.currentAssistant = match; state.view="app";
+    state.activeTab = match.isContentCreator ? "content" : "dashboard";
     if(!match.agreementSigned){ state.modal = { type:"agreementGate", assistant: match }; }
     else if(!match.hasSeenAppGuide){ state.modal = { type:"appGuide", assistant: match }; }
     render();
@@ -1944,8 +1949,11 @@ function promptLogin(kind){
 }
 
 function renderAppShell(){
-  const tabs = state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
+  const isContentCreator = state.role==="team" && state.currentAssistant && state.currentAssistant.isContentCreator;
+  const tabs = isContentCreator
+    ? [["content","Content Calendar"]]
+    : state.role==="admin"
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
     : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
 
   app.innerHTML = `
@@ -1956,7 +1964,7 @@ function renderAppShell(){
           <button class="nav-toggle" onclick="toggleMobileNav()">☰</button>
         </div>
         <div class="who">
-          ${state.role==="admin" ? "Admin" : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
+          ${state.role==="admin" ? "Admin" : isContentCreator ? "Content Creator — " + state.currentAssistant.name : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
           <div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div>
         </div>
         <div class="nav-links">
@@ -1984,6 +1992,7 @@ function renderMain(){
     case "reports": return state.role==="admin" ? renderReportsTab() : "";
     case "renewals": return state.role==="admin" ? renderRenewalsTab() : "";
     case "addons": return state.role==="admin" ? renderAddOnsTab() : "";
+    case "content": return (state.role==="admin" || (state.currentAssistant && state.currentAssistant.isContentCreator)) ? renderContentCalendarTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
     case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
@@ -2317,6 +2326,179 @@ function renderAddOnsTab(){
       `).join("")}
     </div>
   `;
+}
+// --- Content Calendar (Content Creator role + admin) ---
+function renderContentCalendarTab(){
+  const isAdmin = state.role==="admin";
+  const plan = state.settings.contentPlan || [];
+  const ideas = plan.filter(e=>e.type==="idea");
+  const dated = plan.filter(e=>e.type!=="idea").slice().sort((a,b)=> (a.date||'') < (b.date||'') ? -1 : 1);
+  const socialLogins = state.settings.socialLogins || [];
+  const insights = (state.settings.contentInsights||[]).slice().sort((a,b)=> (b.date||'') < (a.date||'') ? -1 : 1);
+  const goals = state.settings.contentGoals || [];
+  return `
+    <h2>Content Calendar</h2>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Upcoming — scheduled content &amp; notes</h3>
+        <div style="display:flex;gap:8px;">
+          <button class="secondary" onclick="addContentEntry('scheduled')">+ Scheduled content</button>
+          ${isAdmin ? `<button class="secondary" onclick="addContentEntry('opsNote')">+ Note for Content Creator</button>` : ""}
+        </div>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Scheduled posts plus anything Kaylan flags about the team's week ahead — useful for picking a shoot day that won't collide with a busy stretch.</div>
+      ${dated.length ? dated.map(renderContentEntryRow).join("") : `<div class="small">Nothing on the calendar yet.</div>`}
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Content Ideas</h3>
+        <button class="secondary" onclick="addContentEntry('idea')">+ Add idea</button>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Backlog — no date needed yet.</div>
+      ${ideas.length ? ideas.map(renderContentEntryRow).join("") : `<div class="small">No ideas logged yet.</div>`}
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Social Media Logins</h3>
+        <button class="secondary" onclick="addSocialLogin()">+ Add login</button>
+      </div>
+      <div class="small" style="margin-bottom:10px;color:var(--warn);">Stored as plain text, visible to Admin and the Content Creator only — no one else. For stronger security down the line, consider a shared password manager vault instead of storing these here.</div>
+      ${socialLogins.length ? socialLogins.map(renderSocialLoginRow).join("") : `<div class="small">No logins saved yet.</div>`}
+    </div>
+    <div class="row">
+      <div class="card">
+        <div class="flex-between">
+          <h3 style="margin:0;">Insights</h3>
+          <button class="secondary" onclick="addContentInsight()">+ Add</button>
+        </div>
+        ${insights.length ? insights.map(renderContentInsightRow).join("") : `<div class="small">No insights logged yet.</div>`}
+      </div>
+      <div class="card">
+        <div class="flex-between">
+          <h3 style="margin:0;">Goals</h3>
+          <button class="secondary" onclick="addContentGoal()">+ Add</button>
+        </div>
+        ${goals.length ? goals.map(renderContentGoalRow).join("") : `<div class="small">No goals set yet.</div>`}
+      </div>
+    </div>
+  `;
+}
+function renderContentEntryRow(e){
+  const typeLabel = e.type==="idea" ? "Idea" : e.type==="opsNote" ? "Note" : "Scheduled";
+  const badgeColor = e.type==="opsNote" ? "var(--warn)" : e.type==="idea" ? "#8a7a72" : "var(--ok)";
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="flex-between">
+        <div>
+          <span class="badge" style="background:${badgeColor};">${typeLabel}</span>
+          <strong>${e.title||'(untitled)'}</strong>
+          ${e.platform ? `<span class="small">· ${e.platform}</span>` : ""}
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${e.type!=="idea" ? `<input type="date" value="${e.date||''}" onchange="updateContentEntry('${e.id}','date',this.value)" style="width:150px;">` : ""}
+          <button class="secondary" onclick="removeContentEntry('${e.id}')">Remove</button>
+        </div>
+      </div>
+      <div class="row">
+        <div><label class="small">Title</label><input value="${e.title||''}" onchange="updateContentEntry('${e.id}','title',this.value)"></div>
+        <div><label class="small">Platform</label><input value="${e.platform||''}" placeholder="Instagram, TikTok, etc." onchange="updateContentEntry('${e.id}','platform',this.value)"></div>
+        ${e.type==="scheduled" ? `<div><label class="small">Status</label>
+          <select onchange="updateContentEntry('${e.id}','status',this.value)">
+            ${["Idea","Drafting","Ready","Posted"].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>` : ""}
+      </div>
+      <div><label class="small">Notes</label><textarea onchange="updateContentEntry('${e.id}','notes',this.value)">${e.notes||''}</textarea></div>
+    </div>
+  `;
+}
+function addContentEntry(type){
+  const entry = {
+    id: newId("content"),
+    type,
+    title: type==="opsNote" ? "Heads up" : type==="idea" ? "New idea" : "New scheduled post",
+    date: type==="idea" ? "" : new Date().toISOString().slice(0,10),
+    platform: "",
+    status: type==="scheduled" ? "Idea" : "",
+    notes: "",
+    addedBy: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:"")
+  };
+  upsert("settings","access", { contentPlan: [...(state.settings.contentPlan||[]), entry] });
+}
+function updateContentEntry(id, field, value){
+  const contentPlan = (state.settings.contentPlan||[]).map(e=> e.id===id ? { ...e, [field]:value } : e);
+  upsert("settings","access", { contentPlan });
+}
+function removeContentEntry(id){
+  if(!confirm("Remove this entry?")) return;
+  upsert("settings","access", { contentPlan: (state.settings.contentPlan||[]).filter(e=>e.id!==id) });
+}
+function renderSocialLoginRow(s){
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="row">
+        <div><label class="small">Platform</label><input value="${s.platform||''}" placeholder="Instagram, Facebook, TikTok..." onchange="updateSocialLogin('${s.id}','platform',this.value)"></div>
+        <div><label class="small">Username/Email</label><input value="${s.username||''}" onchange="updateSocialLogin('${s.id}','username',this.value)"></div>
+        <div><label class="small">Password</label><input type="text" value="${s.password||''}" onchange="updateSocialLogin('${s.id}','password',this.value)"></div>
+      </div>
+      <div><label class="small">Notes</label><input value="${s.notes||''}" placeholder="2FA method, recovery info, etc." onchange="updateSocialLogin('${s.id}','notes',this.value)"></div>
+      <div><button class="secondary" onclick="removeSocialLogin('${s.id}')">Remove</button></div>
+    </div>
+  `;
+}
+function addSocialLogin(){
+  const login = { id:newId("social"), platform:"", username:"", password:"", notes:"" };
+  upsert("settings","access", { socialLogins: [...(state.settings.socialLogins||[]), login] });
+}
+function updateSocialLogin(id, field, value){
+  const socialLogins = (state.settings.socialLogins||[]).map(s=> s.id===id ? { ...s, [field]:value } : s);
+  upsert("settings","access", { socialLogins });
+}
+function removeSocialLogin(id){
+  if(!confirm("Remove this login?")) return;
+  upsert("settings","access", { socialLogins: (state.settings.socialLogins||[]).filter(s=>s.id!==id) });
+}
+function renderContentInsightRow(i){
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div><label class="small">Date</label><input type="date" value="${i.date||''}" onchange="updateContentInsight('${i.id}','date',this.value)"></div>
+      <div><textarea onchange="updateContentInsight('${i.id}','notes',this.value)" placeholder="e.g. Reels are getting 3x the engagement of static posts this month">${i.notes||''}</textarea></div>
+      <div><button class="secondary" onclick="removeContentInsight('${i.id}')">Remove</button></div>
+    </div>
+  `;
+}
+function addContentInsight(){
+  const insight = { id:newId("insight"), date:new Date().toISOString().slice(0,10), notes:"" };
+  upsert("settings","access", { contentInsights: [...(state.settings.contentInsights||[]), insight] });
+}
+function updateContentInsight(id, field, value){
+  const contentInsights = (state.settings.contentInsights||[]).map(i=> i.id===id ? { ...i, [field]:value } : i);
+  upsert("settings","access", { contentInsights });
+}
+function removeContentInsight(id){
+  if(!confirm("Remove this insight?")) return;
+  upsert("settings","access", { contentInsights: (state.settings.contentInsights||[]).filter(i=>i.id!==id) });
+}
+function renderContentGoalRow(g){
+  return `
+    <div class="checklist-item">
+      <input type="checkbox" ${g.done?'checked':''} onchange="updateContentGoal('${g.id}','done',this.checked)">
+      <input value="${(g.text||'').replace(/"/g,'&quot;')}" style="flex:1;" onchange="updateContentGoal('${g.id}','text',this.value)">
+      <input type="date" style="width:150px;" value="${g.targetDate||''}" onchange="updateContentGoal('${g.id}','targetDate',this.value)">
+      <button class="secondary" onclick="removeContentGoal('${g.id}')">✕</button>
+    </div>
+  `;
+}
+function addContentGoal(){
+  const goal = { id:newId("goal"), text:"", targetDate:"", done:false };
+  upsert("settings","access", { contentGoals: [...(state.settings.contentGoals||[]), goal] });
+}
+function updateContentGoal(id, field, value){
+  const contentGoals = (state.settings.contentGoals||[]).map(g=> g.id===id ? { ...g, [field]:value } : g);
+  upsert("settings","access", { contentGoals });
+}
+function removeContentGoal(id){
+  upsert("settings","access", { contentGoals: (state.settings.contentGoals||[]).filter(g=>g.id!==id) });
 }
 function renderRenewalsTab(){
   const noticeDeadlines = upcomingNoticeDeadlines(null);
@@ -5826,6 +6008,10 @@ function renderAssistantRow(a){
           </select>
         </div>
       </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <input type="checkbox" ${a.isContentCreator?'checked':''} onchange="updateAssistantField('${a.id}','isContentCreator',this.checked)">
+        Content Creator — logs in to a restricted view showing only the Content Calendar
+      </label>
       ${onboarding.length ? `
         <div>
           <div class="small">Onboarding: ${doneCount}/${onboarding.length} complete</div>
