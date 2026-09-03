@@ -291,15 +291,21 @@ const PACKAGE_TIERS = [
   { key:"pilot20", label:"Pilot — 20 hrs/mo (1-month only)", hours:20, price:950 },
   { key:"ongoing25", label:"Ongoing 25 — 25 hrs/mo", hours:25, price:1150 },
   { key:"ongoing35", label:"Ongoing 35 — 35 hrs/mo (Most Popular)", hours:35, price:1600 },
-  { key:"ongoing45", label:"Ongoing 45 — 45 hrs/mo", hours:45, price:2000 },
-  { key:"ongoing60", label:"Ongoing 60 — 60 hrs/mo", hours:60, price:2400 },
-  { key:"ongoing80", label:"Ongoing 80 — 80 hrs/mo", hours:80, price:3200 },
-  { key:"legacy_m40", label:"Legacy — 40 hrs/mo (grandfathered only)", hours:40, price:1700 },
+  { key:"ongoing40", label:"Ongoing 40 — 40 hrs/mo", hours:40, price:2000 },
+  { key:"ongoing60", label:"Ongoing 60 — 60 hrs/mo", hours:60, price:2640 },
+  { key:"ongoing80", label:"Ongoing 80 — 80 hrs/mo", hours:80, price:3520 },
   { key:"reset_refresh", label:"Home Reset — The Refresh", hours:6, price:325 },
   { key:"reset_restore", label:"Home Reset — The Restore (Most Popular)", hours:12, price:575 },
   { key:"setup_unpack", label:"New Home Setup — The Unpack", hours:8, price:550 },
   { key:"setup_settle", label:"New Home Setup — The Settle (Most Popular)", hours:16, price:950 },
-  { key:"setup_fullmovein", label:"New Home Setup — The Full Move-In (Assistant + Handyman)", hours:30, price:2500 }
+  { key:"setup_fullmovein", label:"New Home Setup — The Full Move-In (Assistant + Handyman)", hours:30, price:2500 },
+  // Grandfathered — kept only so existing clients on these older prices
+  // keep showing their real tier name instead of falling back to "Custom."
+  // Never offered to new clients.
+  { key:"legacy_m40_1700", label:"Legacy — 40 hrs/mo, $1,700 (grandfathered only)", hours:40, price:1700 },
+  { key:"legacy_ongoing45_2000", label:"Legacy — 45 hrs/mo, $2,000 (grandfathered only)", hours:45, price:2000 },
+  { key:"legacy_ongoing60_2400", label:"Legacy — 60 hrs/mo, $2,400 (grandfathered only)", hours:60, price:2400 },
+  { key:"legacy_ongoing80_3200", label:"Legacy — 80 hrs/mo, $3,200 (grandfathered only)", hours:80, price:3200 }
 ];
 const OVERAGE_RATE = 50; // $/hr beyond the package
 
