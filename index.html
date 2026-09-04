@@ -202,6 +202,7 @@
      white screen while these two scripts download from Google's CDN. -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 
 <script>
 /* =========================================================================
@@ -578,6 +579,19 @@ async function boot(){
       state.timeEntries = demo.timeEntries;
     }
   } else {
+    // Anonymous auth isn't a second login step for anyone — it's invisible
+    // and automatic. Its only job is giving Firestore Security Rules a
+    // request.auth to check, so rules can require "came through the app"
+    // instead of allowing any bare HTTP request straight to the database
+    // with no gate at all. The app's own passcode/access-code roles
+    // (admin/team/client) are unrelated and layered on top of this.
+    try{
+      if(!firebase.auth().currentUser){
+        await firebase.auth().signInAnonymously();
+      }
+    }catch(err){
+      console.warn("Anonymous auth sign-in failed (Anonymous provider may not be enabled yet in Firebase Console):", err);
+    }
     try{
       state.settings = await ensureSettings();
     }catch(err){
