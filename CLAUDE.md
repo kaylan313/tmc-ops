@@ -30,9 +30,8 @@ Internal operations platform for The Modern Concierge (TMC), a virtual assistant
 
 1. Replace the placeholder `firebaseConfig` object near the top of the `<script>` in `index.html` with the real project config (same Firebase project as the orientation sync).
 2. Set a real admin passcode and per-assistant access codes — either edit `SEED_SETTINGS` in the file before first run, or log in as Admin and use the Team tab afterward (writes to Firestore `settings/access`).
-3. Set Firestore security rules — the app currently assumes permissive rules for the passcode-gated collections during development. Tightening this is a good first task.
-4. Client portal codes (`portalCode` field per client) need to be set per client via the Membership tab before clients can log in.
-5. Renewal dates were not available from ClickUp historically and require manual entry per client — preserve these if migrating old data in.
+3. Client portal codes (`portalCode` field per client) need to be set per client via the Membership tab before clients can log in.
+4. Renewal dates were not available from ClickUp historically and require manual entry per client — preserve these if migrating old data in.
 
 ## Core Modules (current build)
 
@@ -71,6 +70,13 @@ Internal operations platform for The Modern Concierge (TMC), a virtual assistant
 - Config (`CLIENTS_FOLDER_ID`, `EMPLOYEES_FOLDER_ID`) lives in `functions/.env.modern-co-dashboard` (gitignored, not committed — folder IDs aren't secret but there's no reason to hardcode them in source).
 - Deploy with `firebase deploy --only functions` from the `tmc-ops/` root (requires `firebase login` once, interactively, on whichever machine deploys).
 - If Drive is unreachable for any reason, the functions log the error and leave the signed doc in Firestore untouched — the manual Download / "Downloaded — remove from app" buttons in the app remain a working fallback.
+
+## Security
+
+- **Fixed (Sept 2026):** the entire Firestore database — every client's PII, payment info embedded in signed-but-not-yet-filed contracts, the admin passcode, and every employee's access code — was readable by anyone on the internet with zero authentication, confirmed via a raw unauthenticated REST request against the live database. Root cause: login here is a plain string comparison done client-side (`accessCode===code`), which only stays safe if Firestore's own rules block outside reads — and they didn't.
+- **Current fix:** `firestore.rules` requires `request.auth != null` on every read/write. The app signs in anonymously (invisible, no extra login step — see `boot()`) before touching Firestore, purely so rules have something to check. The Anonymous provider must stay enabled in Firebase Console → Authentication → Sign-in method, or the whole app loses Firestore access.
+- **Known remaining gap:** this blocks raw outside/bot access but does NOT scope what an authenticated session can see per role — a client's browser console can still, in principle, read another client's document, since there's no per-user identity tied to the app's own admin/team/client roles. The real fix is moving passcode validation server-side (Cloud Functions — already set up for the Drive integration, see below) and minting Firebase custom-auth tokens per role/assistantId/clientId, so Firestore rules can check `request.auth.token.role` etc. Not yet built; treat as the next security project, not urgent-urgent but a real gap.
+- Deploy rule changes with `firebase deploy --only firestore:rules` from the `tmc-ops/` root.
 
 ## Working Conventions
 
