@@ -6200,6 +6200,13 @@ function updateAssistantCode(id, code){
 function updateAssistantField(id, field, value){
   state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,[field]:value}:a);
   upsert("settings","access", { assistants: state.settings.assistants });
+  // settings/access is loaded once at boot, not watched live like
+  // clients/tasks/timeEntries — so unlike those, a write here doesn't
+  // trigger a re-render on its own. Usually masked by some other unrelated
+  // render() firing soon after (the 60s timer, another click), but fields
+  // whose own value changes what's shown next to them (pay type) need this
+  // to redraw immediately.
+  render();
 }
 function updateAdminPasscode(pass){
   state.settings.adminPasscode = pass;
