@@ -5245,6 +5245,10 @@ function setTimeFilterAssistant(assistantId){
   state.timeFilter.assistantId = assistantId;
   render();
 }
+function setTimeFilterAdminOnly(checked){
+  state.timeFilter.adminOnly = checked;
+  render();
+}
 // Lets the Entries list collapse down to just one task's clock-ins instead
 // of scrolling through every entry — the search box reuses the same "#123
 // or title" lookup as clock-in/manual-entry, so it's a null-op if nothing
@@ -5272,7 +5276,8 @@ function renderTimeTracking(){
     ? mineAll.filter(e => e.taskId===taskFilterId)
     : mineAll
       .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
-      .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
+      .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId)
+      .filter(e => !state.timeFilter.adminOnly || e.clientId===INTERNAL_CLIENT_ID);
   const totalHrs = filtered.reduce((s,e)=>s+entryDurationHours(e),0);
   const manualCount = filtered.filter(e=>e.clockOutManual).length;
 
@@ -5357,7 +5362,10 @@ function renderTimeTracking(){
           ${state.timeFilter.preset==="custom" ? `
             <input type="date" style="width:150px;" value="${state.timeFilter.customStart||''}" onchange="setTimeFilterCustom('start',this.value)">
             <input type="date" style="width:150px;" value="${state.timeFilter.customEnd||''}" onchange="setTimeFilterCustom('end',this.value)">
-          ` : ""}`}
+          ` : ""}
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
+            <input type="checkbox" ${state.timeFilter.adminOnly?'checked':''} onchange="setTimeFilterAdminOnly(this.checked)"> Internal/Admin only
+          </label>`}
           <button class="secondary" onclick="exportTimeEntriesCsv()">Export CSV</button>
         </div>
       </div>
@@ -5371,8 +5379,9 @@ function renderTimeTracking(){
       ${sortTimeEntries(filtered, state.timeFilter.sort).map(e=>{
         const task = state.tasks.find(t=>t.id===e.taskId);
         const isAdminWork = e.clientId===INTERNAL_CLIENT_ID;
+        const clientLabel = isAdminWork ? "Internal / Modern Co." : (state.clients.find(c=>c.id===e.clientId)?.name || (e.clientId ? "Unknown client" : ""));
         return `<div class="list-item">
-          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${task?task.title:'(deleted task)'}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
+          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${task?task.title:'(deleted task)'}${clientLabel ? ` <span class="small">· ${clientLabel}</span>` : ''}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
           <div style="display:flex;align-items:center;gap:8px;">${e.clockOut ? entryDurationHours(e).toFixed(2)+" hrs" : `<button onclick="doClockOut('${e.id}')">Clock out</button>`}${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" title="Edit this time entry" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}${state.role==='admin' ? `<button class="secondary" style="padding:2px 8px;${e.flagged?'color:var(--danger);':''}" title="${e.flagged ? 'Unflag' : 'Flag for review'}" onclick="toggleFlagTimeEntry('${e.id}')">${e.flagged ? '⚑' : '⚐'}</button>` : ""}<button class="secondary" style="padding:2px 8px;" title="Delete this time entry" onclick="deleteTimeEntry('${e.id}')">✕</button></div>
         </div>`;
       }).join("") || `<div class="small">No entries in this range.</div>`}
