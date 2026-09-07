@@ -1364,14 +1364,14 @@ function downloadCsv(filename, rows){
 }
 function exportPayrollCsv(){
   const period = payrollFilterPeriod();
-  const rows = [["Assistant","Hours worked","Hourly rate","Amount owed","Status","Payroll period"]];
+  const rows = [["Assistant","Pay type","Hours worked","Rate","Amount owed","Status","Payroll period"]];
   state.settings.assistants.forEach(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
     const hrs = hoursInPeriod(entries, period);
-    const rate = a.hourlyRate || 0;
     rows.push([
       a.name + (a.active===false ? " (former)" : ""),
-      hrs.toFixed(2), rate.toFixed(2), (hrs*rate).toFixed(2),
+      a.payType==="flat" ? "Flat rate" : "Hourly",
+      hrs.toFixed(2), payrollRateLabel(a), payrollAmountForAssistant(a,hrs).toFixed(2),
       a.active===false ? "former employee" : "active",
       formatPeriodRange(period)
     ]);
@@ -1456,7 +1456,7 @@ function buildPayrollReport(assistant, period){
   });
   const byClient = Object.entries(byClientMap).map(([name,hours])=>({name,hours})).sort((a,b)=>b.hours-a.hours);
   const rate = assistant.hourlyRate || 0;
-  return { assistant, period, totalHours, byClient, rate, amountOwed: totalHours*rate };
+  return { assistant, period, totalHours, byClient, rate, amountOwed: payrollAmountForAssistant(assistant, totalHours) };
 }
 function payrollReportHtml(report){
   const { assistant, period, byClient } = report;
@@ -1529,7 +1529,7 @@ function payrollReportHtml(report){
         <div class="caption">This Pay Period</div>
         <div class="hours-row">
           <div class="hours-stat"><div class="num">${formatHoursMinutes(report.totalHours)}</div><div class="label">HOURS WORKED</div></div>
-          <div class="hours-stat"><div class="num">$${report.rate.toFixed(2)}</div><div class="label">HOURLY RATE</div></div>
+          <div class="hours-stat"><div class="num">$${(report.assistant.payType==="flat"?(report.assistant.flatRatePerPeriod||0):report.rate).toFixed(2)}</div><div class="label">${report.assistant.payType==="flat"?"FLAT RATE / PERIOD":"HOURLY RATE"}</div></div>
           <div class="hours-stat"><div class="num">$${report.amountOwed.toFixed(2)}</div><div class="label">TOTAL PAY</div></div>
         </div>
       </div>
@@ -5406,6 +5406,20 @@ function payrollHoursForAssistant(assistantId, period, adminOnly){
   const entries = state.timeEntries.filter(e=>e.assistantId===assistantId && (!adminOnly || e.clientId===INTERNAL_CLIENT_ID));
   return hoursInPeriod(entries, period);
 }
+// Flat-rate assistants are paid the same amount every pay period regardless
+// of hours logged — so payroll totals/projections need to use their flat
+// rate instead of hours × hourlyRate, or they'd silently show $0 (no
+// hourlyRate set) or the wrong number (an hourlyRate left over from before
+// switching them to flat).
+function payrollAmountForAssistant(assistant, hours){
+  if(assistant.payType==="flat") return assistant.flatRatePerPeriod||0;
+  return hours*(assistant.hourlyRate||0);
+}
+function payrollRateLabel(assistant){
+  return assistant.payType==="flat"
+    ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+"/period (flat)"
+    : "$"+(assistant.hourlyRate||0).toFixed(2)+"/hr";
+}
 function renderPayrollTool(){
   const pf = state.payrollFilter;
   const period = payrollFilterPeriod();
@@ -5421,7 +5435,7 @@ function renderPayrollTool(){
   const totalActual = rows.reduce((s,r)=>s+r.actual,0);
   const flagged = rows.filter(r=>Math.abs(r.variance)>=2);
   const totalRevenue = realClients.reduce((s,c)=>s+expectedRevenuePerPayrollPeriod(c),0);
-  const totalPayrollCost = state.settings.assistants.reduce((s,a)=>s+hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)*(a.hourlyRate||0),0);
+  const totalPayrollCost = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
   const estMargin = totalRevenue - totalPayrollCost;
 
   const shownAssistants = state.settings.assistants.filter(a=>pf.assistantId==="all" || a.id===pf.assistantId);
@@ -5488,7 +5502,7 @@ function renderPayrollTool(){
       </div>
       <div class="stat-tile">
         <div class="stat-label">Total pay</div>
-        <div class="stat-value">$${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly)*(a.hourlyRate||0),0).toFixed(0)}</div>
+        <div class="stat-value">$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly)),0).toFixed(0)}</div>
         <div class="stat-sub">"Paid for vs. clocked" and margin only show for a single payroll period, not ${periodLabel.toLowerCase()}</div>
       </div>`}
     </div>
@@ -5504,13 +5518,12 @@ function renderPayrollTool(){
         <tbody>
           ${shownAssistants.map(a=>{
             const hrs = payrollHoursForAssistant(a.id, period, pf.adminOnly);
-            const rate = a.hourlyRate || 0;
             const active = activeEntryFor(a.id);
             return `<tr>
               <td>${a.name}${a.active===false?' <span class="small">(former)</span>':''}</td>
               <td>${hrs.toFixed(1)}</td>
-              <td>$${rate.toFixed(2)}/hr</td>
-              <td>$${(hrs*rate).toFixed(2)}</td>
+              <td>${payrollRateLabel(a)}</td>
+              <td>$${payrollAmountForAssistant(a,hrs).toFixed(2)}</td>
               <td>${active
                 ? `<span class="dot-live ${isStale(active)?'stale':''}"></span>clocked in ${entryDurationHours(active).toFixed(1)}h`
                 : `<span class="small">off the clock</span>`}</td>
@@ -5520,7 +5533,7 @@ function renderPayrollTool(){
             <td>Total</td>
             <td>${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly),0).toFixed(1)}</td>
             <td></td>
-            <td>$${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly)*(a.hourlyRate||0),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly)),0).toFixed(2)}</td>
             <td></td>
           </tr>
         </tbody>
@@ -5544,7 +5557,7 @@ function renderPayrollTool(){
         <div class="list-item">
           <div>${a.name}${a.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</div>
           <div style="display:flex;align-items:center;gap:10px;">
-            <span class="small">${hrs.toFixed(1)} hrs · $${(hrs*(a.hourlyRate||0)).toFixed(2)}</span>
+            <span class="small">${hrs.toFixed(1)} hrs · $${payrollAmountForAssistant(a,hrs).toFixed(2)}</span>
             <button class="secondary" onclick="downloadPayrollReport('${a.id}')">Download</button>
             <button onclick="emailPayrollReport('${a.id}')">Email</button>
           </div>
@@ -6144,7 +6157,17 @@ function renderAssistantRow(a){
           ` : purged ? `<span>full text removed from the app — signed ${a.agreementSignedAt?new Date(a.agreementSignedAt).toLocaleDateString():''} by ${a.agreementSignedName||a.name} is still on record</span>` : ""}
         </div>` : ""}
       <div class="row">
+        <div><label class="small">Pay type</label>
+          <select onchange="updateAssistantField('${a.id}','payType',this.value)">
+            <option value="hourly" ${a.payType!=="flat"?'selected':''}>Hourly</option>
+            <option value="flat" ${a.payType==="flat"?'selected':''}>Flat rate per pay period</option>
+          </select>
+        </div>
+        ${a.payType==="flat" ? `
+        <div><label class="small">Flat rate per pay period ($)</label><input type="number" step="1" value="${a.flatRatePerPeriod||0}" onchange="updateAssistantField('${a.id}','flatRatePerPeriod',parseFloat(this.value)||0)"></div>
+        ` : `
         <div><label class="small">Hourly rate ($)</label><input type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
+        `}
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
         <div><label class="small">Email (for payroll reports)</label><input type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
         <div><label class="small">Market</label>
@@ -6478,7 +6501,7 @@ function employmentAgreementHtml(assistant){
 
     <p><strong>3. COMPENSATION</strong></p>
     <p>Contractor shall be paid:</p>
-    <ul><li>$${(assistant.hourlyRate||0).toFixed(2)} per hour</li></ul>
+    <ul><li>${assistant.payType==="flat" ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+" per pay period (flat rate)" : "$"+(assistant.hourlyRate||0).toFixed(2)+" per hour"}</li></ul>
     <p>Hours will vary based on client demand and assigned workload.</p>
     <p>Payment Schedule:</p>
     <ul><li>Semi-monthly (15th and 30th), based on submitted and approved hours.</li></ul>
