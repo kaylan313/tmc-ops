@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:640px;margin:80px auto;padding:0 20px;color:#3b3030;text-align:center;}
+</style>
+</head>
+<body>
+<div id="status">Loading report…</div>
+
+<!--
+  Renders a report stored in Firestore's `reports/{id}` collection directly
+  in the browser via the client-side SDK, instead of going through the
+  viewReport Cloud Function. This project's GCP org policy blocks granting
+  a Cloud Run service (which is what a 2nd-gen Cloud Function is under the
+  hood) invoker access to anything other than already-authorized identities
+  — including Firebase Hosting's own rewrite proxy — so a Cloud Function
+  can't be made reachable here at all. Firestore reads aren't subject to
+  that restriction; they're governed by firestore.rules instead, which
+  already allows any request with request.auth != null, satisfied by the
+  same invisible anonymous sign-in the main app already relies on.
+-->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyCCLskIvVB40GjB9bXEG2GdMSSBRjvc6-0",
+  authDomain: "modern-co-dashboard.firebaseapp.com",
+  projectId: "modern-co-dashboard",
+  storageBucket: "modern-co-dashboard.firebasestorage.app",
+  messagingSenderId: "263317275120",
+  appId: "1:263317275120:web:d72654132e07434c155d35"
+};
+firebase.initializeApp(firebaseConfig);
+
+const id = new URLSearchParams(location.search).get("id");
+const statusEl = document.getElementById("status");
+
+if (!id) {
+  statusEl.textContent = "Missing report id.";
+} else {
+  firebase.auth().signInAnonymously()
+    .then(() => firebase.firestore().collection("reports").doc(id).get())
+    .then((snap) => {
+      if (!snap.exists) {
+        statusEl.textContent = "This report link is no longer valid.";
+        return;
+      }
+      document.open();
+      document.write(snap.data().html);
+      document.close();
+    })
+    .catch((err) => {
+      console.error(err);
+      statusEl.textContent = "Something went wrong loading this report.";
+    });
+}
+</script>
+</body>
+</html>

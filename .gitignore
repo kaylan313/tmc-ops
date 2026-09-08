@@ -2,3 +2,5 @@
 .claude/
 functions/node_modules/
 functions/.env*
+.firebase/
+firebase-debug.log

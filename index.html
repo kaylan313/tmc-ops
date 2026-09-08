@@ -237,12 +237,16 @@ const firebaseConfig = {
   appId: "1:263317275120:web:d72654132e07434c155d35"
 };
 const FIREBASE_CONFIGURED = firebaseConfig.apiKey !== "YOUR_API_KEY";
-// Serves report docs from the `reports` collection as real text/html — see
-// viewReport in functions/index.js. Reports are viewed/emailed as a link to
-// this endpoint instead of a raw downloaded .html file, since most desktop
-// mail clients preview .html attachments as source text instead of
-// rendering them (this was the "works on phone, shows code on desktop" bug).
-const REPORT_VIEWER_URL = "https://us-central1-modern-co-dashboard.cloudfunctions.net/viewReport";
+// Renders report docs from the `reports` collection at a shareable link —
+// see public/report.html, which reads the report directly via the
+// client-side Firestore SDK (same anonymous-auth pattern as this app).
+// Reports are viewed/emailed as a link to that page instead of a raw
+// downloaded .html file, since most desktop mail clients preview .html
+// attachments as source text instead of rendering them (this was the
+// "works on phone, shows code on desktop" bug). Not a Cloud Function
+// endpoint — this project's GCP org policy blocks making a Cloud Run
+// service (what a function runs as) invokable by anything at all.
+const REPORT_VIEWER_URL = "https://modern-co-dashboard.web.app/report.html";
 let db = null;
 let FIREBASE_AVAILABLE = false;
 try{

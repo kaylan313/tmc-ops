@@ -29,7 +29,6 @@
  * (see README notes in the project root for the exact setup steps).
  */
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { onRequest } = require("firebase-functions/v2/https");
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { google } = require("googleapis");
@@ -139,34 +138,10 @@ exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", asyn
   }
 });
 
-/**
- * Serves a client/payroll recap report stored in Firestore (`reports/{id}`,
- * written by saveReportAndGetLink() in index.html) as a real text/html
- * response, so opening the link always renders the branded report the same
- * way in any browser — instead of emailing/downloading a raw .html file,
- * which most desktop mail clients preview as source text rather than
- * rendering (the bug this replaced: reports worked on phones, which open
- * downloaded .html in an in-app browser view, but showed raw code on
- * desktop mail clients that preview attachments as text).
- */
-exports.viewReport = onRequest(async (req, res) => {
-  const id = req.query.id;
-  if (!id) {
-    res.status(400).send("Missing report id.");
-    return;
-  }
-  try {
-    const snap = await admin.firestore().collection("reports").doc(id).get();
-    if (!snap.exists) {
-      res.status(404).send("This report link is no longer valid.");
-      return;
-    }
-    const { html } = snap.data();
-    res.set("Content-Type", "text/html; charset=utf-8");
-    res.set("Cache-Control", "no-store");
-    res.status(200).send(html);
-  } catch (err) {
-    console.error("Failed to load report", id, err);
-    res.status(500).send("Something went wrong loading this report.");
-  }
-});
+// Report viewing (reports/{id} -> a shareable link) is handled by
+// public/report.html via the client-side Firestore SDK instead of a Cloud
+// Function — this project's GCP org policy blocks granting a Cloud Run
+// service (what a 2nd-gen Cloud Function runs as) invoker access to
+// anything, including Firebase Hosting's own rewrite proxy, so a function
+// endpoint can't be made reachable here at all. See the comment in
+// public/report.html for the full explanation.
