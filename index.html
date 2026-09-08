@@ -236,6 +236,12 @@ const firebaseConfig = {
   appId: "1:263317275120:web:d72654132e07434c155d35"
 };
 const FIREBASE_CONFIGURED = firebaseConfig.apiKey !== "YOUR_API_KEY";
+// Serves report docs from the `reports` collection as real text/html — see
+// viewReport in functions/index.js. Reports are viewed/emailed as a link to
+// this endpoint instead of a raw downloaded .html file, since most desktop
+// mail clients preview .html attachments as source text instead of
+// rendering them (this was the "works on phone, shows code on desktop" bug).
+const REPORT_VIEWER_URL = "https://us-central1-modern-co-dashboard.cloudfunctions.net/viewReport";
 let db = null;
 let FIREBASE_AVAILABLE = false;
 try{
@@ -1197,31 +1203,36 @@ function clientReportHtml(report){
 // The short message used both as "Email client"'s mailto body and as the
 // standalone "Copy message" text — the itemized task breakdown lives in the
 // downloaded/attached report itself, so the email doesn't repeat it.
-function clientReportCoverNote(report){
+function clientReportCoverNote(report, reportUrl){
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
   const noun = isPeriod ? "end-of-period" : "weekly";
   const firstName = (report.client.name||"").split(" ")[0] || report.client.name;
   const endDate = report.billingPeriod ? new Date(report.billingPeriod.end.getTime()-1).toLocaleDateString() : null;
+  const reportLine = reportUrl
+    ? "Your " + noun + " report is ready to view here: " + reportUrl
+    : "Your " + noun + " report is attached.";
   const receiptsLine = report.receipts && report.receipts.length
-    ? " This " + (isPeriod ? "period's" : "week's") + " receipts (" + report.receipts.length + ") are included in the attached report."
+    ? " This " + (isPeriod ? "period's" : "week's") + " receipts (" + report.receipts.length + ") are included in the report."
     : "";
   const overageLine = report.overHours>0
     ? " You went over your package by " + formatHoursMinutes(report.overHours) + " this " + (isPeriod?"period":"week")
       + " — that's a $" + report.overageAmount.toFixed(2) + " overage at $" + OVERAGE_RATE + "/hr."
     : "";
   return "Hi " + firstName + ",\n\n"
-    + "Your " + noun + " report is attached. You have used " + formatHoursMinutes(report.hoursUsed)
+    + reportLine + " You have used " + formatHoursMinutes(report.hoursUsed)
     + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + overageLine + receiptsLine + "\n\n"
     + "Please let me know if you have any questions regarding this report.\n\n"
     + "The Modern Concierge Team";
 }
-function copyReportCoverNote(clientId, kind, btnEl){
+async function copyReportCoverNote(clientId, kind, btnEl){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
-  const text = clientReportCoverNote(report);
+  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
+  const url = await saveReportAndGetLink(clientReportHtml(report), "clientRecap", client.name + " — " + kindSlug + " report");
+  const text = clientReportCoverNote(report, url);
   navigator.clipboard.writeText(text).then(()=>{
     if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
     if(!btnEl) return;
@@ -1340,22 +1351,49 @@ function reportWindowFor(client, kind){
   if(kind === "lastPeriod") return previousBillingPeriod(client);
   return currentReportWeek();
 }
-function downloadClientReport(clientId, kind){
+// Stores a generated report's HTML in Firestore and returns a link that
+// renders it via the viewReport Cloud Function (see REPORT_VIEWER_URL
+// above). Opening a link always renders identically everywhere — unlike a
+// raw downloaded .html file, which most desktop mail clients preview as
+// source text instead of rendering (the "works on phone, shows code on
+// desktop" bug this replaced). Returns null if Firestore isn't reachable
+// (e.g. local-only demo mode), so callers can fall back to a download.
+async function saveReportAndGetLink(html, type, title){
+  if(!FIREBASE_AVAILABLE){
+    console.warn("Firebase unavailable — can't generate a report link.");
+    return null;
+  }
+  const doc = await db.collection("reports").add({
+    html, type, title,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  return REPORT_VIEWER_URL + "?id=" + doc.id;
+}
+function downloadHtmlFileFallback(html, filename){
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+async function downloadClientReport(clientId, kind){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
-  const blob = new Blob([clientReportHtml(report)], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
+  const html = clientReportHtml(report);
   const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
-  a.download = client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  const url = await saveReportAndGetLink(html, "clientRecap", client.name + " — " + kindSlug + " report");
+  if(url){
+    window.open(url, "_blank");
+  }else{
+    downloadHtmlFileFallback(html, client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html");
+  }
 }
 // A period/lastPeriod recap counts as "sent" once emailed or copied — tracked
 // against that specific period's start date so the Dashboard "needs sending"
@@ -1364,15 +1402,17 @@ function downloadClientReport(clientId, kind){
 function markPeriodRecapSent(clientId, reportWindow){
   upsert("clients", clientId, { periodRecapSentForPeriodStart: reportWindow.start.toISOString().slice(0,10) });
 }
-function emailClientReport(clientId, kind){
+async function emailClientReport(clientId, kind){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   if(!client.email){ alert(client.name + " doesn't have an email on file yet — add one on their Membership tab first."); return; }
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
+  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
+  const url = await saveReportAndGetLink(clientReportHtml(report), "clientRecap", client.name + " — " + kindSlug + " report");
   const subject = encodeURIComponent(((kind==="period"||kind==="lastPeriod") ? "Your Membership Period Recap — " : "Your Weekly Update — ") + client.name);
-  const body = encodeURIComponent(clientReportCoverNote(report));
+  const body = encodeURIComponent(clientReportCoverNote(report, url));
   window.location.href = "mailto:" + client.email + "?subject=" + subject + "&body=" + body;
   if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
 }
@@ -1499,29 +1539,29 @@ function payrollReportPlainText(report){
   lines.push("The Modern Concierge");
   return lines.join("\n");
 }
-function downloadPayrollReport(assistantId){
+async function downloadPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
   const period = resolvedPayrollReportPeriod();
   const report = buildPayrollReport(assistant, period);
-  const blob = new Blob([payrollReportHtml(report)], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  const html = payrollReportHtml(report);
+  const url = await saveReportAndGetLink(html, "payrollRecap", assistant.name + " — payroll recap");
+  if(url){
+    window.open(url, "_blank");
+  }else{
+    downloadHtmlFileFallback(html, assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html");
+  }
 }
-function emailPayrollReport(assistantId){
+async function emailPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
   if(!assistant.email){ alert(assistant.name + " doesn't have an email on file yet — add one on the Team tab first."); return; }
   const period = resolvedPayrollReportPeriod();
   const report = buildPayrollReport(assistant, period);
+  const url = await saveReportAndGetLink(payrollReportHtml(report), "payrollRecap", assistant.name + " — payroll recap");
   const subject = encodeURIComponent("Your Payroll Recap — " + formatPeriodRange(period));
-  const body = encodeURIComponent(payrollReportPlainText(report));
+  const linkLine = url ? "\n\nView the full formatted recap here: " + url : "";
+  const body = encodeURIComponent(payrollReportPlainText(report) + linkLine);
   window.location.href = "mailto:" + assistant.email + "?subject=" + subject + "&body=" + body;
 }
 
@@ -4136,14 +4176,14 @@ function renderClientHoursCard(client){
       <div class="row">
         <div>
           <div class="small" style="margin-bottom:4px;">Weekly recap &middot; Sat–Fri, week of ${formatPeriodRange(week)}</div>
-          <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+          <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
           <button onclick="emailClientReport('${client.id}','week')">Email client</button>
           <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
         </div>
         <div>
           <div class="small" style="margin-bottom:4px;">${periodWindow ? "Period recap &middot; ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Period recap — set a renewal date on the Membership tab"}</div>
           ${periodWindow ? `
-            <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+            <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
             <button onclick="emailClientReport('${client.id}','period')">Email client</button>
             <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
           ` : ""}
@@ -4151,7 +4191,7 @@ function renderClientHoursCard(client){
         <div>
           <div class="small" style="margin-bottom:4px;">${lastPeriodWindow ? "Last period recap &middot; " + formatPeriodRange(lastPeriodWindow) : "Last period — not enough billing history yet"}</div>
           ${lastPeriodWindow ? `
-            <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+            <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
             <button onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
             <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
           ` : ""}
@@ -4187,7 +4227,7 @@ function renderClientEmailTemplates(client){
     <div class="card">
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
-      <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+      <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
       <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','week')">Email client</button>
       <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
     </div>
@@ -4198,7 +4238,7 @@ function renderClientEmailTemplates(client){
       </div>
       <div class="small" style="margin-bottom:8px;">${periodWindow ? "Ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Set a renewal date on the Membership tab to enable"}</div>
       ${periodWindow ? `
-        <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+        <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
         <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','period')">Email client</button>
         <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
       ` : ""}
@@ -4207,7 +4247,7 @@ function renderClientEmailTemplates(client){
       <h3>Last Period Recap</h3>
       <div class="small" style="margin-bottom:8px;">${lastPeriodWindow ? formatPeriodRange(lastPeriodWindow) : "Not enough billing history yet"}</div>
       ${lastPeriodWindow ? `
-        <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+        <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
         <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
         <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
       ` : ""}
@@ -4344,6 +4384,18 @@ function renderClientMembership(client){
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
         <div><label class="small">Package price ($, billed ${cycleLabel(client.cycleType).toLowerCase()}) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
+      </div>
+      <div class="stat-row" style="margin-top:10px;">
+        <div class="stat-tile">
+          <div class="stat-label">Hours used</div>
+          <div class="stat-value">${used.toFixed(1)}</div>
+          <div class="stat-sub">this ${isHomeReset?'30-day cycle':'period'}</div>
+        </div>
+        <div class="stat-tile ${tierAlert(client)?.level==='danger'?'status-danger':tierAlert(client)?.level==='warn'?'status-warn':''}">
+          <div class="stat-label">Hours remaining this period</div>
+          <div class="stat-value">${Math.max(0,pkg-used).toFixed(1)}</div>
+          <div class="stat-sub">of ${pkg} included</div>
+        </div>
       </div>
       <div class="progress-bar" style="margin-top:10px;"><div style="width:${Math.min(100,(used/(pkg||1))*100)}%;"></div></div>
       <div class="small">${used.toFixed(1)} / ${pkg} hrs used this ${isHomeReset?'30-day cycle':'period'}${rolloverActive ? ` (includes +${client.rolloverHours} rolled over)` : ''}${extraActiveHours>0 ? ` (includes +${extraActiveHours} paid add-on)` : ''}</div>
@@ -5050,7 +5102,7 @@ function renderPayrollTool(){
           <div>${a.name}${a.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</div>
           <div style="display:flex;align-items:center;gap:10px;">
             <span class="small">${hrs.toFixed(1)} hrs · $${(hrs*(a.hourlyRate||0)).toFixed(2)}</span>
-            <button class="secondary" onclick="downloadPayrollReport('${a.id}')">Download</button>
+            <button class="secondary" onclick="downloadPayrollReport('${a.id}')">View</button>
             <button onclick="emailPayrollReport('${a.id}')">Email</button>
           </div>
         </div>`;
@@ -5153,14 +5205,14 @@ function renderReportsTab(){
           <div class="row">
             <div>
               <div class="small" style="margin-bottom:4px;">Weekly &middot; ${weekReport.inProgress.length} in progress · ${weekReport.completed.length} completed this week</div>
-              <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+              <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
               <button onclick="emailClientReport('${client.id}','week')">Email</button>
               <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
             </div>
             <div>
               <div class="small" style="margin-bottom:4px;">${periodReport ? "Period &middot; " + periodReport.completed.length + " completed &middot; ends " + new Date(periodReport.billingPeriod.end.getTime()-1).toLocaleDateString() : "Period — set a renewal date on the Membership tab to enable"}</div>
               ${periodReport ? `
-                <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+                <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
                 <button onclick="emailClientReport('${client.id}','period')">Email</button>
                 <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
               ` : ""}
@@ -5168,7 +5220,7 @@ function renderReportsTab(){
             <div>
               <div class="small" style="margin-bottom:4px;">${lastPeriodReport ? "Last period &middot; " + lastPeriodReport.completed.length + " completed &middot; " + formatPeriodRange(lastPeriodReport.billingPeriod) : "Last period — not enough billing history yet"}</div>
               ${lastPeriodReport ? `
-                <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+                <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
                 <button onclick="emailClientReport('${client.id}','lastPeriod')">Email</button>
                 <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
               ` : ""}
