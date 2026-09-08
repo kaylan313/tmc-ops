@@ -202,6 +202,7 @@
      white screen while these two scripts download from Google's CDN. -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 
 <script>
 /* =========================================================================
@@ -269,7 +270,11 @@ const SEED_ASSISTANTS = [
 const SEED_SETTINGS = {
   adminPasscode: "melain10",
   assistants: SEED_ASSISTANTS,
-  internalHoursBudget: 0
+  internalHoursBudget: 0,
+  contentPlan: [],
+  socialLogins: [],
+  contentInsights: [],
+  contentGoals: []
 };
 
 const INTERNAL_CLIENT_ID = "internal";
@@ -284,15 +289,62 @@ const TIER_THRESHOLDS = [50,75,90,100];
 // picks ONE package tier — Home Reset is an alternative tier, not an add-on
 // stacked on top of an hourly membership — so it shares the exact same
 // packageHours/packagePrice/cycle machinery as the hourly tiers below.
+// Pricing restructure, Sept 2026 (see TMC-Pricing-Reference.docx). Old
+// tiers are kept below (marked Legacy) rather than removed — matching is by
+// hours+price, not key, so grandfathered clients already on a since-removed
+// tier keep showing their real tier name instead of falling back to
+// "Custom." Only offer non-legacy tiers to new clients.
 const PACKAGE_TIERS = [
-  { key:"m20", label:"Membership — 20 hrs/mo", hours:20, price:950 },
-  { key:"m40", label:"Membership — 40 hrs/mo", hours:40, price:1700 },
-  { key:"m60", label:"Membership — 60 hrs/mo", hours:60, price:2400 },
-  { key:"m80", label:"Membership — 80 hrs/mo", hours:80, price:3200 },
+  { key:"pilot20", label:"Pilot — 20 hrs/mo (1-month only)", hours:20, price:950 },
+  { key:"ongoing25", label:"Ongoing 25 — 25 hrs/mo", hours:25, price:1150 },
+  { key:"ongoing35", label:"Ongoing 35 — 35 hrs/mo (Most Popular)", hours:35, price:1600 },
+  { key:"ongoing40", label:"Ongoing 40 — 40 hrs/mo", hours:40, price:2000 },
+  { key:"ongoing60", label:"Ongoing 60 — 60 hrs/mo", hours:60, price:2640 },
+  { key:"ongoing80", label:"Ongoing 80 — 80 hrs/mo", hours:80, price:3520 },
   { key:"reset_refresh", label:"Home Reset — The Refresh", hours:6, price:325 },
-  { key:"reset_restore", label:"Home Reset — The Restore", hours:12, price:575 }
+  { key:"reset_restore", label:"Home Reset — The Restore (Most Popular)", hours:12, price:575 },
+  { key:"setup_unpack", label:"New Home Setup — The Unpack", hours:8, price:550 },
+  { key:"setup_settle", label:"New Home Setup — The Settle (Most Popular)", hours:16, price:950 },
+  { key:"setup_fullmovein", label:"New Home Setup — The Full Move-In (Assistant + Handyman)", hours:30, price:2500 },
+  // Grandfathered — kept only so existing clients on these older prices
+  // keep showing their real tier name instead of falling back to "Custom."
+  // Never offered to new clients.
+  { key:"legacy_m40_1700", label:"Legacy — 40 hrs/mo, $1,700 (grandfathered only)", hours:40, price:1700 },
+  { key:"legacy_ongoing45_2000", label:"Legacy — 45 hrs/mo, $2,000 (grandfathered only)", hours:45, price:2000 },
+  { key:"legacy_ongoing60_2400", label:"Legacy — 60 hrs/mo, $2,400 (grandfathered only)", hours:60, price:2400 },
+  { key:"legacy_ongoing80_3200", label:"Legacy — 80 hrs/mo, $3,200 (grandfathered only)", hours:80, price:3200 }
 ];
 const OVERAGE_RATE = 50; // $/hr beyond the package
+
+// Business Systems & Software add-ons (Sept 2026 pricing doc) — a separate
+// project/flat-fee tracking system from the hourly PACKAGE_TIERS above.
+// Offered to existing recurring/hourly-package clients as add-ons, not sold
+// standalone. flatFee is null for the two "custom quoted, from $X" tiers —
+// noteDefault carries the "from $X" figure as a starting point, but the
+// actual fee is always entered per-client since those are individually quoted.
+const ADDON_CATALOG = [
+  { key:"sop_standard", category:"SOP", label:"Standard SOP", flatFee:450, maintenance:0, note:"Single process, single system" },
+  { key:"sop_complex", category:"SOP", label:"Complex SOP", flatFee:750, maintenance:0, note:"Multi-step, cross-system, incl. research/interviews" },
+  { key:"build_small", category:"Software Build", label:"Small Build", flatFee:3500, maintenance:150, note:"Single-purpose tool (dashboard, tracker, booking system)" },
+  { key:"build_medium", category:"Software Build", label:"Medium Build", flatFee:7500, maintenance:250, note:"Multi-feature system, several integrations" },
+  { key:"build_large", category:"Software Build", label:"Large Build", flatFee:null, noteDefault:15000, maintenance:450, note:"Full consolidation platform — from $15,000, custom quoted" },
+  { key:"ai_quick", category:"AI Integration", label:"Quick Automation", flatFee:650, maintenance:100, note:"Single automated workflow" },
+  { key:"ai_workflow", category:"AI Integration", label:"AI Workflow Build", flatFee:2200, maintenance:200, note:"Multi-step automation, AI decision-making, 3–5 systems" },
+  { key:"ai_custom", category:"AI Integration", label:"Custom AI System", flatFee:null, noteDefault:4500, maintenance:350, note:"Full AI agent/integration across multiple platforms — from $4,500, custom quoted" },
+  { key:"product_simple_license", category:"Productized Software", label:"Simple — License Only", flatFee:1500, maintenance:0, note:"Full source code + setup docs, no support" },
+  { key:"product_simple_custom", category:"Productized Software", label:"Simple — Customize-For-You", flatFee:2700, maintenance:0, note:"License $1,500 + customization $1,200" },
+  { key:"product_mid_license", category:"Productized Software", label:"Mid — License Only", flatFee:3000, maintenance:0, note:"Full source code + setup docs, no support" },
+  { key:"product_mid_custom", category:"Productized Software", label:"Mid — Customize-For-You", flatFee:5500, maintenance:0, note:"License $3,000 + customization $2,500" },
+  { key:"product_complex_license", category:"Productized Software", label:"Complex — License Only", flatFee:5500, maintenance:0, note:"Full source code + setup docs, no support" },
+  { key:"product_complex_custom", category:"Productized Software", label:"Complex — Customize-For-You", flatFee:9500, maintenance:0, note:"License $5,500 + customization $4,000" }
+];
+const ADDON_STATUSES = ["Proposed","Active","Completed","Cancelled"];
+
+// Lead Organizer — prospects to follow up with, plus paused clients to
+// re-engage. A separate top-level collection (not nested under a client)
+// since most leads never become one.
+const LEAD_SOURCES = ["Facebook","Instagram","TikTok","Word of Mouth","Search Engine","Other"];
+const LEAD_STATUSES = ["New","Contacted","Follow-up Needed","Not Interested","Converted"];
 
 // ---- 3. App state ----
 let state = {
@@ -305,6 +357,7 @@ let state = {
   clients: [],
   tasks: [],
   timeEntries: [],
+  leads: [],
   activeTab: "dashboard",
   crmSubTab: "tasks",
   selectedClientId: null,
@@ -532,6 +585,19 @@ async function boot(){
       state.timeEntries = demo.timeEntries;
     }
   } else {
+    // Anonymous auth isn't a second login step for anyone — it's invisible
+    // and automatic. Its only job is giving Firestore Security Rules a
+    // request.auth to check, so rules can require "came through the app"
+    // instead of allowing any bare HTTP request straight to the database
+    // with no gate at all. The app's own passcode/access-code roles
+    // (admin/team/client) are unrelated and layered on top of this.
+    try{
+      if(!firebase.auth().currentUser){
+        await firebase.auth().signInAnonymously();
+      }
+    }catch(err){
+      console.warn("Anonymous auth sign-in failed (Anonymous provider may not be enabled yet in Firebase Console):", err);
+    }
     try{
       state.settings = await ensureSettings();
     }catch(err){
@@ -547,6 +613,7 @@ async function boot(){
     subscribe("clients", items=>{ state.clients = items; if(!state.modal) render(); });
     subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
     subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
+    subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
     watchOrientationSync();
   }
 
@@ -1289,6 +1356,60 @@ function copyRenewalMessage(clientId, btnEl){
     setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
   }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
 }
+// Sent by Tory around day 21 of a client's pilot month — checks in on how
+// the first ~3 weeks went and lists the current Ongoing packages so they
+// can pick one if they want to continue. Pilot itself is one-time-only
+// (see TMC-Pricing-Reference.docx), so this replaces the generic renewal
+// email for pilot clients rather than running alongside it.
+function buildPilotCheckInEmail(client){
+  const end = termEndDate(client);
+  const notice = noticeDeadline(client);
+  const firstName = (client.name||"").split(" ")[0] || client.name;
+  const endStr = end ? end.toLocaleDateString() : "[pilot end date — set a contract start date on the Membership tab]";
+  const noticeStr = notice ? notice.toLocaleDateString() : "[notice deadline — set a contract start date on the Membership tab]";
+  const packageLines = PACKAGE_TIERS
+    .filter(t=>t.key.startsWith("ongoing"))
+    .map(t=>"- " + t.label.split(" — ")[0] + " — " + t.hours + " hrs/month — $" + t.price)
+    .join("\n");
+  const body = "Hi " + firstName + ",\n\n"
+    + "You're coming up on three weeks with us! We'd love to hear how it's been going so far.\n\n"
+    + "Your one-month pilot wraps up on " + endStr + ". If you'd like to continue, here's what our ongoing membership packages look like:\n\n"
+    + packageLines + "\n\n"
+    + "Just reply and let us know which package fits best, and we'll get you set up — no gap in service.\n\n"
+    + "If you'd rather not continue, per your service agreement we need written notice (email or text) at least by "
+    + noticeStr + ", five days before your pilot ends, otherwise the membership continues automatically and you may be "
+    + "responsible for the remaining contract balance.\n\n"
+    + "Thanks so much for giving us a shot these first few weeks!\n\n"
+    + "Warmly,\nThe Modern Concierge Team";
+  return { subject: "How's it going? + your membership options — " + client.name, body };
+}
+// Tracked per term start date, not a plain boolean — if this client ever
+// starts a NEW pilot later (rare, but possible after a gap), the flag no
+// longer matches and the reminder naturally reappears instead of staying
+// silently cleared forever.
+function markPilotCheckInSent(clientId, termStartDate){
+  upsert("clients", clientId, { pilotCheckInSentForTermStart: termStartDate });
+}
+function emailPilotCheckIn(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!client.email){ alert(client.name + " doesn't have an email on file yet — add one on their Membership tab first."); return; }
+  const { subject, body } = buildPilotCheckInEmail(client);
+  window.location.href = "mailto:" + client.email + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+  markPilotCheckInSent(clientId, client.termStartDate);
+}
+function copyPilotCheckInMessage(clientId, btnEl){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const { body } = buildPilotCheckInEmail(client);
+  navigator.clipboard.writeText(body).then(()=>{
+    markPilotCheckInSent(clientId, client.termStartDate);
+    if(!btnEl) return;
+    const orig = btnEl.textContent;
+    btnEl.textContent = "Copied ✓";
+    setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
+  }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
+}
 // ---- 8e. CSV export ----
 function csvEscape(val){
   const s = String(val==null ? "" : val);
@@ -1308,14 +1429,14 @@ function downloadCsv(filename, rows){
 }
 function exportPayrollCsv(){
   const period = payrollFilterPeriod();
-  const rows = [["Assistant","Hours worked","Hourly rate","Amount owed","Status","Payroll period"]];
+  const rows = [["Assistant","Pay type","Hours worked","Rate","Amount owed","Status","Payroll period"]];
   state.settings.assistants.forEach(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
     const hrs = hoursInPeriod(entries, period);
-    const rate = a.hourlyRate || 0;
     rows.push([
       a.name + (a.active===false ? " (former)" : ""),
-      hrs.toFixed(2), rate.toFixed(2), (hrs*rate).toFixed(2),
+      a.payType==="flat" ? "Flat rate" : "Hourly",
+      hrs.toFixed(2), payrollRateLabel(a), payrollAmountForAssistant(a,hrs).toFixed(2),
       a.active===false ? "former employee" : "active",
       formatPeriodRange(period)
     ]);
@@ -1429,7 +1550,7 @@ function buildPayrollReport(assistant, period){
   });
   const byClient = Object.entries(byClientMap).map(([name,hours])=>({name,hours})).sort((a,b)=>b.hours-a.hours);
   const rate = assistant.hourlyRate || 0;
-  return { assistant, period, totalHours, byClient, rate, amountOwed: totalHours*rate };
+  return { assistant, period, totalHours, byClient, rate, amountOwed: payrollAmountForAssistant(assistant, totalHours) };
 }
 function payrollReportHtml(report){
   const { assistant, period, byClient } = report;
@@ -1502,7 +1623,7 @@ function payrollReportHtml(report){
         <div class="caption">This Pay Period</div>
         <div class="hours-row">
           <div class="hours-stat"><div class="num">${formatHoursMinutes(report.totalHours)}</div><div class="label">HOURS WORKED</div></div>
-          <div class="hours-stat"><div class="num">$${report.rate.toFixed(2)}</div><div class="label">HOURLY RATE</div></div>
+          <div class="hours-stat"><div class="num">$${(report.assistant.payType==="flat"?(report.assistant.flatRatePerPeriod||0):report.rate).toFixed(2)}</div><div class="label">${report.assistant.payType==="flat"?"FLAT RATE / PERIOD":"HOURLY RATE"}</div></div>
           <div class="hours-stat"><div class="num">$${report.amountOwed.toFixed(2)}</div><div class="label">TOTAL PAY</div></div>
         </div>
       </div>
@@ -1569,7 +1690,7 @@ async function emailPayrollReport(assistantId){
 // so an existing assignment to someone who's left stays visible for context.
 function assignableAssistants(alreadyIds){
   const already = new Set(alreadyIds||[]);
-  return state.settings.assistants.filter(a=>a.active!==false || already.has(a.id));
+  return state.settings.assistants.filter(a=>(a.active!==false && !a.isContentCreator) || already.has(a.id));
 }
 // A client's package hours are quoted on their own (monthly/quarterly/annual)
 // billing cycle, not on the semi-monthly payroll calendar. To compare what a
@@ -1745,7 +1866,18 @@ function upcomingReminders(windowDays){
 // Per the Services Agreement §2: written notice is required this many days
 // before the term ends, or it auto-renews and the card on file gets charged.
 const TERM_LENGTH_DAYS = { pilot:30, "3month":90, "12month_new":365, "12month_renewal":365 };
-const TERM_NOTICE_DAYS = { pilot:7, "3month":30, "12month_new":60, "12month_renewal":60 };
+const TERM_NOTICE_DAYS = { pilot:5, "3month":30, "12month_new":60, "12month_renewal":60 };
+// Day 21 of the pilot is Tory's cue to check in — separate from (and
+// earlier than) the day-25 cancellation notice deadline (30-day pilot
+// minus the 5-day notice window above). Pilot clients get this check-in
+// email instead of the generic renewal email other term types get, since
+// "pilot" isn't itself renewable — it's a one-time entry point into an
+// Ongoing package (see buildPilotCheckInEmail).
+const PILOT_CHECKIN_DAY = 21;
+function pilotCheckInDueDate(client){
+  if(!client.termStartDate) return null;
+  return new Date(parseYMD(client.termStartDate).getTime() + PILOT_CHECKIN_DAY*24*3600000);
+}
 const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "12month_new":"Twelve Month Term (New)", "12month_renewal":"Twelve Month Term (Renewal)" };
 function termEndDate(client){
   // A manual override always wins — the 30/90/365-day formula is a default,
@@ -1815,25 +1947,42 @@ function emailsNeededList(){
           detail: (daysToEnd<0 ? "period ended " : "period ends ") + periodEndDisplay.toLocaleDateString(), urgent: daysToEnd<0, days: daysToEnd });
       }
     }
-    const notice = noticeDeadline(client);
-    if(notice && client.termType){
-      const daysToNotice = daysUntil(notice, now);
-      const sent = client.renewalEmailSentForTermType === client.termType;
-      if(!sent && daysToNotice<=7){
-        items.push({ client, type:"renewal", label:"Send contract renewal email",
-          detail: (daysToNotice<0 ? "notice deadline was " : "notice due ") + notice.toLocaleDateString(), urgent: daysToNotice<0, days: daysToNotice });
+    // Pilot isn't itself renewable — it's a one-time entry point — so pilot
+    // clients get the day-21 check-in email instead of the generic
+    // contract-renewal email other term types get further below.
+    const isPilot = !client.termType || client.termType==="pilot";
+    if(isPilot){
+      const checkInDue = pilotCheckInDueDate(client);
+      if(checkInDue){
+        const daysToCheckIn = daysUntil(checkInDue, now);
+        const sent = client.pilotCheckInSentForTermStart === client.termStartDate;
+        if(!sent && daysToCheckIn<=0){
+          items.push({ client, type:"pilotCheckIn", label:"Send pilot check-in email",
+            detail: "day " + PILOT_CHECKIN_DAY + " of pilot was " + checkInDue.toLocaleDateString(), urgent: daysToCheckIn < -7, days: daysToCheckIn });
+        }
+      }
+    } else {
+      const notice = noticeDeadline(client);
+      if(notice && client.termType){
+        const daysToNotice = daysUntil(notice, now);
+        const sent = client.renewalEmailSentForTermType === client.termType;
+        if(!sent && daysToNotice<=7){
+          items.push({ client, type:"renewal", label:"Send contract renewal email",
+            detail: (daysToNotice<0 ? "notice deadline was " : "notice due ") + notice.toLocaleDateString(), urgent: daysToNotice<0, days: daysToNotice });
+        }
       }
     }
   });
   return items.sort((a,b)=>a.days-b.days);
 }
 function dismissEmailNeeded(clientId, type){
+  const client = state.clients.find(c=>c.id===clientId);
   if(type==="period"){
-    const client = state.clients.find(c=>c.id===clientId);
     const period = currentBillingPeriod(client);
     if(period) markPeriodRecapSent(clientId, period);
+  } else if(type==="pilotCheckIn"){
+    markPilotCheckInSent(clientId, client.termStartDate);
   } else {
-    const client = state.clients.find(c=>c.id===clientId);
     markRenewalEmailSent(clientId, client.termType);
   }
 }
@@ -1847,7 +1996,8 @@ function tryAdminLogin(code){
 function tryTeamLogin(code){
   const match = state.settings.assistants.find(a=>a.active!==false && a.accessCode && a.accessCode===code);
   if(match){
-    state.role = "team"; state.currentAssistant = match; state.view="app"; state.activeTab="dashboard";
+    state.role = "team"; state.currentAssistant = match; state.view="app";
+    state.activeTab = match.isContentCreator ? "content" : "dashboard";
     if(!match.agreementSigned){ state.modal = { type:"agreementGate", assistant: match }; }
     else if(!match.hasSeenAppGuide){ state.modal = { type:"appGuide", assistant: match }; }
     render();
@@ -1949,8 +2099,11 @@ function promptLogin(kind){
 }
 
 function renderAppShell(){
-  const tabs = state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
+  const isContentCreator = state.role==="team" && state.currentAssistant && state.currentAssistant.isContentCreator;
+  const tabs = isContentCreator
+    ? [["content","Content Calendar"]]
+    : state.role==="admin"
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
     : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
 
   app.innerHTML = `
@@ -1961,7 +2114,7 @@ function renderAppShell(){
           <button class="nav-toggle" onclick="toggleMobileNav()">☰</button>
         </div>
         <div class="who">
-          ${state.role==="admin" ? "Admin" : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
+          ${state.role==="admin" ? "Admin" : isContentCreator ? "Content Creator — " + state.currentAssistant.name : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
           <div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div>
         </div>
         <div class="nav-links">
@@ -1988,6 +2141,9 @@ function renderMain(){
     case "payroll": return state.role==="admin" ? renderPayrollTool() : "";
     case "reports": return state.role==="admin" ? renderReportsTab() : "";
     case "renewals": return state.role==="admin" ? renderRenewalsTab() : "";
+    case "addons": return state.role==="admin" ? renderAddOnsTab() : "";
+    case "content": return (state.role==="admin" || (state.currentAssistant && state.currentAssistant.isContentCreator)) ? renderContentCalendarTab() : "";
+    case "leads": return state.role==="admin" ? renderLeadOrganizerTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
     case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
@@ -2280,6 +2436,331 @@ function renderAdminDashboard(){
 
 // --- Renewals & membership info (admin only, moved off the dashboard so it
 // stays quick-glance — full detail lives here instead) ---
+function allClientAddOns(){
+  const rows = [];
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).forEach(client=>{
+    (client.addOns||[]).forEach(addOn=>rows.push({ client, addOn }));
+  });
+  return rows;
+}
+function renderAddOnsTab(){
+  const rows = allClientAddOns();
+  const activeMaintenanceTotal = rows
+    .filter(r=>r.addOn.status==="Active" && r.addOn.monthlyMaintenance>0 && r.addOn.maintenanceActive!==false)
+    .reduce((sum,r)=>sum+r.addOn.monthlyMaintenance,0);
+  const statusFilter = state.addOnsStatusFilter || "all";
+  const filtered = statusFilter==="all" ? rows : rows.filter(r=>r.addOn.status===statusFilter);
+  return `
+    <h2>Business Systems &amp; Software Add-Ons</h2>
+    <div class="small" style="margin-bottom:14px;">Company-wide view of every SOP, custom build, AI automation, and productized software add-on across all clients. Add or edit one from a client's Membership tab.</div>
+    <div class="stat-row">
+      <div class="stat-tile"><div class="stat-label">Total add-ons</div><div class="stat-value">${rows.length}</div></div>
+      <div class="stat-tile"><div class="stat-label">Active monthly maintenance</div><div class="stat-value">$${activeMaintenanceTotal.toFixed(0)}</div></div>
+    </div>
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:10px;">
+        <h3 style="margin:0;">All add-ons</h3>
+        <select onchange="state.addOnsStatusFilter=this.value;render();">
+          <option value="all" ${statusFilter==='all'?'selected':''}>All statuses</option>
+          ${ADDON_STATUSES.map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join("")}
+        </select>
+      </div>
+      ${filtered.length===0 ? `<div class="small">No add-ons${statusFilter!=='all'?' with status '+statusFilter:''} yet.</div>` :
+        filtered.map(({client,addOn})=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+          <div>
+            <strong>${client.name}</strong> — ${addOn.category}: ${addOn.label}
+            <div class="small">$${(addOn.flatFee||0).toFixed(0)} flat${addOn.monthlyMaintenance>0 ? ` + $${addOn.monthlyMaintenance}/mo maintenance${addOn.maintenanceActive===false?' (paused)':''}` : ''} · added ${addOn.addedDate ? parseYMD(addOn.addedDate).toLocaleDateString() : '—'}</div>
+          </div>
+          <span class="badge" style="background:${addOn.status==='Active'?'var(--ok)':addOn.status==='Proposed'?'var(--warn)':addOn.status==='Cancelled'?'var(--danger)':'#8a7a72'};">${addOn.status}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+// --- Content Calendar (Content Creator role + admin) ---
+function renderContentCalendarTab(){
+  const isAdmin = state.role==="admin";
+  const plan = state.settings.contentPlan || [];
+  const ideas = plan.filter(e=>e.type==="idea");
+  const dated = plan.filter(e=>e.type!=="idea").slice().sort((a,b)=> (a.date||'') < (b.date||'') ? -1 : 1);
+  const socialLogins = state.settings.socialLogins || [];
+  const insights = (state.settings.contentInsights||[]).slice().sort((a,b)=> (b.date||'') < (a.date||'') ? -1 : 1);
+  const goals = state.settings.contentGoals || [];
+  return `
+    <h2>Content Calendar</h2>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Upcoming — scheduled content &amp; notes</h3>
+        <div style="display:flex;gap:8px;">
+          <button class="secondary" onclick="addContentEntry('scheduled')">+ Scheduled content</button>
+          ${isAdmin ? `<button class="secondary" onclick="addContentEntry('opsNote')">+ Note for Content Creator</button>` : ""}
+        </div>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Scheduled posts plus anything Kaylan flags about the team's week ahead — useful for picking a shoot day that won't collide with a busy stretch.</div>
+      ${dated.length ? dated.map(renderContentEntryRow).join("") : `<div class="small">Nothing on the calendar yet.</div>`}
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Content Ideas</h3>
+        <button class="secondary" onclick="addContentEntry('idea')">+ Add idea</button>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Backlog — no date needed yet.</div>
+      ${ideas.length ? ideas.map(renderContentEntryRow).join("") : `<div class="small">No ideas logged yet.</div>`}
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3>Social Media Logins</h3>
+        <button class="secondary" onclick="addSocialLogin()">+ Add login</button>
+      </div>
+      <div class="small" style="margin-bottom:10px;color:var(--warn);">Stored as plain text, visible to Admin and the Content Creator only — no one else. For stronger security down the line, consider a shared password manager vault instead of storing these here.</div>
+      ${socialLogins.length ? socialLogins.map(renderSocialLoginRow).join("") : `<div class="small">No logins saved yet.</div>`}
+    </div>
+    <div class="row">
+      <div class="card">
+        <div class="flex-between">
+          <h3 style="margin:0;">Insights</h3>
+          <button class="secondary" onclick="addContentInsight()">+ Add</button>
+        </div>
+        ${insights.length ? insights.map(renderContentInsightRow).join("") : `<div class="small">No insights logged yet.</div>`}
+      </div>
+      <div class="card">
+        <div class="flex-between">
+          <h3 style="margin:0;">Goals</h3>
+          <button class="secondary" onclick="addContentGoal()">+ Add</button>
+        </div>
+        ${goals.length ? goals.map(renderContentGoalRow).join("") : `<div class="small">No goals set yet.</div>`}
+      </div>
+    </div>
+  `;
+}
+function renderContentEntryRow(e){
+  const typeLabel = e.type==="idea" ? "Idea" : e.type==="opsNote" ? "Note" : "Scheduled";
+  const badgeColor = e.type==="opsNote" ? "var(--warn)" : e.type==="idea" ? "#8a7a72" : "var(--ok)";
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="flex-between">
+        <div>
+          <span class="badge" style="background:${badgeColor};">${typeLabel}</span>
+          <strong>${e.title||'(untitled)'}</strong>
+          ${e.platform ? `<span class="small">· ${e.platform}</span>` : ""}
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          ${e.type!=="idea" ? `<input type="date" value="${e.date||''}" onchange="updateContentEntry('${e.id}','date',this.value)" style="width:150px;">` : ""}
+          <button class="secondary" onclick="removeContentEntry('${e.id}')">Remove</button>
+        </div>
+      </div>
+      <div class="row">
+        <div><label class="small">Title</label><input value="${e.title||''}" onchange="updateContentEntry('${e.id}','title',this.value)"></div>
+        <div><label class="small">Platform</label><input value="${e.platform||''}" placeholder="Instagram, TikTok, etc." onchange="updateContentEntry('${e.id}','platform',this.value)"></div>
+        ${e.type==="scheduled" ? `<div><label class="small">Status</label>
+          <select onchange="updateContentEntry('${e.id}','status',this.value)">
+            ${["Idea","Drafting","Ready","Posted"].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>` : ""}
+      </div>
+      <div><label class="small">Notes</label><textarea onchange="updateContentEntry('${e.id}','notes',this.value)">${e.notes||''}</textarea></div>
+    </div>
+  `;
+}
+function addContentEntry(type){
+  const entry = {
+    id: newId("content"),
+    type,
+    title: type==="opsNote" ? "Heads up" : type==="idea" ? "New idea" : "New scheduled post",
+    date: type==="idea" ? "" : new Date().toISOString().slice(0,10),
+    platform: "",
+    status: type==="scheduled" ? "Idea" : "",
+    notes: "",
+    addedBy: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:"")
+  };
+  upsert("settings","access", { contentPlan: [...(state.settings.contentPlan||[]), entry] });
+}
+function updateContentEntry(id, field, value){
+  const contentPlan = (state.settings.contentPlan||[]).map(e=> e.id===id ? { ...e, [field]:value } : e);
+  upsert("settings","access", { contentPlan });
+}
+function removeContentEntry(id){
+  if(!confirm("Remove this entry?")) return;
+  upsert("settings","access", { contentPlan: (state.settings.contentPlan||[]).filter(e=>e.id!==id) });
+}
+function renderSocialLoginRow(s){
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="row">
+        <div><label class="small">Platform</label><input value="${s.platform||''}" placeholder="Instagram, Facebook, TikTok..." onchange="updateSocialLogin('${s.id}','platform',this.value)"></div>
+        <div><label class="small">Username/Email</label><input value="${s.username||''}" onchange="updateSocialLogin('${s.id}','username',this.value)"></div>
+        <div><label class="small">Password</label><input type="text" value="${s.password||''}" onchange="updateSocialLogin('${s.id}','password',this.value)"></div>
+      </div>
+      <div><label class="small">Notes</label><input value="${s.notes||''}" placeholder="2FA method, recovery info, etc." onchange="updateSocialLogin('${s.id}','notes',this.value)"></div>
+      <div><button class="secondary" onclick="removeSocialLogin('${s.id}')">Remove</button></div>
+    </div>
+  `;
+}
+function addSocialLogin(){
+  const login = { id:newId("social"), platform:"", username:"", password:"", notes:"" };
+  upsert("settings","access", { socialLogins: [...(state.settings.socialLogins||[]), login] });
+}
+function updateSocialLogin(id, field, value){
+  const socialLogins = (state.settings.socialLogins||[]).map(s=> s.id===id ? { ...s, [field]:value } : s);
+  upsert("settings","access", { socialLogins });
+}
+function removeSocialLogin(id){
+  if(!confirm("Remove this login?")) return;
+  upsert("settings","access", { socialLogins: (state.settings.socialLogins||[]).filter(s=>s.id!==id) });
+}
+function renderContentInsightRow(i){
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div><label class="small">Date</label><input type="date" value="${i.date||''}" onchange="updateContentInsight('${i.id}','date',this.value)"></div>
+      <div><textarea onchange="updateContentInsight('${i.id}','notes',this.value)" placeholder="e.g. Reels are getting 3x the engagement of static posts this month">${i.notes||''}</textarea></div>
+      <div><button class="secondary" onclick="removeContentInsight('${i.id}')">Remove</button></div>
+    </div>
+  `;
+}
+function addContentInsight(){
+  const insight = { id:newId("insight"), date:new Date().toISOString().slice(0,10), notes:"" };
+  upsert("settings","access", { contentInsights: [...(state.settings.contentInsights||[]), insight] });
+}
+function updateContentInsight(id, field, value){
+  const contentInsights = (state.settings.contentInsights||[]).map(i=> i.id===id ? { ...i, [field]:value } : i);
+  upsert("settings","access", { contentInsights });
+}
+function removeContentInsight(id){
+  if(!confirm("Remove this insight?")) return;
+  upsert("settings","access", { contentInsights: (state.settings.contentInsights||[]).filter(i=>i.id!==id) });
+}
+function renderContentGoalRow(g){
+  return `
+    <div class="checklist-item">
+      <input type="checkbox" ${g.done?'checked':''} onchange="updateContentGoal('${g.id}','done',this.checked)">
+      <input value="${(g.text||'').replace(/"/g,'&quot;')}" style="flex:1;" onchange="updateContentGoal('${g.id}','text',this.value)">
+      <input type="date" style="width:150px;" value="${g.targetDate||''}" onchange="updateContentGoal('${g.id}','targetDate',this.value)">
+      <button class="secondary" onclick="removeContentGoal('${g.id}')">✕</button>
+    </div>
+  `;
+}
+function addContentGoal(){
+  const goal = { id:newId("goal"), text:"", targetDate:"", done:false };
+  upsert("settings","access", { contentGoals: [...(state.settings.contentGoals||[]), goal] });
+}
+function updateContentGoal(id, field, value){
+  const contentGoals = (state.settings.contentGoals||[]).map(g=> g.id===id ? { ...g, [field]:value } : g);
+  upsert("settings","access", { contentGoals });
+}
+function removeContentGoal(id){
+  upsert("settings","access", { contentGoals: (state.settings.contentGoals||[]).filter(g=>g.id!==id) });
+}
+// --- Lead Organizer (admin only) ---
+function renderLeadOrganizerTab(){
+  const leads = state.leads || [];
+  const statusFilter = state.leadsStatusFilter || "all";
+  const filtered = statusFilter==="all" ? leads : leads.filter(l=>l.status===statusFilter);
+  const sorted = filtered.slice().sort((a,b)=> (a.nextFollowUpDate||'9999') < (b.nextFollowUpDate||'9999') ? -1 : 1);
+  const leadSourceCounts = {};
+  const clientSourceCounts = {};
+  LEAD_SOURCES.forEach(s=>{ leadSourceCounts[s]=0; clientSourceCounts[s]=0; });
+  leads.forEach(l=>{ const s = l.source||"Other"; leadSourceCounts[s] = (leadSourceCounts[s]||0)+1; });
+  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
+  realClients.forEach(c=>{ if(c.leadSource) clientSourceCounts[c.leadSource] = (clientSourceCounts[c.leadSource]||0)+1; });
+  const pausedClients = realClients.filter(c=>c.clientStatus==="paused");
+  return `
+    <h2>Lead Organizer</h2>
+    <div class="small" style="margin-bottom:14px;">Prospects to follow up with, paused clients to win back, and where people are finding out about us.</div>
+
+    <div class="card">
+      <h3>How people are finding us — leads not yet converted</h3>
+      <div class="stat-row">
+        ${LEAD_SOURCES.map(s=>`<div class="stat-tile"><div class="stat-label">${s}</div><div class="stat-value">${leadSourceCounts[s]}</div></div>`).join("")}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>How signed clients found us</h3>
+      <div class="small" style="margin-bottom:8px;">Set per-client on the Profile tab (Client &amp; Visit Details). ${realClients.filter(c=>!c.leadSource).length} of ${realClients.length} clients don't have a source set yet.</div>
+      <div class="stat-row">
+        ${LEAD_SOURCES.map(s=>`<div class="stat-tile"><div class="stat-label">${s}</div><div class="stat-value">${clientSourceCounts[s]}</div></div>`).join("")}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Leads &amp; Prospects</h3>
+        <div style="display:flex;gap:8px;">
+          <select onchange="state.leadsStatusFilter=this.value;render();">
+            <option value="all" ${statusFilter==='all'?'selected':''}>All statuses</option>
+            ${LEAD_STATUSES.map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+          <button onclick="addLead()">+ Add lead</button>
+        </div>
+      </div>
+      ${sorted.length ? sorted.map(renderLeadRow).join("") : `<div class="small">No leads${statusFilter!=='all'?' with status '+statusFilter:''} yet.</div>`}
+    </div>
+
+    <div class="card">
+      <h3>Paused Clients — Reach Back Out</h3>
+      <div class="small" style="margin-bottom:10px;">Pulled live from Clients — set a client's status to Paused on their Membership tab and they'll show up here automatically.</div>
+      ${pausedClients.length ? pausedClients.map(renderPausedClientRow).join("") : `<div class="small">No paused clients right now.</div>`}
+    </div>
+  `;
+}
+function renderLeadRow(l){
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="row">
+        <div><label class="small">Name</label><input value="${l.name||''}" onchange="updateLeadField('${l.id}','name',this.value)"></div>
+        <div><label class="small">Email</label><input type="email" value="${l.email||''}" onchange="updateLeadField('${l.id}','email',this.value)"></div>
+        <div><label class="small">Phone</label><input value="${l.phone||''}" onchange="updateLeadField('${l.id}','phone',this.value)"></div>
+      </div>
+      <div class="row">
+        <div><label class="small">Found us via</label>
+          <select onchange="updateLeadField('${l.id}','source',this.value)">
+            ${LEAD_SOURCES.map(s=>`<option value="${s}" ${(l.source||'Other')===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Status</label>
+          <select onchange="updateLeadField('${l.id}','status',this.value)">
+            ${LEAD_STATUSES.map(s=>`<option value="${s}" ${(l.status||'New')===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Next follow-up</label><input type="date" value="${l.nextFollowUpDate||''}" onchange="updateLeadField('${l.id}','nextFollowUpDate',this.value)"></div>
+      </div>
+      <div><label class="small">Notes</label><textarea onchange="updateLeadField('${l.id}','notes',this.value)" placeholder="What was discussed, when last contacted, etc.">${l.notes||''}</textarea></div>
+      <div><button class="secondary" onclick="removeLead('${l.id}')">Remove</button></div>
+    </div>
+  `;
+}
+function addLead(){
+  const lead = {
+    id: newId("lead"),
+    name: "", email: "", phone: "",
+    source: "Other", status: "New",
+    nextFollowUpDate: "", notes: "",
+    createdDate: new Date().toISOString().slice(0,10)
+  };
+  upsert("leads", lead.id, lead);
+}
+function updateLeadField(id, field, value){ upsert("leads", id, { [field]: value }); }
+function removeLead(id){
+  if(!confirm("Remove this lead?")) return;
+  remove("leads", id);
+}
+function renderPausedClientRow(c){
+  const daysSince = c.cancelledDate ? Math.round((Date.now()-parseYMD(c.cancelledDate).getTime())/86400000) : null;
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="flex-between">
+        <strong>${c.name}</strong>
+        <span class="small">${c.cancelledDate ? `paused since ${parseYMD(c.cancelledDate).toLocaleDateString()}${daysSince!==null?` (${daysSince}d ago)`:''}` : 'paused date not set'}</span>
+      </div>
+      <div class="row">
+        <div><label class="small">Last re-engagement contact</label><input type="date" value="${c.lastReengagementDate||''}" onchange="updateClientField('${c.id}','lastReengagementDate',this.value)"></div>
+      </div>
+      <div><label class="small">Re-engagement notes</label><textarea onchange="updateClientField('${c.id}','reengagementNotes',this.value)" placeholder="What's been tried, their response, when to try again">${c.reengagementNotes||''}</textarea></div>
+      <div><button class="secondary" onclick="openClient('${c.id}')">View client</button></div>
+    </div>
+  `;
+}
 function renderRenewalsTab(){
   const noticeDeadlines = upcomingNoticeDeadlines(null);
   const termUpdateClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c));
@@ -3574,6 +4055,12 @@ function renderClientProfile(client){
           ${MARKETS.map(m=>`<option value="${m}" ${(client.market||'Lafayette')===m?'selected':''}>${m}</option>`).join("")}
         </select>
       </div>
+      <div><label class="small">How did you hear about us?</label>
+        <select onchange="updateClientField('${client.id}','leadSource',this.value)">
+          <option value="">—</option>
+          ${LEAD_SOURCES.map(s=>`<option value="${s}" ${client.leadSource===s?'selected':''}>${s}</option>`).join("")}
+        </select>
+      </div>
     </div>
     <div class="small" style="margin-top:4px;">Client type controls which onboarding section shows below.</div>
     <div class="row" style="margin-top:12px;">
@@ -4213,6 +4700,9 @@ function renderClientEmailTemplates(client){
   const end = termEndDate(client);
   const notice = noticeDeadline(client);
   const renewalSent = !!(client.termType && client.renewalEmailSentForTermType === client.termType);
+  const isPilot = !client.termType || client.termType==="pilot";
+  const checkInDue = pilotCheckInDueDate(client);
+  const checkInSent = !!(client.termStartDate && client.pilotCheckInSentForTermStart === client.termStartDate);
   const noEmail = !client.email;
   return `
     ${noEmail ? `<div class="alert warn">No client email on file — add one on the Membership tab before sending anything below.</div>` : ""}
@@ -4252,6 +4742,22 @@ function renderClientEmailTemplates(client){
         <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
       ` : ""}
     </div>
+    ${isPilot ? `
+    <div class="card">
+      <div class="flex-between">
+        <h3>Pilot Check-In</h3>
+        ${client.termStartDate ? `<span class="small" style="color:${checkInSent?'var(--ok)':'var(--warn)'};">${checkInSent?'✓ Sent for this pilot':'Not sent yet'}</span>` : ""}
+      </div>
+      <div class="small" style="margin-bottom:8px;">
+        ${client.termStartDate ? `One Month Pilot · ends ${end?end.toLocaleDateString():'—'} · check in around day ${PILOT_CHECKIN_DAY} (${checkInDue?checkInDue.toLocaleDateString():'—'}) · 5-day cancellation notice due ${notice?notice.toLocaleDateString():'—'}` : "Set a contract start date on the Membership tab to enable"}
+      </div>
+      <div class="small" style="margin-bottom:8px;">Asks how their first few weeks have gone and lists the current Ongoing packages so they can choose one to continue.</div>
+      ${client.termStartDate ? `
+        <button ${noEmail?'disabled':''} onclick="emailPilotCheckIn('${client.id}')">Email client</button>
+        <button class="secondary" onclick="copyPilotCheckInMessage('${client.id}',this)">Copy message</button>
+      ` : ""}
+    </div>
+    ` : `
     <div class="card">
       <div class="flex-between">
         <h3>Contract Renewal</h3>
@@ -4265,6 +4771,7 @@ function renderClientEmailTemplates(client){
         <button class="secondary" onclick="copyRenewalMessage('${client.id}',this)">Copy message</button>
       ` : ""}
     </div>
+    `}
   `;
 }
 function renderNoteBullets(text){
@@ -4353,7 +4860,7 @@ function renderClientMembership(client){
   const overage = overageFor(client);
   const pkg = effectivePackageHours(client);
   const currentTier = PACKAGE_TIERS.find(t=>t.hours===client.packageHours && t.price===client.packagePrice);
-  const isHomeReset = currentTier && currentTier.key.startsWith("reset_");
+  const isHomeReset = currentTier && (currentTier.key.startsWith("reset_") || currentTier.key.startsWith("setup_"));
   const period = currentBillingPeriod(client);
   const periodStartDate = period ? period.start.toISOString().slice(0,10) : null;
   const rolloverActive = !!(periodStartDate && client.rolloverHours && client.rolloverPeriodStart===periodStartDate);
@@ -4490,7 +4997,97 @@ function renderClientMembership(client){
       </div>
       <div class="small">${(client.assistantIds||[]).map(assistantName).join(", ") || "No assistant assigned yet."}</div>
     </div>
+    ${renderClientAddOnsSection(client)}
   `;
+}
+function renderClientAddOnsSection(client){
+  const addOns = client.addOns || [];
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <h3>Business Systems &amp; Software Add-Ons</h3>
+        <button class="secondary" onclick="addClientAddOn('${client.id}')">+ Add add-on</button>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Project-based add-ons (SOPs, custom builds, AI automations, productized software) — separate from this client's hourly package above. Offered to existing recurring clients, not sold standalone.</div>
+      ${addOns.length ? addOns.map(a=>renderAddOnRow(client.id, a)).join("") : `<div class="small">No add-ons yet.</div>`}
+    </div>
+  `;
+}
+function renderAddOnRow(clientId, a){
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+      <div class="row">
+        <div><label class="small">Category</label>
+          <select onchange="updateAddOnCatalog('${clientId}','${a.id}',this.value)">
+            ${ADDON_CATALOG.map(c=>`<option value="${c.key}" ${a.catalogKey===c.key?'selected':''}>${c.category} — ${c.label}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Status</label>
+          <select onchange="updateAddOnField('${clientId}','${a.id}','status',this.value)">
+            ${ADDON_STATUSES.map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div><label class="small">Flat fee ($)</label><input type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Monthly maintenance ($)</label><input type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Date added</label><input type="date" value="${a.addedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','addedDate',this.value)"></div>
+      </div>
+      ${a.monthlyMaintenance>0 ? `
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <input type="checkbox" ${a.maintenanceActive!==false?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','maintenanceActive',this.checked)">
+        Monthly maintenance currently active/billing
+      </label>` : ""}
+      <div><label class="small">Notes</label><textarea onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
+      <div><button class="secondary" onclick="removeClientAddOn('${clientId}','${a.id}')">Remove</button></div>
+    </div>
+  `;
+}
+function addClientAddOn(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const catalogItem = ADDON_CATALOG[0];
+  const addOn = {
+    id: newId("addon"),
+    catalogKey: catalogItem.key,
+    category: catalogItem.category,
+    label: catalogItem.label,
+    flatFee: catalogItem.flatFee || catalogItem.noteDefault || 0,
+    monthlyMaintenance: catalogItem.maintenance || 0,
+    maintenanceActive: true,
+    status: "Proposed",
+    addedDate: new Date().toISOString().slice(0,10),
+    notes: catalogItem.note || ""
+  };
+  upsert("clients", clientId, { addOns: [...(client.addOns||[]), addOn] });
+}
+function updateAddOnCatalog(clientId, addOnId, catalogKey){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const catalogItem = ADDON_CATALOG.find(c=>c.key===catalogKey);
+  if(!catalogItem) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? {
+    ...a,
+    catalogKey: catalogItem.key,
+    category: catalogItem.category,
+    label: catalogItem.label,
+    flatFee: catalogItem.flatFee || catalogItem.noteDefault || 0,
+    monthlyMaintenance: catalogItem.maintenance || 0,
+    notes: catalogItem.note || a.notes
+  } : a);
+  upsert("clients", clientId, { addOns });
+}
+function updateAddOnField(clientId, addOnId, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, [field]: value } : a);
+  upsert("clients", clientId, { addOns });
+}
+function removeClientAddOn(clientId, addOnId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!confirm("Remove this add-on from the client's record?")) return;
+  upsert("clients", clientId, { addOns: (client.addOns||[]).filter(a=>a.id!==addOnId) });
 }
 function updateClientField(id, field, value){ upsert("clients", id, { [field]: value }); }
 // One date drives everything: setting the contract/term start date also
@@ -4802,6 +5399,10 @@ function setTimeFilterAssistant(assistantId){
   state.timeFilter.assistantId = assistantId;
   render();
 }
+function setTimeFilterAdminOnly(checked){
+  state.timeFilter.adminOnly = checked;
+  render();
+}
 // Lets the Entries list collapse down to just one task's clock-ins instead
 // of scrolling through every entry — the search box reuses the same "#123
 // or title" lookup as clock-in/manual-entry, so it's a null-op if nothing
@@ -4829,7 +5430,8 @@ function renderTimeTracking(){
     ? mineAll.filter(e => e.taskId===taskFilterId)
     : mineAll
       .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
-      .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
+      .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId)
+      .filter(e => !state.timeFilter.adminOnly || e.clientId===INTERNAL_CLIENT_ID);
   const totalHrs = filtered.reduce((s,e)=>s+entryDurationHours(e),0);
   const manualCount = filtered.filter(e=>e.clockOutManual).length;
 
@@ -4914,7 +5516,10 @@ function renderTimeTracking(){
           ${state.timeFilter.preset==="custom" ? `
             <input type="date" style="width:150px;" value="${state.timeFilter.customStart||''}" onchange="setTimeFilterCustom('start',this.value)">
             <input type="date" style="width:150px;" value="${state.timeFilter.customEnd||''}" onchange="setTimeFilterCustom('end',this.value)">
-          ` : ""}`}
+          ` : ""}
+          <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
+            <input type="checkbox" ${state.timeFilter.adminOnly?'checked':''} onchange="setTimeFilterAdminOnly(this.checked)"> Internal/Admin only
+          </label>`}
           <button class="secondary" onclick="exportTimeEntriesCsv()">Export CSV</button>
         </div>
       </div>
@@ -4928,8 +5533,9 @@ function renderTimeTracking(){
       ${sortTimeEntries(filtered, state.timeFilter.sort).map(e=>{
         const task = state.tasks.find(t=>t.id===e.taskId);
         const isAdminWork = e.clientId===INTERNAL_CLIENT_ID;
+        const clientLabel = isAdminWork ? "Internal / Modern Co." : (state.clients.find(c=>c.id===e.clientId)?.name || (e.clientId ? "Unknown client" : ""));
         return `<div class="list-item">
-          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${task?task.title:'(deleted task)'}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
+          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${task?task.title:'(deleted task)'}${clientLabel ? ` <span class="small">· ${clientLabel}</span>` : ''}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
           <div style="display:flex;align-items:center;gap:8px;">${e.clockOut ? entryDurationHours(e).toFixed(2)+" hrs" : `<button onclick="doClockOut('${e.id}')">Clock out</button>`}${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" title="Edit this time entry" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}${state.role==='admin' ? `<button class="secondary" style="padding:2px 8px;${e.flagged?'color:var(--danger);':''}" title="${e.flagged ? 'Unflag' : 'Flag for review'}" onclick="toggleFlagTimeEntry('${e.id}')">${e.flagged ? '⚑' : '⚐'}</button>` : ""}<button class="secondary" style="padding:2px 8px;" title="Delete this time entry" onclick="deleteTimeEntry('${e.id}')">✕</button></div>
         </div>`;
       }).join("") || `<div class="small">No entries in this range.</div>`}
@@ -4963,6 +5569,20 @@ function payrollHoursForAssistant(assistantId, period, adminOnly){
   const entries = state.timeEntries.filter(e=>e.assistantId===assistantId && (!adminOnly || e.clientId===INTERNAL_CLIENT_ID));
   return hoursInPeriod(entries, period);
 }
+// Flat-rate assistants are paid the same amount every pay period regardless
+// of hours logged — so payroll totals/projections need to use their flat
+// rate instead of hours × hourlyRate, or they'd silently show $0 (no
+// hourlyRate set) or the wrong number (an hourlyRate left over from before
+// switching them to flat).
+function payrollAmountForAssistant(assistant, hours){
+  if(assistant.payType==="flat") return assistant.flatRatePerPeriod||0;
+  return hours*(assistant.hourlyRate||0);
+}
+function payrollRateLabel(assistant){
+  return assistant.payType==="flat"
+    ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+"/period (flat)"
+    : "$"+(assistant.hourlyRate||0).toFixed(2)+"/hr";
+}
 function renderPayrollTool(){
   const pf = state.payrollFilter;
   const period = payrollFilterPeriod();
@@ -4978,7 +5598,7 @@ function renderPayrollTool(){
   const totalActual = rows.reduce((s,r)=>s+r.actual,0);
   const flagged = rows.filter(r=>Math.abs(r.variance)>=2);
   const totalRevenue = realClients.reduce((s,c)=>s+expectedRevenuePerPayrollPeriod(c),0);
-  const totalPayrollCost = state.settings.assistants.reduce((s,a)=>s+hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)*(a.hourlyRate||0),0);
+  const totalPayrollCost = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
   const estMargin = totalRevenue - totalPayrollCost;
 
   const shownAssistants = state.settings.assistants.filter(a=>pf.assistantId==="all" || a.id===pf.assistantId);
@@ -5045,7 +5665,7 @@ function renderPayrollTool(){
       </div>
       <div class="stat-tile">
         <div class="stat-label">Total pay</div>
-        <div class="stat-value">$${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly)*(a.hourlyRate||0),0).toFixed(0)}</div>
+        <div class="stat-value">$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly)),0).toFixed(0)}</div>
         <div class="stat-sub">"Paid for vs. clocked" and margin only show for a single payroll period, not ${periodLabel.toLowerCase()}</div>
       </div>`}
     </div>
@@ -5061,13 +5681,12 @@ function renderPayrollTool(){
         <tbody>
           ${shownAssistants.map(a=>{
             const hrs = payrollHoursForAssistant(a.id, period, pf.adminOnly);
-            const rate = a.hourlyRate || 0;
             const active = activeEntryFor(a.id);
             return `<tr>
               <td>${a.name}${a.active===false?' <span class="small">(former)</span>':''}</td>
               <td>${hrs.toFixed(1)}</td>
-              <td>$${rate.toFixed(2)}/hr</td>
-              <td>$${(hrs*rate).toFixed(2)}</td>
+              <td>${payrollRateLabel(a)}</td>
+              <td>$${payrollAmountForAssistant(a,hrs).toFixed(2)}</td>
               <td>${active
                 ? `<span class="dot-live ${isStale(active)?'stale':''}"></span>clocked in ${entryDurationHours(active).toFixed(1)}h`
                 : `<span class="small">off the clock</span>`}</td>
@@ -5077,7 +5696,7 @@ function renderPayrollTool(){
             <td>Total</td>
             <td>${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly),0).toFixed(1)}</td>
             <td></td>
-            <td>$${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly)*(a.hourlyRate||0),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly)),0).toFixed(2)}</td>
             <td></td>
           </tr>
         </tbody>
@@ -5101,7 +5720,7 @@ function renderPayrollTool(){
         <div class="list-item">
           <div>${a.name}${a.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</div>
           <div style="display:flex;align-items:center;gap:10px;">
-            <span class="small">${hrs.toFixed(1)} hrs · $${(hrs*(a.hourlyRate||0)).toFixed(2)}</span>
+            <span class="small">${hrs.toFixed(1)} hrs · $${payrollAmountForAssistant(a,hrs).toFixed(2)}</span>
             <button class="secondary" onclick="downloadPayrollReport('${a.id}')">View</button>
             <button onclick="emailPayrollReport('${a.id}')">Email</button>
           </div>
@@ -5701,7 +6320,17 @@ function renderAssistantRow(a){
           ` : purged ? `<span>full text removed from the app — signed ${a.agreementSignedAt?new Date(a.agreementSignedAt).toLocaleDateString():''} by ${a.agreementSignedName||a.name} is still on record</span>` : ""}
         </div>` : ""}
       <div class="row">
+        <div><label class="small">Pay type</label>
+          <select onchange="updateAssistantField('${a.id}','payType',this.value)">
+            <option value="hourly" ${a.payType!=="flat"?'selected':''}>Hourly</option>
+            <option value="flat" ${a.payType==="flat"?'selected':''}>Flat rate per pay period</option>
+          </select>
+        </div>
+        ${a.payType==="flat" ? `
+        <div><label class="small">Flat rate per pay period ($)</label><input type="number" step="1" value="${a.flatRatePerPeriod||0}" onchange="updateAssistantField('${a.id}','flatRatePerPeriod',parseFloat(this.value)||0)"></div>
+        ` : `
         <div><label class="small">Hourly rate ($)</label><input type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
+        `}
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
         <div><label class="small">Email (for payroll reports)</label><input type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
         <div><label class="small">Market</label>
@@ -5710,6 +6339,10 @@ function renderAssistantRow(a){
           </select>
         </div>
       </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <input type="checkbox" ${a.isContentCreator?'checked':''} onchange="updateAssistantField('${a.id}','isContentCreator',this.checked)">
+        Content Creator — logs in to a restricted view showing only the Content Calendar
+      </label>
       ${onboarding.length ? `
         <div>
           <div class="small">Onboarding: ${doneCount}/${onboarding.length} complete</div>
@@ -5730,6 +6363,13 @@ function updateAssistantCode(id, code){
 function updateAssistantField(id, field, value){
   state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,[field]:value}:a);
   upsert("settings","access", { assistants: state.settings.assistants });
+  // settings/access is loaded once at boot, not watched live like
+  // clients/tasks/timeEntries — so unlike those, a write here doesn't
+  // trigger a re-render on its own. Usually masked by some other unrelated
+  // render() firing soon after (the 60s timer, another click), but fields
+  // whose own value changes what's shown next to them (pay type) need this
+  // to redraw immediately.
+  render();
 }
 function updateAdminPasscode(pass){
   state.settings.adminPasscode = pass;
@@ -6031,7 +6671,7 @@ function employmentAgreementHtml(assistant){
 
     <p><strong>3. COMPENSATION</strong></p>
     <p>Contractor shall be paid:</p>
-    <ul><li>$${(assistant.hourlyRate||0).toFixed(2)} per hour</li></ul>
+    <ul><li>${assistant.payType==="flat" ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+" per pay period (flat rate)" : "$"+(assistant.hourlyRate||0).toFixed(2)+" per hour"}</li></ul>
     <p>Hours will vary based on client demand and assigned workload.</p>
     <p>Payment Schedule:</p>
     <ul><li>Semi-monthly (15th and 30th), based on submitted and approved hours.</li></ul>

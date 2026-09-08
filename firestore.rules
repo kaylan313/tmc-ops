@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Stopgap fix: block any request that didn't come through the app at
+    // all (raw REST/curl access with no Firebase session — this is exactly
+    // how a bare Firebase project config, visible in any site's public
+    // source, gets scraped by bots). The app signs in anonymously and
+    // invisibly before touching Firestore, so this doesn't add a login step
+    // for anyone.
+    //
+    // This does NOT yet scope WHAT an authenticated session can see (e.g.
+    // a client could still, in principle, read another client's document
+    // via the browser console since there's no per-user identity tied to
+    // the app's own passcode/access-code roles). That's the real fix,
+    // and requires moving passcode checks server-side (Cloud Functions)
+    // with custom auth claims per role — a bigger follow-up project.
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
