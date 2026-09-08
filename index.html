@@ -1345,6 +1345,60 @@ function copyRenewalMessage(clientId, btnEl){
     setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
   }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
 }
+// Sent by Tory around day 21 of a client's pilot month — checks in on how
+// the first ~3 weeks went and lists the current Ongoing packages so they
+// can pick one if they want to continue. Pilot itself is one-time-only
+// (see TMC-Pricing-Reference.docx), so this replaces the generic renewal
+// email for pilot clients rather than running alongside it.
+function buildPilotCheckInEmail(client){
+  const end = termEndDate(client);
+  const notice = noticeDeadline(client);
+  const firstName = (client.name||"").split(" ")[0] || client.name;
+  const endStr = end ? end.toLocaleDateString() : "[pilot end date — set a contract start date on the Membership tab]";
+  const noticeStr = notice ? notice.toLocaleDateString() : "[notice deadline — set a contract start date on the Membership tab]";
+  const packageLines = PACKAGE_TIERS
+    .filter(t=>t.key.startsWith("ongoing"))
+    .map(t=>"- " + t.label.split(" — ")[0] + " — " + t.hours + " hrs/month — $" + t.price)
+    .join("\n");
+  const body = "Hi " + firstName + ",\n\n"
+    + "You're coming up on three weeks with us! We'd love to hear how it's been going so far.\n\n"
+    + "Your one-month pilot wraps up on " + endStr + ". If you'd like to continue, here's what our ongoing membership packages look like:\n\n"
+    + packageLines + "\n\n"
+    + "Just reply and let us know which package fits best, and we'll get you set up — no gap in service.\n\n"
+    + "If you'd rather not continue, per your service agreement we need written notice (email or text) at least by "
+    + noticeStr + ", five days before your pilot ends, otherwise the membership continues automatically and you may be "
+    + "responsible for the remaining contract balance.\n\n"
+    + "Thanks so much for giving us a shot these first few weeks!\n\n"
+    + "Warmly,\nThe Modern Concierge Team";
+  return { subject: "How's it going? + your membership options — " + client.name, body };
+}
+// Tracked per term start date, not a plain boolean — if this client ever
+// starts a NEW pilot later (rare, but possible after a gap), the flag no
+// longer matches and the reminder naturally reappears instead of staying
+// silently cleared forever.
+function markPilotCheckInSent(clientId, termStartDate){
+  upsert("clients", clientId, { pilotCheckInSentForTermStart: termStartDate });
+}
+function emailPilotCheckIn(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!client.email){ alert(client.name + " doesn't have an email on file yet — add one on their Membership tab first."); return; }
+  const { subject, body } = buildPilotCheckInEmail(client);
+  window.location.href = "mailto:" + client.email + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+  markPilotCheckInSent(clientId, client.termStartDate);
+}
+function copyPilotCheckInMessage(clientId, btnEl){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const { body } = buildPilotCheckInEmail(client);
+  navigator.clipboard.writeText(body).then(()=>{
+    markPilotCheckInSent(clientId, client.termStartDate);
+    if(!btnEl) return;
+    const orig = btnEl.textContent;
+    btnEl.textContent = "Copied ✓";
+    setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
+  }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
+}
 // ---- 8e. CSV export ----
 function csvEscape(val){
   const s = String(val==null ? "" : val);
@@ -1772,7 +1826,18 @@ function upcomingReminders(windowDays){
 // Per the Services Agreement §2: written notice is required this many days
 // before the term ends, or it auto-renews and the card on file gets charged.
 const TERM_LENGTH_DAYS = { pilot:30, "3month":90, "12month_new":365, "12month_renewal":365 };
-const TERM_NOTICE_DAYS = { pilot:7, "3month":30, "12month_new":60, "12month_renewal":60 };
+const TERM_NOTICE_DAYS = { pilot:5, "3month":30, "12month_new":60, "12month_renewal":60 };
+// Day 21 of the pilot is Tory's cue to check in — separate from (and
+// earlier than) the day-25 cancellation notice deadline (30-day pilot
+// minus the 5-day notice window above). Pilot clients get this check-in
+// email instead of the generic renewal email other term types get, since
+// "pilot" isn't itself renewable — it's a one-time entry point into an
+// Ongoing package (see buildPilotCheckInEmail).
+const PILOT_CHECKIN_DAY = 21;
+function pilotCheckInDueDate(client){
+  if(!client.termStartDate) return null;
+  return new Date(parseYMD(client.termStartDate).getTime() + PILOT_CHECKIN_DAY*24*3600000);
+}
 const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "12month_new":"Twelve Month Term (New)", "12month_renewal":"Twelve Month Term (Renewal)" };
 function termEndDate(client){
   // A manual override always wins — the 30/90/365-day formula is a default,
@@ -1842,25 +1907,42 @@ function emailsNeededList(){
           detail: (daysToEnd<0 ? "period ended " : "period ends ") + periodEndDisplay.toLocaleDateString(), urgent: daysToEnd<0, days: daysToEnd });
       }
     }
-    const notice = noticeDeadline(client);
-    if(notice && client.termType){
-      const daysToNotice = daysUntil(notice, now);
-      const sent = client.renewalEmailSentForTermType === client.termType;
-      if(!sent && daysToNotice<=7){
-        items.push({ client, type:"renewal", label:"Send contract renewal email",
-          detail: (daysToNotice<0 ? "notice deadline was " : "notice due ") + notice.toLocaleDateString(), urgent: daysToNotice<0, days: daysToNotice });
+    // Pilot isn't itself renewable — it's a one-time entry point — so pilot
+    // clients get the day-21 check-in email instead of the generic
+    // contract-renewal email other term types get further below.
+    const isPilot = !client.termType || client.termType==="pilot";
+    if(isPilot){
+      const checkInDue = pilotCheckInDueDate(client);
+      if(checkInDue){
+        const daysToCheckIn = daysUntil(checkInDue, now);
+        const sent = client.pilotCheckInSentForTermStart === client.termStartDate;
+        if(!sent && daysToCheckIn<=0){
+          items.push({ client, type:"pilotCheckIn", label:"Send pilot check-in email",
+            detail: "day " + PILOT_CHECKIN_DAY + " of pilot was " + checkInDue.toLocaleDateString(), urgent: daysToCheckIn < -7, days: daysToCheckIn });
+        }
+      }
+    } else {
+      const notice = noticeDeadline(client);
+      if(notice && client.termType){
+        const daysToNotice = daysUntil(notice, now);
+        const sent = client.renewalEmailSentForTermType === client.termType;
+        if(!sent && daysToNotice<=7){
+          items.push({ client, type:"renewal", label:"Send contract renewal email",
+            detail: (daysToNotice<0 ? "notice deadline was " : "notice due ") + notice.toLocaleDateString(), urgent: daysToNotice<0, days: daysToNotice });
+        }
       }
     }
   });
   return items.sort((a,b)=>a.days-b.days);
 }
 function dismissEmailNeeded(clientId, type){
+  const client = state.clients.find(c=>c.id===clientId);
   if(type==="period"){
-    const client = state.clients.find(c=>c.id===clientId);
     const period = currentBillingPeriod(client);
     if(period) markPeriodRecapSent(clientId, period);
+  } else if(type==="pilotCheckIn"){
+    markPilotCheckInSent(clientId, client.termStartDate);
   } else {
-    const client = state.clients.find(c=>c.id===clientId);
     markRenewalEmailSent(clientId, client.termType);
   }
 }
@@ -4578,6 +4660,9 @@ function renderClientEmailTemplates(client){
   const end = termEndDate(client);
   const notice = noticeDeadline(client);
   const renewalSent = !!(client.termType && client.renewalEmailSentForTermType === client.termType);
+  const isPilot = !client.termType || client.termType==="pilot";
+  const checkInDue = pilotCheckInDueDate(client);
+  const checkInSent = !!(client.termStartDate && client.pilotCheckInSentForTermStart === client.termStartDate);
   const noEmail = !client.email;
   return `
     ${noEmail ? `<div class="alert warn">No client email on file — add one on the Membership tab before sending anything below.</div>` : ""}
@@ -4617,6 +4702,22 @@ function renderClientEmailTemplates(client){
         <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
       ` : ""}
     </div>
+    ${isPilot ? `
+    <div class="card">
+      <div class="flex-between">
+        <h3>Pilot Check-In</h3>
+        ${client.termStartDate ? `<span class="small" style="color:${checkInSent?'var(--ok)':'var(--warn)'};">${checkInSent?'✓ Sent for this pilot':'Not sent yet'}</span>` : ""}
+      </div>
+      <div class="small" style="margin-bottom:8px;">
+        ${client.termStartDate ? `One Month Pilot · ends ${end?end.toLocaleDateString():'—'} · check in around day ${PILOT_CHECKIN_DAY} (${checkInDue?checkInDue.toLocaleDateString():'—'}) · 5-day cancellation notice due ${notice?notice.toLocaleDateString():'—'}` : "Set a contract start date on the Membership tab to enable"}
+      </div>
+      <div class="small" style="margin-bottom:8px;">Asks how their first few weeks have gone and lists the current Ongoing packages so they can choose one to continue.</div>
+      ${client.termStartDate ? `
+        <button ${noEmail?'disabled':''} onclick="emailPilotCheckIn('${client.id}')">Email client</button>
+        <button class="secondary" onclick="copyPilotCheckInMessage('${client.id}',this)">Copy message</button>
+      ` : ""}
+    </div>
+    ` : `
     <div class="card">
       <div class="flex-between">
         <h3>Contract Renewal</h3>
@@ -4630,6 +4731,7 @@ function renderClientEmailTemplates(client){
         <button class="secondary" onclick="copyRenewalMessage('${client.id}',this)">Copy message</button>
       ` : ""}
     </div>
+    `}
   `;
 }
 function renderNoteBullets(text){
