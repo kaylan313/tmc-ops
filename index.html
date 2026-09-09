@@ -2919,6 +2919,58 @@ function renderTaskMiniList(tasks){
 
 // --- Clients list ---
 function setClientMarketFilter(val){ state.clientMarketFilter = val; render(); }
+// Groups active clients into accordion sections. One-Time (the 6hr/12hr
+// Home Reset flat-rate packages) is checked before term type, since those
+// clients don't go through the pilot -> 3month -> 1year membership
+// lifecycle at all. Checked in order; first match wins.
+const CLIENT_GROUP_DEFS = [
+  { key:"oneTime", label:"One-Time", match:c=>{
+      const tier = PACKAGE_TIERS.find(t=>t.hours===c.packageHours && t.price===c.packagePrice);
+      return !!(tier && tier.key.startsWith("reset_"));
+    } },
+  { key:"pilot", label:"Pilot", match:c=>(c.termType||"pilot")==="pilot" },
+  { key:"3month", label:"3 Month", match:c=>c.termType==="3month" },
+  { key:"1year", label:"1 Year", match:c=>c.termType==="12month_new"||c.termType==="12month_renewal" },
+];
+function toggleClientGroup(key){
+  state.clientGroupOpen = state.clientGroupOpen || {};
+  state.clientGroupOpen[key] = state.clientGroupOpen[key]===false;
+  render();
+}
+function renderClientListItem(c){
+  const alert = tierAlert(c);
+  const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
+  const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
+  return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
+    <div>
+      <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
+      <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
+        const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
+      }).join(", ")}</div>
+    </div>
+    ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
+  </div>`;
+}
+function renderClientGroups(activeClients){
+  const remaining = new Set(activeClients.map(c=>c.id));
+  const groups = CLIENT_GROUP_DEFS.map(def=>{
+    const members = activeClients.filter(c=>remaining.has(c.id) && def.match(c));
+    members.forEach(c=>remaining.delete(c.id));
+    return { key:def.key, label:def.label, members };
+  });
+  const other = activeClients.filter(c=>remaining.has(c.id));
+  if(other.length) groups.push({ key:"other", label:"Other", members:other });
+  const open = state.clientGroupOpen || {};
+  return groups.map(g=>`
+    <div class="card">
+      <div class="flex-between" style="cursor:pointer;" onclick="toggleClientGroup('${g.key}')">
+        <h3 style="margin:0;">${g.label} (${g.members.length})</h3>
+        <span class="small">${open[g.key]===false ? "Show ▼" : "Hide ▲"}</span>
+      </div>
+      ${open[g.key]===false ? "" : (g.members.length ? g.members.map(renderClientListItem).join("") : `<div class="small">No clients in this group.</div>`)}
+    </div>
+  `).join("");
+}
 function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
   const marketFilter = state.clientMarketFilter;
@@ -2936,23 +2988,8 @@ function renderClientsList(){
         <button onclick="openClientEditor(null)">+ New client</button>
       </div>
     </div>
-    <div class="card">
-      ${activeClients.length===0 ? `<div class="small">No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.</div>` :
-        activeClients.map(c=>{
-          const alert = tierAlert(c);
-          const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
-          const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
-          return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
-            <div>
-              <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
-              <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
-                const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
-              }).join(", ")}</div>
-            </div>
-            ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
-          </div>`;
-        }).join("")}
-    </div>
+    ${activeClients.length===0 ? `<div class="card"><div class="small">No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.</div></div>` :
+      renderClientGroups(activeClients)}
     ${pastClients.length ? `
     <div class="card">
       <div class="flex-between" style="cursor:pointer;" onclick="state.showPastClients=!state.showPastClients;render();">
