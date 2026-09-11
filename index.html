@@ -191,6 +191,21 @@
   .oc-tag{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 6px;border-radius:8px;margin-left:6px;}
   .oc-tag.new{background:#e4ede0;color:var(--ok);}
   .oc-tag.leaving{background:#f5e1e0;color:var(--danger);}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--cream-dark);border:1px solid var(--cream-dark);border-radius:6px;overflow:hidden;}
+  .cal-grid-header{margin-bottom:1px;}
+  .cal-headcell{background:#faf3ec;padding:6px 4px;font-size:11px;text-align:center;color:#8a7a72;font-weight:600;}
+  .cal-cell{background:#fff;min-height:88px;padding:4px;position:relative;display:flex;flex-direction:column;gap:2px;}
+  .cal-cell.cal-empty{background:#faf7f3;}
+  .cal-cell.cal-today{background:#fdf6ef;}
+  .cal-daynum{font-size:11px;color:#8a7a72;font-weight:600;}
+  .cal-pill{font-size:10.5px;padding:2px 5px;border-radius:4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cal-pill-content{background:#e4ede0;color:var(--ok);}
+  .cal-pill-task{background:var(--cream-dark);color:var(--rose-dark);}
+  .cal-add{position:absolute;top:2px;right:2px;background:none;border:none;color:#c7b8ae;font-size:13px;cursor:pointer;line-height:1;padding:2px 4px;}
+  .cal-add:hover{color:var(--rose-dark);}
+  @media (max-width:768px){
+    .cal-cell{min-height:64px;font-size:10px;}
+  }
 </style>
 </head>
 <body>
@@ -237,6 +252,16 @@ const firebaseConfig = {
   appId: "1:263317275120:web:d72654132e07434c155d35"
 };
 const FIREBASE_CONFIGURED = firebaseConfig.apiKey !== "YOUR_API_KEY";
+// Renders report docs from the `reports` collection at a shareable link —
+// see public/report.html, which reads the report directly via the
+// client-side Firestore SDK (same anonymous-auth pattern as this app).
+// Reports are viewed/emailed as a link to that page instead of a raw
+// downloaded .html file, since most desktop mail clients preview .html
+// attachments as source text instead of rendering them (this was the
+// "works on phone, shows code on desktop" bug). Not a Cloud Function
+// endpoint — this project's GCP org policy blocks making a Cloud Run
+// service (what a function runs as) invokable by anything at all.
+const REPORT_VIEWER_URL = "https://modern-co-dashboard.web.app/report.html";
 let db = null;
 let FIREBASE_AVAILABLE = false;
 try{
@@ -1273,31 +1298,36 @@ function clientReportHtml(report){
 // The short message used both as "Email client"'s mailto body and as the
 // standalone "Copy message" text — the itemized task breakdown lives in the
 // downloaded/attached report itself, so the email doesn't repeat it.
-function clientReportCoverNote(report){
+function clientReportCoverNote(report, reportUrl){
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
   const noun = isPeriod ? "end-of-period" : "weekly";
   const firstName = (report.client.name||"").split(" ")[0] || report.client.name;
   const endDate = report.billingPeriod ? new Date(report.billingPeriod.end.getTime()-1).toLocaleDateString() : null;
+  const reportLine = reportUrl
+    ? "Your " + noun + " report is ready to view here: " + reportUrl
+    : "Your " + noun + " report is attached.";
   const receiptsLine = report.receipts && report.receipts.length
-    ? " This " + (isPeriod ? "period's" : "week's") + " receipts (" + report.receipts.length + ") are included in the attached report."
+    ? " This " + (isPeriod ? "period's" : "week's") + " receipts (" + report.receipts.length + ") are included in the report."
     : "";
   const overageLine = report.overHours>0
     ? " You went over your package by " + formatHoursMinutes(report.overHours) + " this " + (isPeriod?"period":"week")
       + " — that's a $" + report.overageAmount.toFixed(2) + " overage at $" + OVERAGE_RATE + "/hr."
     : "";
   return "Hi " + firstName + ",\n\n"
-    + "Your " + noun + " report is attached. You have used " + formatHoursMinutes(report.hoursUsed)
+    + reportLine + " You have used " + formatHoursMinutes(report.hoursUsed)
     + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + overageLine + receiptsLine + "\n\n"
     + "Please let me know if you have any questions regarding this report.\n\n"
     + "The Modern Concierge Team";
 }
-function copyReportCoverNote(clientId, kind, btnEl){
+async function copyReportCoverNote(clientId, kind, btnEl){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
-  const text = clientReportCoverNote(report);
+  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
+  const url = await saveReportAndGetLink(clientReportHtml(report), "clientRecap", client.name + " — " + kindSlug + " report");
+  const text = clientReportCoverNote(report, url);
   navigator.clipboard.writeText(text).then(()=>{
     if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
     if(!btnEl) return;
@@ -1470,22 +1500,49 @@ function reportWindowFor(client, kind){
   if(kind === "lastPeriod") return previousBillingPeriod(client);
   return currentReportWeek();
 }
-function downloadClientReport(clientId, kind){
+// Stores a generated report's HTML in Firestore and returns a link that
+// renders it via the viewReport Cloud Function (see REPORT_VIEWER_URL
+// above). Opening a link always renders identically everywhere — unlike a
+// raw downloaded .html file, which most desktop mail clients preview as
+// source text instead of rendering (the "works on phone, shows code on
+// desktop" bug this replaced). Returns null if Firestore isn't reachable
+// (e.g. local-only demo mode), so callers can fall back to a download.
+async function saveReportAndGetLink(html, type, title){
+  if(!FIREBASE_AVAILABLE){
+    console.warn("Firebase unavailable — can't generate a report link.");
+    return null;
+  }
+  const doc = await db.collection("reports").add({
+    html, type, title,
+    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+  });
+  return REPORT_VIEWER_URL + "?id=" + doc.id;
+}
+function downloadHtmlFileFallback(html, filename){
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+async function downloadClientReport(clientId, kind){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
-  const blob = new Blob([clientReportHtml(report)], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
+  const html = clientReportHtml(report);
   const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
-  a.download = client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  const url = await saveReportAndGetLink(html, "clientRecap", client.name + " — " + kindSlug + " report");
+  if(url){
+    window.open(url, "_blank");
+  }else{
+    downloadHtmlFileFallback(html, client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html");
+  }
 }
 // A period/lastPeriod recap counts as "sent" once emailed or copied — tracked
 // against that specific period's start date so the Dashboard "needs sending"
@@ -1494,15 +1551,17 @@ function downloadClientReport(clientId, kind){
 function markPeriodRecapSent(clientId, reportWindow){
   upsert("clients", clientId, { periodRecapSentForPeriodStart: reportWindow.start.toISOString().slice(0,10) });
 }
-function emailClientReport(clientId, kind){
+async function emailClientReport(clientId, kind){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   if(!client.email){ alert(client.name + " doesn't have an email on file yet — add one on their Membership tab first."); return; }
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
+  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
+  const url = await saveReportAndGetLink(clientReportHtml(report), "clientRecap", client.name + " — " + kindSlug + " report");
   const subject = encodeURIComponent(((kind==="period"||kind==="lastPeriod") ? "Your Membership Period Recap — " : "Your Weekly Update — ") + client.name);
-  const body = encodeURIComponent(clientReportCoverNote(report));
+  const body = encodeURIComponent(clientReportCoverNote(report, url));
   window.location.href = "mailto:" + client.email + "?subject=" + subject + "&body=" + body;
   if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
 }
@@ -1629,29 +1688,29 @@ function payrollReportPlainText(report){
   lines.push("The Modern Concierge");
   return lines.join("\n");
 }
-function downloadPayrollReport(assistantId){
+async function downloadPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
   const period = resolvedPayrollReportPeriod();
   const report = buildPayrollReport(assistant, period);
-  const blob = new Blob([payrollReportHtml(report)], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  const html = payrollReportHtml(report);
+  const url = await saveReportAndGetLink(html, "payrollRecap", assistant.name + " — payroll recap");
+  if(url){
+    window.open(url, "_blank");
+  }else{
+    downloadHtmlFileFallback(html, assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html");
+  }
 }
-function emailPayrollReport(assistantId){
+async function emailPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
   if(!assistant.email){ alert(assistant.name + " doesn't have an email on file yet — add one on the Team tab first."); return; }
   const period = resolvedPayrollReportPeriod();
   const report = buildPayrollReport(assistant, period);
+  const url = await saveReportAndGetLink(payrollReportHtml(report), "payrollRecap", assistant.name + " — payroll recap");
   const subject = encodeURIComponent("Your Payroll Recap — " + formatPeriodRange(period));
-  const body = encodeURIComponent(payrollReportPlainText(report));
+  const linkLine = url ? "\n\nView the full formatted recap here: " + url : "";
+  const body = encodeURIComponent(payrollReportPlainText(report) + linkLine);
   window.location.href = "mailto:" + assistant.email + "?subject=" + subject + "&body=" + body;
 }
 
@@ -2458,6 +2517,75 @@ function renderAddOnsTab(){
   `;
 }
 // --- Content Calendar (Content Creator role + admin) ---
+function currentContentCalendarMonth(){
+  if(!state.contentCalendarMonth){
+    const d = new Date();
+    state.contentCalendarMonth = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+  }
+  return state.contentCalendarMonth;
+}
+function shiftContentCalendarMonth(delta){
+  const [year, month] = currentContentCalendarMonth().split("-").map(Number);
+  const next = new Date(year, month-1+delta, 1);
+  state.contentCalendarMonth = next.getFullYear()+"-"+String(next.getMonth()+1).padStart(2,"0");
+  render();
+}
+function scrollToContentEntry(id){
+  const el = document.getElementById("content-entry-"+id);
+  if(!el) return;
+  el.scrollIntoView({ behavior:"smooth", block:"center" });
+  el.style.outline = "2px solid var(--rose-dark)";
+  setTimeout(()=>{ el.style.outline = ""; }, 1500);
+}
+// Visual month-grid overview — the detailed list below (renderContentEntryRow)
+// is still where entries actually get added/edited; this is just for seeing
+// the shape of the month at a glance and jumping to a day's items.
+function renderContentCalendarMonth(){
+  const [year, month] = currentContentCalendarMonth().split("-").map(Number);
+  const first = new Date(year, month-1, 1);
+  const startDay = first.getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const monthLabel = first.toLocaleDateString("en-US", { month:"long", year:"numeric" });
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  const byDate = {};
+  (state.settings.contentPlan||[]).filter(e=>e.type!=="idea" && e.date).forEach(e=>{
+    (byDate[e.date] = byDate[e.date]||[]).push({ kind:"content", entry:e });
+  });
+  state.tasks.filter(t=>t.goodForContent && t.dueDate).forEach(t=>{
+    (byDate[t.dueDate] = byDate[t.dueDate]||[]).push({ kind:"task", task:t });
+  });
+
+  const cells = [];
+  for(let i=0;i<startDay;i++) cells.push(`<div class="cal-cell cal-empty"></div>`);
+  for(let day=1; day<=daysInMonth; day++){
+    const dateStr = year+"-"+String(month).padStart(2,"0")+"-"+String(day).padStart(2,"0");
+    const items = byDate[dateStr] || [];
+    cells.push(`
+      <div class="cal-cell ${dateStr===todayStr?'cal-today':''}">
+        <div class="cal-daynum">${day}</div>
+        ${items.map(it=> it.kind==="content"
+          ? `<div class="cal-pill cal-pill-content" onclick="scrollToContentEntry('${it.entry.id}')">${(it.entry.title||'(untitled)')}${it.entry.platform?' · '+it.entry.platform:''}</div>`
+          : `<div class="cal-pill cal-pill-task" onclick="openContentTaskViewer('${it.task.id}')">🎥 ${(it.task.title||'(untitled)')}</div>`
+        ).join("")}
+        <button class="cal-add" onclick="addContentEntry('scheduled','${dateStr}')" title="Add scheduled content for this day">+</button>
+      </div>
+    `);
+  }
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <button class="secondary" onclick="shiftContentCalendarMonth(-1)">&larr;</button>
+        <h3 style="margin:0;">${monthLabel}</h3>
+        <button class="secondary" onclick="shiftContentCalendarMonth(1)">&rarr;</button>
+      </div>
+      <div class="cal-grid cal-grid-header">
+        ${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div class="cal-headcell">${d}</div>`).join("")}
+      </div>
+      <div class="cal-grid">${cells.join("")}</div>
+    </div>
+  `;
+}
 function renderContentCalendarTab(){
   const isAdmin = state.role==="admin";
   const plan = state.settings.contentPlan || [];
@@ -2466,8 +2594,29 @@ function renderContentCalendarTab(){
   const socialLogins = state.settings.socialLogins || [];
   const insights = (state.settings.contentInsights||[]).slice().sort((a,b)=> (b.date||'') < (a.date||'') ? -1 : 1);
   const goals = state.settings.contentGoals || [];
+  const flaggedTasks = state.tasks.filter(t=>t.goodForContent).slice().sort((a,b)=> (a.dueDate||'9999') < (b.dueDate||'9999') ? -1 : 1);
   return `
     <h2>Content Calendar</h2>
+    <datalist id="content-platform-options">
+      ${["Instagram","TikTok","Facebook","YouTube","Pinterest","LinkedIn"].map(p=>`<option value="${p}">`).join("")}
+    </datalist>
+    ${renderContentCalendarMonth()}
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Flagged for content <span class="small">(${flaggedTasks.length})</span></h3>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Tasks an assistant marked "Good for content" — click one to see the details and ask them specifics.</div>
+      ${flaggedTasks.length ? flaggedTasks.map(t=>{
+        const client = t.clientId===INTERNAL_CLIENT_ID ? null : state.clients.find(c=>c.id===t.clientId);
+        return `<div class="list-item" style="cursor:pointer;" onclick="openContentTaskViewer('${t.id}')">
+          <div>
+            <strong>${t.title||'(untitled)'}</strong>
+            <div class="small">${client ? client.name : "Internal / Modern Co."} · ${t.dueDate ? parseYMD(t.dueDate).toLocaleDateString() : "No due date"} · ${(t.assignees||[]).map(assistantName).join(", ")||"Unassigned"}</div>
+          </div>
+          <span class="badge" style="background:${t.status==='Done'?'var(--ok)':'var(--warn)'};">${t.status||''}</span>
+        </div>`;
+      }).join("") : `<div class="small">No tasks flagged yet — assistants can mark a task "Good for content" from its edit screen on the Task Board.</div>`}
+    </div>
     <div class="card">
       <div class="flex-between">
         <h3>Upcoming — scheduled content &amp; notes</h3>
@@ -2517,7 +2666,7 @@ function renderContentEntryRow(e){
   const typeLabel = e.type==="idea" ? "Idea" : e.type==="opsNote" ? "Note" : "Scheduled";
   const badgeColor = e.type==="opsNote" ? "var(--warn)" : e.type==="idea" ? "#8a7a72" : "var(--ok)";
   return `
-    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+    <div class="list-item" id="content-entry-${e.id}" style="flex-direction:column;align-items:stretch;gap:6px;">
       <div class="flex-between">
         <div>
           <span class="badge" style="background:${badgeColor};">${typeLabel}</span>
@@ -2531,7 +2680,7 @@ function renderContentEntryRow(e){
       </div>
       <div class="row">
         <div><label class="small">Title</label><input value="${e.title||''}" onchange="updateContentEntry('${e.id}','title',this.value)"></div>
-        <div><label class="small">Platform</label><input value="${e.platform||''}" placeholder="Instagram, TikTok, etc." onchange="updateContentEntry('${e.id}','platform',this.value)"></div>
+        <div><label class="small">Platform</label><input value="${e.platform||''}" list="content-platform-options" placeholder="Instagram, TikTok, etc." onchange="updateContentEntry('${e.id}','platform',this.value)"></div>
         ${e.type==="scheduled" ? `<div><label class="small">Status</label>
           <select onchange="updateContentEntry('${e.id}','status',this.value)">
             ${["Idea","Drafting","Ready","Posted"].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join("")}
@@ -2542,26 +2691,38 @@ function renderContentEntryRow(e){
     </div>
   `;
 }
-function addContentEntry(type){
+// settings/access is loaded once at boot, not watched live like
+// clients/tasks/timeEntries — every writer here must update state.settings
+// locally FIRST, then upsert that same local value, then render(). Skipping
+// the local update (as these used to) means the in-memory contentPlan never
+// reflects what you just added/changed, so it looks like the entry never
+// saved (or reverts) until the next full reload — that was the "it kind of
+// disappears" bug reported for the Content Calendar.
+function addContentEntry(type, presetDate){
   const entry = {
     id: newId("content"),
     type,
     title: type==="opsNote" ? "Heads up" : type==="idea" ? "New idea" : "New scheduled post",
-    date: type==="idea" ? "" : new Date().toISOString().slice(0,10),
+    date: type==="idea" ? "" : (presetDate || new Date().toISOString().slice(0,10)),
     platform: "",
     status: type==="scheduled" ? "Idea" : "",
     notes: "",
     addedBy: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:"")
   };
-  upsert("settings","access", { contentPlan: [...(state.settings.contentPlan||[]), entry] });
+  state.settings.contentPlan = [...(state.settings.contentPlan||[]), entry];
+  upsert("settings","access", { contentPlan: state.settings.contentPlan });
+  render();
 }
 function updateContentEntry(id, field, value){
-  const contentPlan = (state.settings.contentPlan||[]).map(e=> e.id===id ? { ...e, [field]:value } : e);
-  upsert("settings","access", { contentPlan });
+  state.settings.contentPlan = (state.settings.contentPlan||[]).map(e=> e.id===id ? { ...e, [field]:value } : e);
+  upsert("settings","access", { contentPlan: state.settings.contentPlan });
+  render();
 }
 function removeContentEntry(id){
   if(!confirm("Remove this entry?")) return;
-  upsert("settings","access", { contentPlan: (state.settings.contentPlan||[]).filter(e=>e.id!==id) });
+  state.settings.contentPlan = (state.settings.contentPlan||[]).filter(e=>e.id!==id);
+  upsert("settings","access", { contentPlan: state.settings.contentPlan });
+  render();
 }
 function renderSocialLoginRow(s){
   return `
@@ -2578,15 +2739,20 @@ function renderSocialLoginRow(s){
 }
 function addSocialLogin(){
   const login = { id:newId("social"), platform:"", username:"", password:"", notes:"" };
-  upsert("settings","access", { socialLogins: [...(state.settings.socialLogins||[]), login] });
+  state.settings.socialLogins = [...(state.settings.socialLogins||[]), login];
+  upsert("settings","access", { socialLogins: state.settings.socialLogins });
+  render();
 }
 function updateSocialLogin(id, field, value){
-  const socialLogins = (state.settings.socialLogins||[]).map(s=> s.id===id ? { ...s, [field]:value } : s);
-  upsert("settings","access", { socialLogins });
+  state.settings.socialLogins = (state.settings.socialLogins||[]).map(s=> s.id===id ? { ...s, [field]:value } : s);
+  upsert("settings","access", { socialLogins: state.settings.socialLogins });
+  render();
 }
 function removeSocialLogin(id){
   if(!confirm("Remove this login?")) return;
-  upsert("settings","access", { socialLogins: (state.settings.socialLogins||[]).filter(s=>s.id!==id) });
+  state.settings.socialLogins = (state.settings.socialLogins||[]).filter(s=>s.id!==id);
+  upsert("settings","access", { socialLogins: state.settings.socialLogins });
+  render();
 }
 function renderContentInsightRow(i){
   return `
@@ -2599,15 +2765,20 @@ function renderContentInsightRow(i){
 }
 function addContentInsight(){
   const insight = { id:newId("insight"), date:new Date().toISOString().slice(0,10), notes:"" };
-  upsert("settings","access", { contentInsights: [...(state.settings.contentInsights||[]), insight] });
+  state.settings.contentInsights = [...(state.settings.contentInsights||[]), insight];
+  upsert("settings","access", { contentInsights: state.settings.contentInsights });
+  render();
 }
 function updateContentInsight(id, field, value){
-  const contentInsights = (state.settings.contentInsights||[]).map(i=> i.id===id ? { ...i, [field]:value } : i);
-  upsert("settings","access", { contentInsights });
+  state.settings.contentInsights = (state.settings.contentInsights||[]).map(i=> i.id===id ? { ...i, [field]:value } : i);
+  upsert("settings","access", { contentInsights: state.settings.contentInsights });
+  render();
 }
 function removeContentInsight(id){
   if(!confirm("Remove this insight?")) return;
-  upsert("settings","access", { contentInsights: (state.settings.contentInsights||[]).filter(i=>i.id!==id) });
+  state.settings.contentInsights = (state.settings.contentInsights||[]).filter(i=>i.id!==id);
+  upsert("settings","access", { contentInsights: state.settings.contentInsights });
+  render();
 }
 function renderContentGoalRow(g){
   return `
@@ -2621,14 +2792,19 @@ function renderContentGoalRow(g){
 }
 function addContentGoal(){
   const goal = { id:newId("goal"), text:"", targetDate:"", done:false };
-  upsert("settings","access", { contentGoals: [...(state.settings.contentGoals||[]), goal] });
+  state.settings.contentGoals = [...(state.settings.contentGoals||[]), goal];
+  upsert("settings","access", { contentGoals: state.settings.contentGoals });
+  render();
 }
 function updateContentGoal(id, field, value){
-  const contentGoals = (state.settings.contentGoals||[]).map(g=> g.id===id ? { ...g, [field]:value } : g);
-  upsert("settings","access", { contentGoals });
+  state.settings.contentGoals = (state.settings.contentGoals||[]).map(g=> g.id===id ? { ...g, [field]:value } : g);
+  upsert("settings","access", { contentGoals: state.settings.contentGoals });
+  render();
 }
 function removeContentGoal(id){
-  upsert("settings","access", { contentGoals: (state.settings.contentGoals||[]).filter(g=>g.id!==id) });
+  state.settings.contentGoals = (state.settings.contentGoals||[]).filter(g=>g.id!==id);
+  upsert("settings","access", { contentGoals: state.settings.contentGoals });
+  render();
 }
 // --- Lead Organizer (admin only) ---
 function renderLeadOrganizerTab(){
@@ -2894,6 +3070,58 @@ function renderTaskMiniList(tasks){
 
 // --- Clients list ---
 function setClientMarketFilter(val){ state.clientMarketFilter = val; render(); }
+// Groups active clients into accordion sections. One-Time (the 6hr/12hr
+// Home Reset flat-rate packages) is checked before term type, since those
+// clients don't go through the pilot -> 3month -> 1year membership
+// lifecycle at all. Checked in order; first match wins.
+const CLIENT_GROUP_DEFS = [
+  { key:"oneTime", label:"One-Time", match:c=>{
+      const tier = PACKAGE_TIERS.find(t=>t.hours===c.packageHours && t.price===c.packagePrice);
+      return !!(tier && tier.key.startsWith("reset_"));
+    } },
+  { key:"pilot", label:"Pilot", match:c=>(c.termType||"pilot")==="pilot" },
+  { key:"3month", label:"3 Month", match:c=>c.termType==="3month" },
+  { key:"1year", label:"1 Year", match:c=>c.termType==="12month_new"||c.termType==="12month_renewal" },
+];
+function toggleClientGroup(key){
+  state.clientGroupOpen = state.clientGroupOpen || {};
+  state.clientGroupOpen[key] = state.clientGroupOpen[key]===false;
+  render();
+}
+function renderClientListItem(c){
+  const alert = tierAlert(c);
+  const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
+  const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
+  return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
+    <div>
+      <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
+      <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
+        const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
+      }).join(", ")}</div>
+    </div>
+    ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
+  </div>`;
+}
+function renderClientGroups(activeClients){
+  const remaining = new Set(activeClients.map(c=>c.id));
+  const groups = CLIENT_GROUP_DEFS.map(def=>{
+    const members = activeClients.filter(c=>remaining.has(c.id) && def.match(c));
+    members.forEach(c=>remaining.delete(c.id));
+    return { key:def.key, label:def.label, members };
+  });
+  const other = activeClients.filter(c=>remaining.has(c.id));
+  if(other.length) groups.push({ key:"other", label:"Other", members:other });
+  const open = state.clientGroupOpen || {};
+  return groups.map(g=>`
+    <div class="card">
+      <div class="flex-between" style="cursor:pointer;" onclick="toggleClientGroup('${g.key}')">
+        <h3 style="margin:0;">${g.label} (${g.members.length})</h3>
+        <span class="small">${open[g.key]===false ? "Show ▼" : "Hide ▲"}</span>
+      </div>
+      ${open[g.key]===false ? "" : (g.members.length ? g.members.map(renderClientListItem).join("") : `<div class="small">No clients in this group.</div>`)}
+    </div>
+  `).join("");
+}
 function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
   const marketFilter = state.clientMarketFilter;
@@ -2911,23 +3139,8 @@ function renderClientsList(){
         <button onclick="openClientEditor(null)">+ New client</button>
       </div>
     </div>
-    <div class="card">
-      ${activeClients.length===0 ? `<div class="small">No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.</div>` :
-        activeClients.map(c=>{
-          const alert = tierAlert(c);
-          const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
-          const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
-          return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
-            <div>
-              <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
-              <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
-                const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
-              }).join(", ")}</div>
-            </div>
-            ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
-          </div>`;
-        }).join("")}
-    </div>
+    ${activeClients.length===0 ? `<div class="card"><div class="small">No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.</div></div>` :
+      renderClientGroups(activeClients)}
     ${pastClients.length ? `
     <div class="card">
       <div class="flex-between" style="cursor:pointer;" onclick="state.showPastClients=!state.showPastClients;render();">
@@ -3060,923 +3273,441 @@ function toggleClientOnboardingItem(clientId, itemId){
 // Verbatim from the Personal Assistant Services Agreement (Orientation Companion tool) — do not paraphrase, only the render-time fills below touch it.
 const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AGREEMENT</strong></p>
 <p>This Agreement is entered into between:</p>
-<p><strong>The Modern Concierge, LLC</strong> ("Company")<br />
-and<br />
-("Client")</p>
+<p>The Modern Concierge ("Company")</p>
+<p>and the</p>
+<p>("Client")</p>
 <p>Services Start Date:</p>
-<p>Services End Date: <strong>days from start date</strong></p>
-<p>Agreement Type:</p>
+<p>Services End Date: 30 days after start date</p>
+<p>Agreement Type<strong>:</strong></p>
 <ul>
-<li><blockquote>
-<p>One (1) Month Pilot</p>
-</blockquote>
-<blockquote>
+<li><p>One (1) Month Pilot</p>
 <p>Three (3) Month Term</p>
-</blockquote>
-<blockquote>
-<p><strong>Twelve (12) Month Term (New)</strong></p>
-</blockquote>
-<blockquote>
-<p>Twelve (12) Month Term (Renewal)</p>
-</blockquote></li>
+<p>Twelve (12) Month Term (New)</p>
+<p>Twelve (12) Month Term (Renewal)</p></li>
 </ul>
 <h2 id="scope-of-services"><strong>1. Scope of Services</strong></h2>
-<p><strong>The Modern Concierge</strong> will provide ongoing personal
-and business support services, including but not limited to the
-following:</p>
-<h4 id="business-support-administrative-services"><strong>Business
-Support &amp; Administrative Services</strong></h4>
+<blockquote>
+<p>The Modern Concierge will provide ongoing personal and business support services, including but not limited to the following:</p>
+</blockquote>
+<h3 id="business-support-administrative-services"><strong>Business Support &amp; Administrative Services</strong></h3>
 <ul>
-<li><blockquote>
-<p>Day-to-day administrative assistance</p>
-</blockquote></li>
-<li><blockquote>
-<p>Email and calendar management</p>
-</blockquote></li>
-<li><blockquote>
-<p>Coordination of meetings, appointments, and scheduling</p>
-</blockquote></li>
-<li><blockquote>
-<p>Vendor communication and management</p>
-</blockquote></li>
-<li><blockquote>
-<p>Invoice processing, payments, and basic bookkeeping support</p>
-</blockquote></li>
-<li><blockquote>
-<p>CRM management and client follow-ups</p>
-</blockquote></li>
-<li><blockquote>
-<p>Document preparation, organization, and filing</p>
-</blockquote></li>
-<li><blockquote>
-<p>Research for business decisions, tools, and opportunities</p>
-</blockquote></li>
-<li><blockquote>
-<p>Oversight and execution of operational tasks</p>
-</blockquote></li>
+<li><p>Day-to-day administrative assistance</p></li>
+<li><p>Email and calendar management</p></li>
+<li><p>Coordination of meetings, appointments, and scheduling</p></li>
+<li><p>Vendor communication and management</p></li>
+<li><p>Invoice processing, payments, and basic bookkeeping support</p></li>
+<li><p>CRM management and client follow-ups</p></li>
+<li><p>Document preparation, organization, and filing</p></li>
+<li><p>Research for business decisions, tools, and opportunities</p></li>
+<li><p>Oversight and execution of operational tasks</p></li>
 </ul>
-<h4 id="business-development-idea-execution"><strong>Business
-Development &amp; Idea Execution</strong></h4>
+<h3 id="business-development-idea-execution"><strong>Business Development &amp; Idea Execution</strong></h3>
 <ul>
-<li><blockquote>
-<p>Brainstorming and strategy support for new business ideas</p>
-</blockquote></li>
-<li><blockquote>
-<p>Research and development of potential ventures or projects</p>
-</blockquote></li>
-<li><blockquote>
-<p>Assistance with launching and organizing new initiatives</p>
-</blockquote></li>
-<li><blockquote>
-<p>Workflow creation and process optimization</p>
-</blockquote></li>
-<li><blockquote>
-<p>Accountability and follow-through on ideas and action items</p>
-</blockquote></li>
+<li><p>Brainstorming and strategy support for new business ideas</p></li>
+<li><p>Research and development of potential ventures or projects</p></li>
+<li><p>Assistance with launching and organizing new initiatives</p></li>
+<li><p>Workflow creation and process optimization</p></li>
+<li><p>Accountability and follow-through on ideas and action items</p></li>
 </ul>
-<h4 id="personal-assistant-lifestyle-management"><strong>Personal
-Assistant &amp; Lifestyle Management</strong></h4>
+<h3 id="personal-assistant-lifestyle-management"><strong>Personal Assistant &amp; Lifestyle Management</strong></h3>
 <ul>
-<li><blockquote>
-<p>Errand running and task coordination</p>
-</blockquote></li>
-<li><blockquote>
-<p>Personal scheduling and calendar organization</p>
-</blockquote></li>
-<li><blockquote>
-<p>Travel planning, booking, and itinerary management</p>
-</blockquote></li>
-<li><blockquote>
-<p>Household coordination (vendors, maintenance, deliveries, etc.)</p>
-</blockquote></li>
-<li><blockquote>
-<p>Personal shopping, returns, and general task management</p>
-</blockquote></li>
-<li><blockquote>
-<p>Event planning assistance (personal or professional)</p>
-</blockquote></li>
+<li><p>Errand running and task coordination</p></li>
+<li><p>Personal scheduling and calendar organization</p></li>
+<li><p>Travel planning, booking, and itinerary management</p></li>
+<li><p>Household coordination (vendors, maintenance, deliveries, etc.)</p></li>
+<li><p>Personal shopping, returns, and general task management</p></li>
+<li><p>Event planning assistance (personal or professional)</p></li>
 </ul>
-<h4 id="general-support"><strong>General Support</strong></h4>
+<h3 id="general-support"><strong>General Support</strong></h3>
 <ul>
-<li><blockquote>
-<p>Acting as a point of contact for delegated tasks and
-communications</p>
-</blockquote></li>
-<li><blockquote>
-<p>Proactive identification of needs and execution of solutions</p>
-</blockquote></li>
-<li><blockquote>
-<p>Ongoing support tailored to the Client’s evolving personal and
-business needs</p>
-</blockquote></li>
+<li><p>Acting as a point of contact for delegated tasks and communications</p></li>
+<li><p>Proactive identification of needs and execution of solutions</p></li>
+<li><p>Ongoing support tailored to the Client's evolving personal and business needs</p></li>
 </ul>
-<h3 id="service-flexibility-clause"><strong>Service Flexibility
-Clause</strong></h3>
-<p>Services are designed to be flexible and may evolve based on the
-Client’s priorities. Tasks outside of the above scope may be
-accommodated at the discretion of The Modern Concierge and within the
-agreed service hours.</p>
+<h3 id="service-flexibility-clause"><strong>Service Flexibility Clause</strong></h3>
+<blockquote>
+<p>Services are designed to be flexible and may evolve based on the Client's priorities. Tasks outside of the above scope may be accommodated at the discretion of The Modern Concierge and within the agreed service hours.</p>
+</blockquote>
 <h3 id="service-notes"><strong>Service Notes</strong></h3>
 <ul>
-<li><blockquote>
-<p>The Modern Concierge operates as a management and administrative
-support partner and does not replace licensed property management or
-legal/accounting professionals.</p>
-</blockquote></li>
-<li><blockquote>
-<p>All vendor services (cleaning, maintenance, etc.) are coordinated on
-behalf of the client but are billed separately unless otherwise
-agreed.</p>
-</blockquote></li>
-<li><blockquote>
-<p>Scope may evolve based on portfolio growth and operational needs.</p>
-</blockquote></li>
+<li><p>The Modern Concierge operates as a management and administrative support partner and does not replace licensed property management or legal/accounting professionals.</p></li>
+<li><p>All vendor services (cleaning, maintenance, etc.) are coordinated on behalf of the client but are billed separately unless otherwise agreed.</p></li>
+<li><p>Scope may evolve based on portfolio growth and operational needs.</p></li>
 </ul>
-<p>Services are non-licensed administrative support only. Company will
-not perform any activities requiring a license or unethical
-requests.</p>
-<p>Services are limited to agreed hours and defined needs. Company
-provides no guarantee of specific business results.</p>
+<blockquote>
+<p>Services are non-licensed administrative support only. The company will not perform any activities requiring a license or unethical requests.</p>
+<p>Services are limited to agreed hours and defined needs. The company provides no guarantee of specific business results.</p>
+</blockquote>
 <h2 id="membership-types"><strong>2. Membership Types</strong></h2>
-<p>One (1) Month Pilot</p>
+<h3 id="one-1-month-pilot"><strong>One (1) Month Pilot</strong></h3>
 <ul>
-<li><blockquote>
-<p><em>Client may only use once and must be first 30 days of
-service</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>No cancellation permitted during service</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>Client agrees to continue with the Three (3) Month Term or the
-Twelve (12) Month Term unless terminated in writing 7 days prior to
-Pilot service end date</em></p>
-</blockquote></li>
-<li><blockquote>
-<p>Assess workflow needs</p>
-</blockquote></li>
-<li><blockquote>
-<p>Implement foundational systems</p>
-</blockquote></li>
-<li><blockquote>
-<p>Establish communication cadence</p>
-</blockquote></li>
-<li><blockquote>
-<p>Evaluate hour allocation</p>
-</blockquote></li>
-<li><blockquote>
-<p>Perform tasks needed by Client</p>
-</blockquote></li>
+<li><p>Client may only use once and must be first 30 days of service</p></li>
+<li><p>No cancellation permitted during service</p></li>
+<li><p>Client agrees to continue with the Three (3) Month Term or the Twelve (12) Month Term unless terminated in writing 7 days prior to Pilot service end date</p></li>
+<li><p>Assess workflow needs</p></li>
+<li><p>Implement foundational systems</p></li>
+<li><p>Establish communication cadence</p></li>
+<li><p>Evaluate hour allocation</p></li>
+<li><p>Perform tasks needed by Client</p></li>
 </ul>
-<p>Three (3) Month Term</p>
+<h3 id="three-3-month-term"><strong>Three (3) Month Term</strong></h3>
 <ul>
-<li><blockquote>
-<p><em>Client may only use once and must be the next 90 days of service
-after One Month Pilot</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>No cancellation permitted during service</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>Client agrees to continue with the Twelve (12) Month Term unless
-terminated in writing 30 days prior to Three Month Term Services End
-Date</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>All three (3) months must contain the same amount of hours each
-month</em></p>
-</blockquote></li>
-<li><blockquote>
-<p>Perform tasks needed by Client</p>
-</blockquote></li>
+<li><p>Client may only use once and must be the next 90 days of service after One Month Pilot</p></li>
+<li><p>No cancellation permitted during service</p></li>
+<li><p>Client agrees to continue with the Twelve (12) Month Term unless terminated in writing 30 days prior to Three Month Term Services End Date</p></li>
+<li><p>All three (3) months must contain the same amount of hours each month</p></li>
+<li><p>Perform tasks needed by Client</p></li>
 </ul>
-<p>Twelve (12) Month Term (New)</p>
+<h3 id="twelve-12-month-term"><strong>Twelve (12) Month Term</strong></h3>
 <ul>
-<li><blockquote>
-<p><em>Standard agreement after the One Month Pilot and/or Three Month
-Term have been executed and completed</em></p>
-</blockquote></li>
+<li><p>Standard agreement after the One Month Pilot and/or Three Month Term have been executed and completed</p></li>
+<li><p>No cancellation permitted during service</p></li>
+<li><p>Client agrees to renew with the Twelve (12) Month Term (Renewal) unless terminated in writing 60 days prior to Twelve Month Term Services End Date</p></li>
+<li><p>All twelve (12) months of the Agreement must contain the same number of service hours per month unless the Client elects to enter into a Custom Agreement as outlined below.</p></li>
 </ul>
+<p><em><strong>Custom Agreement</strong></em></p>
+<p>Prior to execution of the twelve (12) month term, the Client must select an initial service tier of either twenty five (25), thirty five (35), forty (40), sixty (60), or eighty (80) hours per month. At the time of signing, the Client may designate specific months to increase their hours to forty (40) sixty (60) or (80) eighty hours to accommodate seasonal or anticipated needs. All monthly hour allocations must be finalized prior to execution of the Agreement and will remain fixed for the duration of the one-year term. Hours may be increased above the initial tier in designated months; however, reductions below the initially selected monthly tier are not permitted.</p>
 <ul>
-<li><blockquote>
-<p><em>No cancellation permitted during service</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>Client agrees to renew with the Twelve (12) Month Term (Renewal)
-unless terminated in writing 60 days prior to Twelve Month Term Services
-End Date</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>All twelve (12) months of the Agreement must contain the same
-number of service hours per month unless the Client elects to enter into
-a Custom Agreement as outlined below.</em></p>
-</blockquote></li>
+<li><p>Perform tasks needed by Client</p></li>
 </ul>
-<blockquote>
-<p><em><strong>Custom Agreement<br />
-</strong>Prior to execution of the twelve (12) month term, the Client
-must select an initial service tier of either twenty (20), forty (40),
-or sixty (60) hours per month. At the time of signing, the Client may
-designate specific months to increase their hours to forty (40) or sixty
-(60) hours to accommodate seasonal or anticipated needs. All monthly
-hour allocations must be finalized prior to execution of the Agreement
-and will remain fixed for the duration of the one-year term. Hours may
-be increased above the initial tier in designated months; however,
-reductions below the initially selected monthly tier are not
-permitted.</em></p>
-</blockquote>
+<h3 id="twelve-12-month-term-renewal"><strong>Twelve (12) Month Term (Renewal)</strong></h3>
 <ul>
-<li><blockquote>
-<p>Perform tasks needed by Client</p>
-</blockquote></li>
+<li><p>Standard agreement after the initial Twelve Month Term has been executed and completed.</p></li>
+<li><p>Cancellation permitted with a 60-day written notice</p></li>
+<li><p>Client agrees to renew with the Twelve (12) Month Term (Renewal) unless terminated in writing 60 days prior to Twelve Month Term Services End Date</p></li>
+<li><p>All twelve (12) months of the Agreement must contain the same number of service hours per month unless the Client elects to enter into a Custom Agreement as outlined below.</p></li>
 </ul>
-<p>Twelve (12) Month Term (Renewal)</p>
+<p><em><strong>Custom Agreement</strong></em></p>
+<p>Prior to execution of the twelve (12) month term, the Client must select an initial service tier of either twenty five (25), thirty five (35), forty (40), sixty (60), or eighty (80) hours per month. At the time of signing, the Client may designate specific months to increase their hours to accommodate seasonal or anticipated needs. All monthly hour allocations must be finalized prior to execution of the Agreement and will remain fixed for the duration of the one-year term. Hours may be increased above the initial tier in designated months; however, reductions below the initially selected monthly tier are not permitted.</p>
 <ul>
-<li><blockquote>
-<p><em>Standard agreement after the initial Twelve Month Term has been
-executed and completed.</em></p>
-</blockquote></li>
+<li><p>Perform tasks needed by Client</p></li>
 </ul>
-<ul>
-<li><blockquote>
-<p><em>Cancellation permitted with a 60-day written notice</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>Client agrees to renew with the Twelve (12) Month Term (Renewal)
-unless terminated in writing 60 days prior to Twelve Month Term Services
-End Date</em></p>
-</blockquote></li>
-<li><blockquote>
-<p><em>All twelve (12) months of the Agreement must contain the same
-number of service hours per month unless the Client elects to enter into
-a Custom Agreement as outlined below.</em></p>
-</blockquote></li>
-</ul>
-<blockquote>
-<p><em><strong>Custom Agreement<br />
-</strong>Prior to execution of the twelve (12) month term, the Client
-must select an initial service tier of either twenty (20), forty (40),
-or sixty (60) hours per month. At the time of signing, the Client may
-designate specific months to increase their hours to forty (40) or sixty
-(60) hours to accommodate seasonal or anticipated needs. All monthly
-hour allocations must be finalized prior to execution of the Agreement
-and will remain fixed for the duration of the one-year term. Hours may
-be increased above the initial tier in designated months; however,
-reductions below the initially selected monthly tier are not
-permitted.</em></p>
-</blockquote>
-<ul>
-<li><blockquote>
-<p>Perform tasks needed by Client</p>
-</blockquote></li>
-</ul>
-<h2 id="membership-levels"><strong>3. Membership Levels</strong></h2>
+<h3 id="pause-policy"><strong>Pause Policy</strong></h3>
+<p>Fixed-term memberships are intended to reserve recurring service capacity and do not automatically include a right to pause billing or service. Any pause must be approved by the Company in writing before it takes effect. Unless a separate written exception is approved, a pause does not reduce amounts owed under a fixed-term commitment, extend the Agreement term, or guarantee that the same assistant or schedule will remain available when service resumes. Companies may establish reasonable conditions for any approved pause, including notice, duration, and restart date.</p>
+<p>A company may voluntarily permit a one-time pause as a client accommodation, but no past accommodation creates a continuing right to pause. Any approved pause terms must be documented in writing.</p>
+<h2 id="memberships"><strong>3. Memberships</strong></h2>
 <p>Client agrees to enroll in the following membership:</p>
 <ul>
-<li><blockquote>
-<p>One (1) Month Pilot</p>
-</blockquote>
+<li><p><strong>One (1) Month Pilot (one time only)</strong></p>
 <ul>
-<li><blockquote>
-<p>20 Hours per Month – $950 per month</p>
-</blockquote>
-<blockquote>
-<p>40 Hours per Month – $1,700 per month</p>
-</blockquote>
-<blockquote>
-<p>60 Hours per Month – $2,400 per month</p>
-</blockquote></li>
+<li><p>20 Hours per Month – $950 per month</p>
+<p>25 Hours per Month – $1,150 per month</p>
+<p>35 Hours per Month – $1,600 per month</p>
+<p>40 Hours per Month – $2,000 per month</p>
+<p>60 Hours per Month - $2,640 per month</p>
+<p>80 Hours per Month - $3,520 per month</p></li>
 </ul>
-<blockquote>
-<p>Three (3) Month Term</p>
-</blockquote>
+<p><strong>Three (3) Month Term</strong></p>
 <ul>
-<li><blockquote>
-<p>20 Hours per Month – $950 per month</p>
-</blockquote>
-<blockquote>
-<p>40 Hours per Month – $1,700 per month</p>
-</blockquote>
-<blockquote>
-<p>60 Hours per Month – $2,400 per month</p>
-</blockquote></li>
+<li><p>25 Hours per Month – $1,150 per month</p>
+<p>35 Hours per Month – $1,600 per month</p>
+<p>40 Hours per Month – $2,000 per month</p>
+<p>60 Hours per Month - $2,640 per month</p>
+<p>80 Hours per Month - $3,520 per month</p></li>
 </ul>
-<blockquote>
-<p>Twelve (12) Month Term (New)</p>
-</blockquote>
+<p><strong>Twelve (12) Month Term (New)</strong></p>
 <ul>
-<li><blockquote>
-<p>20 Hours per Month – $950 per month</p>
-</blockquote>
-<blockquote>
-<p>40 Hours per Month – $1,700 per month</p>
-</blockquote>
-<blockquote>
-<p>60 Hours per Month – $2,400 per month</p>
-</blockquote>
-<blockquote>
-<p>Upgrade Option: May, July, October at 40 hours per month ($1,700 per
-month). Other months may be upgraded, if needed during contract
-period.</p>
-</blockquote></li>
+<li><p>25 Hours per Month – $1,150 per month</p>
+<p>35 Hours per Month – $1,600 per month</p>
+<p>40 Hours per Month – $2,000 per month</p>
+<p>60 Hours per Month - $2,640 per month</p>
+<p>80 Hours per Month - $3,520 per month</p></li>
 </ul>
-<blockquote>
-<p>Twelve (12) Month Term (Renewal)</p>
-</blockquote>
+<p><strong>Twelve (12) Month Term (Renewal)</strong></p>
 <ul>
-<li><blockquote>
-<p>20 Hours per Month – $950 per month</p>
-</blockquote>
-<blockquote>
-<p>40 Hours per Month – $1,700 per month</p>
-</blockquote>
-<blockquote>
-<p>60 Hours per Month – $2,400 per month</p>
-</blockquote>
-<blockquote>
-<p>Upgrade Option:</p>
-</blockquote></li>
+<li><p>25 Hours per Month – $1,150 per month</p>
+<p>35 Hours per Month – $1,600 per month</p>
+<p>40 Hours per Month – $2,000 per month</p>
+<p>60 Hours per Month - $2,640 per month</p>
+<p>80 Hours per Month - $3,520 per month</p></li>
 </ul></li>
 </ul>
-<p>Membership hours reset monthly and any unused hours do not roll over.
-<strong><u>$50 an hour</u></strong> for every hour exceeding monthly
-hour allocation. Overage will be invoiced monthly and is due within
-three (3) calendar days of the invoice date, consistent with the Overage
-Invoice Payment Terms below.</p>
-<p><strong>Home Reset Packages (Standalone Service — Membership Not
-Required)</strong></p>
-<p>Home Reset packages are a standalone service offered by Company and
-are available to any Client, whether or not Client is enrolled in an
-hourly membership above. Client may select one of the following
-flat-rate packages, available as a one-time service or on a recurring
-basis. Recurring Home Reset service carries no term commitment and may
-be cancelled at any time with forty-eight (48) hours’ notice; no early
-termination fee applies. Company will check the box below to indicate
-the package selected prior to signature.</p>
-<p><strong>☐ The Refresh — $325</strong></p>
-<p>6 Hours of Service · Flat Rate · One-Time or Recurring</p>
+<h3 id="home-reset-packages-standalone-service-membership-not-required"><strong>Home Reset Packages (Standalone Service — Membership Not Required)</strong></h3>
+<p>Home Reset packages are a standalone service offered by Company and are available to any Client, whether or not Client is enrolled in an hourly membership above. The Client may select one of the following flat-rate packages, available as a one-time service or on a recurring basis. Recurring Home Reset service carries no term commitment and may be cancelled at any time with forty-eight (48) hours’ notice; no early termination fee applies.</p>
 <ul>
-<li><blockquote>
-<p><strong>Includes:</strong></p>
-</blockquote>
-<blockquote>
-<p>Bed Making &amp; Linen Reset</p>
-</blockquote>
-<blockquote>
-<p>Dishes &amp; Kitchen Tidy</p>
-</blockquote>
-<blockquote>
-<p>Restocking of Provided Supplies</p>
-</blockquote>
-<blockquote>
-<p>Laundry (Wash &amp; Fold)</p>
-</blockquote>
-<blockquote>
-<p><strong>Does Not Include:</strong></p>
-</blockquote>
-<blockquote>
-<p>Grocery Stocking</p>
-</blockquote>
-<blockquote>
-<p>Errands &amp; Returns</p>
-</blockquote>
-<blockquote>
-<p>Vendor Coordination</p>
-</blockquote></li>
+<li><p><strong>The Refresh — $325 (6 Hours of Service – Flat Rate)</strong></p></li>
 </ul>
-<p><strong>☐ The Restore — $575</strong></p>
-<p>12 Hours of Service · Flat Rate · One-Time or Recurring</p>
+<blockquote>
+<p><em><strong>Includes:</strong></em></p>
+</blockquote>
 <ul>
-<li><blockquote>
-<p><strong>Includes:</strong></p>
-</blockquote>
-<blockquote>
-<p>Bed Making &amp; Linen Reset</p>
-</blockquote>
-<blockquote>
-<p>Dishes &amp; Kitchen Tidy</p>
-</blockquote>
-<blockquote>
-<p>Restocking of Provided Supplies</p>
-</blockquote>
-<blockquote>
-<p>Laundry (Wash, Fold &amp; Hang Up)</p>
-</blockquote>
-<blockquote>
-<p>Grocery Stocking</p>
-</blockquote>
-<blockquote>
-<p><strong>Does Not Include:</strong></p>
-</blockquote>
-<blockquote>
-<p>Errands &amp; Returns</p>
-</blockquote>
-<blockquote>
-<p>Vendor Coordination</p>
-</blockquote></li>
+<li><p>Bed Making &amp; Linen Reset</p></li>
+<li><p>Dishes &amp; Kitchen Tidy</p></li>
+<li><p>Restocking of Provided Supplies</p></li>
+<li><p>Laundry (Wash &amp; Fold)</p></li>
 </ul>
-<p><strong>Additional Assistant Authorization</strong></p>
-<p>When a client-assigned task carries a defined deadline that requires
-the deployment of an additional assistant beyond the primary assigned
-assistant, The Modern Concierge will obtain written or verbal client
-approval prior to bringing on the additional team member. Upon approval,
-each assistant actively working on the task will be billed individually
-against the client's monthly membership hours — for example, if two
-assistants each work two (2) hours on a deadline-driven task, four (4)
-total hours will be deducted from the client's monthly membership
-balance. Client approval is required prior to any additional assistant
-hours being billed, without exception.</p>
-<h2
-id="billing-renewal-overage-charges-and-late-payment-policy"><strong>4.
-Billing, Renewal, Overage Charges, and Late Payment Policy</strong>
-</h2>
-<p><em><strong>Automatic Recurring Billing
-Authorization</strong></em></p>
 <blockquote>
+<p><em><strong>Does Not Include:</strong></em></p>
+</blockquote>
+<ul>
+<li><p>Grocery Stocking</p></li>
+<li><p>Errands &amp; Returns</p></li>
+<li><p>Vendor Coordination</p></li>
+</ul>
+<ul>
+<li><p><strong>The Restore — $575 (12 Hours of Service – Flat Rate)</strong></p></li>
+</ul>
+<blockquote>
+<p><em><strong>Includes:</strong></em></p>
+</blockquote>
+<ul>
+<li><p>Bed Making &amp; Linen Reset</p></li>
+<li><p>Dishes &amp; Kitchen Tidy</p></li>
+<li><p>Restocking of Provided Supplies</p></li>
+<li><p>Laundry (Wash, Fold &amp; Hang Up)</p></li>
+<li><p>Grocery Stocking</p></li>
+</ul>
+<blockquote>
+<p><em><strong>Does Not Include:</strong></em></p>
+</blockquote>
+<ul>
+<li><p>Errands &amp; Returns</p></li>
+<li><p>Vendor Coordination</p></li>
+</ul>
+<ul>
+<li><p><strong>The Unpack — $550 (8 Hours of Service – Flat Rate)</strong></p></li>
+</ul>
+<blockquote>
+<p><em><strong>Includes:</strong></em></p>
+</blockquote>
+<ul>
+<li><p>Box unpacking &amp; unwrapping</p></li>
+<li><p>Kitchen, closet &amp; bathroom setup</p></li>
+<li><p>Trash &amp; packing material removal</p></li>
+<li><p>Basic organization of unpacked items</p></li>
+</ul>
+<ul>
+<li><p><strong>The Settle — $950 (16 Hours of Service – Flat Rate)</strong></p></li>
+</ul>
+<blockquote>
+<p><em><strong>Includes:</strong></em></p>
+</blockquote>
+<ul>
+<li><p>Everything in The Unpack, plus:</p></li>
+<li><p>Full-home unpacking &amp; organization</p></li>
+<li><p>Drawer &amp; closet systems set up</p></li>
+<li><p>Bed making &amp; linen setup</p></li>
+<li><p>Kitchen fully stocked &amp; organized</p></li>
+</ul>
+<ul>
+<li><p><strong>The Full Move In — $2,500 (30 Hours — Assistant + Handyman)</strong></p></li>
+</ul>
+<blockquote>
+<p><em><strong>Includes:</strong></em></p>
+</blockquote>
+<ul>
+<li><p>Everything in The Settle, plus:</p></li>
+<li><p>Furniture &amp; decor placement</p></li>
+<li><p>TV mounting, shelving &amp; small handyman tasks</p></li>
+<li><p>Full home organization, top to bottom</p></li>
+<li><p>Dedicated assistant + handyman team</p></li>
+</ul>
+<p>Membership hours reset monthly and any unused hours do not roll over. $50 an hour for every hour exceeding monthly hour allocation. Overage to be paid by the 1st of the month after the close of the previous month.</p>
+<h3 id="additional-assistant-authorization"><strong>Additional Assistant Authorization</strong></h3>
+<p>When a client-assigned task carries a defined deadline that requires the deployment of an additional assistant beyond the primary assigned assistant, The Modern Concierge will obtain written or verbal client approval prior to bringing on the additional team member. Upon approval, each assistant actively working on the task will be billed individually against the client's monthly membership hours — for example, if two assistants each work two (2) hours on a deadline-driven task, four (4) total hours will be deducted from the client's monthly membership balance. Client approval is required prior to any additional assistant hours being billed, without exception.</p>
+<h2 id="billing-renewal-overage-charges-and-late-payment-policy"><strong>4. Billing, Renewal, Overage Charges, and Late Payment Policy</strong></h2>
+<h3 id="automatic-recurring-billing-authorization"><strong>Automatic Recurring Billing Authorization</strong></h3>
 <p>Memberships are billed monthly, in advance.</p>
-<p>Membership services shall commence on the mutually agreed-upon start
-date selected by both parties and shall automatically renew every thirty
-(30) days thereafter, unless otherwise agreed upon in writing by both
-parties. Unless Client provides written notice of non-renewal at least
-five (5) calendar days prior to the end of the current billing period,
-the membership will automatically renew and the card on file will be
-charged for the next thirty (30) day billing cycle.</p>
-<p><strong>Payment is due on the mutually agreed-upon membership start
-date and will be automatically charged to the Client’s card on file
-every thirty (30) days thereafter, unless otherwise agreed upon in
-writing by both parties.</strong></p>
-<p>Client agrees to maintain a valid credit or debit card on file for
-all membership-based services. By signing this Agreement, Client
-authorizes The Modern Concierge to automatically charge the card on file
-on a recurring monthly basis for the selected membership plan.</p>
-<p>Payments are non-refundable once hours are allocated. Hours are
-allocated once an Agreement is signed by both
-parties<strong>.</strong></p>
-</blockquote>
-<h3
-id="membership-renewal-and-cancellation-notice"><em><strong>Membership
-Renewal and Cancellation Notice</strong></em></h3>
-<blockquote>
-<p>All memberships automatically renew at the end of each billing period
-unless Client provides written notice of non-renewal at least
-<strong>five (5) calendar days prior to the end of the current billing
-period.</strong></p>
-<p>If proper notice is not provided within this timeframe, the
-membership will automatically renew and the card on file will be charged
-for the next billing cycle.</p>
-</blockquote>
-<h3 id="included-hours-and-overage-charges"><em><strong>Included Hours
-and Overage Charges</strong></em></h3>
-<blockquote>
-<p>Each membership includes a designated number of service hours per
-billing cycle. Unused hours do not roll over to future billing periods
-unless otherwise stated in writing.</p>
-<p>If Client requires services beyond the included monthly hours,
-additional time will be billed at a rate of <strong>$50.00 per
-hour</strong>, consistent with The Modern Concierge’s standard
-membership overage rate.</p>
-<p>The Modern Concierge will make every reasonable effort to notify the
-Client before exceeding the allotted monthly hours.</p>
-</blockquote>
-<h3 id="overage-invoice-payment-terms"><em><strong>Overage Invoice
-Payment Terms</strong></em></h3>
-<blockquote>
-<p>Overage charges may be billed separately from the monthly membership
-fee and are due within three (3) calendar days of the invoice date.</p>
-</blockquote>
-<h3 id="late-fees-for-unpaid-overage-charges"><em><strong>Late Fees for
-Unpaid Overage Charges</strong></em></h3>
-<blockquote>
-<p>If payment for overage charges is not received within three (3)
-calendar days of the invoice date, Client agrees to pay a late fee equal
-to one and one-half percent (1.5%) per month on the unpaid balance,
-accruing from the invoice due date until paid in full.</p>
-</blockquote>
-<h3 id="suspension-of-services"><em><strong>Suspension of
-Services</strong></em></h3>
-<blockquote>
-<p>If any overage invoice remains unpaid for <strong>ten (10) calendar
-days</strong> after the invoice date, The Modern Concierge reserves the
-right to immediately suspend all services until the account is brought
-current.</p>
-<p>The Modern Concierge shall not be liable for any disruption, delays,
-or missed deadlines resulting from suspension of services due to
-nonpayment.</p>
-</blockquote>
-<h3 id="early-termination-of-fixed-term-agreements"><em><strong>Early
-Termination of Fixed-Term Agreements</strong></em></h3>
-<blockquote>
-<p>If the Client enters into a fixed-term Agreement, including but not
-limited to a three (3) month or twelve (12) month membership commitment,
-and elects to terminate the Agreement prior to the expiration of the
-agreed term, the Client shall be responsible for an Early Termination
-Fee as follows:</p>
-</blockquote>
-<h4 id="three-3-month-agreements"><strong>Three (3) Month
-Agreements</strong></h4>
-<blockquote>
-<p>The Client shall pay an amount equal to fifty percent (50%) of all
-remaining membership fees due for the balance of the Agreement term.</p>
-</blockquote>
-<h4 id="twelve-12-month-agreements"><strong>Twelve (12) Month
-Agreements</strong></h4>
-<blockquote>
-<p>Rather than a fee based on remaining months, the Early Termination
-Fee for Twelve (12) Month Agreements shall be calculated as a tiered
-buyout based on the Client's average monthly billing over the preceding
-three (3) completed months (or all completed months if fewer than three
-have elapsed at the time of cancellation), as follows: (a) Cancellation
-in Months 1 through 3: an amount equal to three (3) months of average
-billing; (b) Cancellation in Months 4 through 6: an amount equal to two
-(2) months of average billing; (c) Cancellation in Months 7 through 12:
-an amount equal to one (1) month of average billing. This structure
-ensures the buyout reflects the Client's actual usage history rather
-than a fixed tier that may not represent the Client's engagement with
-services.</p>
-<p>The Early Termination Fee is intended to compensate The Modern
-Concierge for onboarding costs, administrative setup, staff allocation,
-scheduling commitments, and reserved service capacity.</p>
-<p>The Early Termination Fee shall be due within three (3) calendar days
-of the termination date and may be charged automatically to the Client’s
-card on file.</p>
-<p>Failure to pay the Early Termination Fee within the required
-timeframe will subject the outstanding balance to the late payment
-provisions set forth in this Agreement, including applicable late fees
-and suspension of services.</p>
-<p>Any membership fees already paid are non-refundable, and services
-will continue through the end of the paid billing period unless
-otherwise agreed in writing.</p>
-</blockquote>
-<h3 id="declined-payments"><em><strong>Declined
-Payments</strong></em></h3>
-<blockquote>
-<p>If any automatic membership payment is declined, the client must
-provide updated payment information within <strong>twenty-four (24)
-hours</strong>. Services may be paused until successful payment is
-processed.</p>
-<p>Any fees charged by the payment processor or financial institution
-due to declined payments are the responsibility of the Client.</p>
-</blockquote>
-<p><em><strong>Other Payment Terms</strong></em></p>
-<p>All invoices and payments are processed through QuickBooks Online.
-Clients will receive a secure payment link via email. The following
-processing fees apply:</p>
+<p>Membership services shall commence on the mutually agreed-upon start date selected by both parties and shall automatically renew every thirty (30) days thereafter, unless otherwise agreed upon in writing by both parties. Unless Client provides written notice of non-renewal at least five (5) calendar days prior to the end of the current billing period, the membership will automatically renew and the card/ACH on file will be charged for the next thirty (30) day billing cycle.</p>
+<p>Payment is due on the mutually agreed-upon membership start date and will be automatically charged to the Client's card/ACH on file every thirty (30) days thereafter, unless otherwise agreed upon in writing by both parties.</p>
+<p>Client agrees to maintain a valid credit or debit card on file for all membership-based services. By signing this Agreement, Client authorizes The Modern Concierge to automatically charge the card on file on a recurring monthly basis for the selected membership plan.</p>
+<p>Payments are non-refundable once hours are allocated. Hours are allocated once an Agreement is signed by both parties.</p>
+<h3 id="membership-renewal-and-cancellation-notice"><strong>Membership Renewal and Cancellation Notice</strong></h3>
+<p>All memberships automatically renew at the end of each billing period unless Client provides written notice of non-renewal at least five (5) calendar days prior to the end of the current billing period.</p>
+<p>If proper notice is not provided within this timeframe, the membership will automatically renew and the card on file will be charged for the next billing cycle.</p>
+<h3 id="included-hours-and-overage-charges"><strong>Included Hours and Overage Charges</strong></h3>
+<p>Each membership includes a designated number of service hours per billing cycle. Unused hours do not roll over to future billing periods unless otherwise stated in writing.</p>
+<p>If Client requires services beyond the included monthly hours, additional time will be billed at a rate of $50.00 per hour, consistent with The Modern Concierge’s standard membership overage rate.</p>
+<p>To help the client stay on top of their hours, the assistant will send a usage report every Friday leading up to the client's billing date. While we do our best to flag it before the client reaches their limit, keeping track of the remaining hours is ultimately the client's responsibility, and any overage incurred will still apply.</p>
+<h3 id="overage-invoice-payment-terms"><strong>Overage Invoice Payment Terms</strong></h3>
+<p>Overage charges may be billed separately from the monthly membership fee and are due within three (3) calendar days of receiving your overage email.</p>
+<h3 id="late-fees-for-unpaid-overage-charges"><strong>Late Fees for Unpaid Overage Charges</strong></h3>
+<p>If payment for overage charges is not received within three (3) calendar days of the invoice date, Client agrees to pay a late fee equal to one and one-half percent (1.5%) per month on the unpaid balance, accruing from the invoice due date until paid in full.</p>
+<h3 id="suspension-of-services"><strong>Suspension of Services</strong></h3>
+<p>If any overage invoice remains unpaid for ten (10) calendar days after the invoice date, The Modern Concierge reserves the right to immediately suspend all services until the account is brought current.</p>
+<p>The Modern Concierge shall not be liable for any disruption, delays, or missed deadlines resulting from suspension of services due to nonpayment.</p>
+<h3 id="early-termination-of-fixed-term-agreements"><strong>Early Termination of Fixed-Term Agreements</strong></h3>
+<p>If the Client enters into a fixed-term Agreement, including but not limited to a three (3) month or twelve (12) month membership commitment, and elects to terminate the Agreement prior to the expiration of the agreed term, the Client shall be responsible for an Early Termination Fee as follows:</p>
+<p><em><strong>Three (3) Month Agreements</strong></em></p>
+<p>The Client shall pay an amount equal to fifty percent (50%) of all remaining membership fees due for the balance of the Agreement term.</p>
+<p><em><strong>Twelve (12) Month Agreements</strong></em></p>
+<p>Rather than a fee based on remaining months, the Early Termination Fee for Twelve (12) Month Agreements shall be calculated as a tiered buyout based on the Client's average monthly billing over the preceding three (3) completed months (or all completed months if fewer than three have elapsed at the time of cancellation), as follows: (a) Cancellation in Months 1 through 3: an amount equal to three (3) months of average billing; (b) Cancellation in Months 4 through 6: an amount equal to two (2) months of average billing; (c) Cancellation in Months 7 through 12: an amount equal to one (1) month of average billing. This structure ensures the buyout reflects the Client's actual usage history rather than a fixed tier that may not represent the Client's engagement with services.</p>
+<p>The Early Termination Fee is intended to compensate The Modern Concierge for onboarding costs, administrative setup, staff allocation, scheduling commitments, and reserved service capacity.</p>
+<p>The Early Termination Fee shall be due within three (3) calendar days of the termination date and may be charged automatically to the Client's card on file.</p>
+<p>Failure to pay the Early Termination Fee within the required timeframe will subject the outstanding balance to the late payment provisions set forth in this Agreement, including applicable late fees and suspension of services.</p>
+<p>Any membership fees already paid are non-refundable, and services will continue through the end of the paid billing period unless otherwise agreed in writing.</p>
+<h3 id="declined-payments"><strong>Declined Payments</strong></h3>
+<p>If any automatic membership payment is declined, the client must provide updated payment information within twenty-four (24) hours. Services may be paused until successful payment is processed.</p>
+<p>Any fees charged by the payment processor or financial institution due to declined payments are the responsibility of the Client.</p>
+<h3 id="other-payment-terms"><strong>Other Payment Terms</strong></h3>
+<p>All invoices and payments are processed through QuickBooks Online. Clients will receive a secure payment link via email. The following processing fees apply:</p>
 <ul>
-<li><blockquote>
-<p>ACH Bank Transfer: $10.00 flat fee per transaction</p>
-</blockquote></li>
-<li><blockquote>
-<p>Credit Card or Debit Card: 2.99% processing fee per transaction</p>
-</blockquote></li>
-<li><blockquote>
-<p><strong>Fees may apply.</strong></p>
-</blockquote></li>
+<li><p>ACH Bank Transfer: $10.00 flat fee per transaction</p></li>
+<li><p>Credit Card or Debit Card: 2.99% processing fee per transaction</p></li>
+<li><p>Fees may apply.</p></li>
 </ul>
-<blockquote>
-<p>The Client agrees to reimburse the Personal Assistant (“PA”) for all
-reasonable and pre-approved out-of-pocket expenses incurred by the PA in
-the course of performing errands or tasks on behalf of the Client. The
-PA shall provide receipts or reasonable proof of payment for all such
-expenses. Reimbursement shall be made within twenty-four (24) hours of
-the Client’s receipt of documentation. Payment shall be issued through a
-mutually agreed upon payment method, including but not limited to Venmo,
-Zelle, or another agreed electronic transfer method.</p>
-<p>For longer-term Agreements, the Client may, at their discretion,
-provide the Personal Assistant (“PA”) with a credit card issued in the
-PA’s name for the sole purpose of making authorized purchases on behalf
-of the Client. The card shall be used exclusively for pre-approved,
-business-related expenses incurred in the performance of services under
-this Agreement.</p>
-</blockquote>
+<p>For longer-term Agreements, the Client may, at their discretion, provide the Personal Assistant (“PA”) with a credit card issued in the PA’s name for the sole purpose of making authorized purchases on behalf of the Client. The card shall be used exclusively for pre-approved, business-related expenses incurred in the performance of services under this Agreement.</p>
 <ul>
-<li><blockquote>
-<p>The PA agrees to use the card only within the scope of authorization
-provided by the Client and to maintain accurate records of all
-transactions, including receipts and supporting documentation. The PA
-shall not be personally liable for authorized charges made in accordance
-with this Agreement.</p>
-</blockquote></li>
-<li><blockquote>
-<p>The Client reserves the right to revoke access to the credit card at
-any time upon written notice. Upon termination of this Agreement or
-revocation of authorization, the PA shall promptly return or destroy the
-card as directed by the Client.</p>
-</blockquote></li>
+<li><p>The PA agrees to use the card only within the scope of authorization provided by the Client and to maintain accurate records of all transactions, including receipts and supporting documentation. The PA shall not be personally liable for authorized charges made in accordance with this Agreement.</p></li>
+<li><p>The Client reserves the right to revoke access to the credit card at any time upon written notice. Upon termination of this Agreement or revocation of authorization, the PA shall promptly return or destroy the card as directed by the Client.</p></li>
 </ul>
-<h2 id="client-referral-incentive-program"><strong>5. Client Referral
-Incentive Program</strong></h2>
+<h2 id="client-referral-incentive-program"><strong>5. Client Referral Incentive Program</strong></h2>
 <p>Clients may receive a referral incentive structured as follows:</p>
-<p>If Client refers a new client to Company and that referral signs a
-Three (3) Month Term or longer contract:</p>
+<p>If Client refers a new client to Company and that referral signs a Three (3) Month Term or longer contract:</p>
 <ul>
-<li><blockquote>
-<p>The referring client will receive 20% off one month of service during
-their contracted Agreement.</p>
-</blockquote></li>
+<li><p>The referring client will receive 20% off one month of service during their contracted Agreement.</p></li>
 </ul>
-<p>There is no limit to the number of referrals Client may make;
-however, discounts cannot be combined within a single month. Each
-successful referral earns 20% off one month of service, so multiple
-referrals will result in multiple separate months discounted at 20%.</p>
-<p>The Company reserves the right to modify or discontinue this
-incentive program at any time.</p>
+<p>There is no limit to the number of referrals Client may make; however, discounts cannot be combined within a single month. Each successful referral earns 20% off one month of service, so multiple referrals will result in multiple separate months discounted at 20%. The Company reserves the right to modify or discontinue this incentive program at any time.</p>
 <h2 id="communication"><strong>6. Communication</strong></h2>
 <p>Client agrees to:</p>
 <ul>
-<li><blockquote>
-<p>Provide timely access to necessary platforms</p>
-</blockquote></li>
-<li><blockquote>
-<p>Respond to questions within reasonable timeframes</p>
-</blockquote></li>
-<li><blockquote>
-<p>Maintain organized communication channels</p>
-</blockquote></li>
+<li><p>Provide timely access to necessary platforms</p></li>
+<li><p>Respond to questions within reasonable timeframes</p></li>
+<li><p>Maintain organized communication channels</p></li>
 </ul>
 <p>Company agrees to:</p>
 <ul>
-<li><blockquote>
-<p>Provide timely responses to questions</p>
-</blockquote></li>
-<li><blockquote>
-<p>Complete tasks before or on requested due date; or communicate with
-Client if unforeseen circumstances arise</p>
-</blockquote></li>
-<li><blockquote>
-<p>Provide Client with monthly usage report and notify if any overage is
-to be expected</p>
-</blockquote></li>
-<li><blockquote>
-<p>The best of their ability, to provide accurate and exceptional
-service</p>
-</blockquote></li>
+<li><p>Provide timely responses to questions</p></li>
+<li><p>Complete tasks before or on requested due date; or communicate with Client if unforeseen circumstances arise</p></li>
+<li><p>Provide Client with monthly usage report and notify if any overage is to be expected</p></li>
+<li><p>To the best of their ability, provide accurate and exceptional service</p></li>
 </ul>
-<h2 id="independent-contractor-status"><strong>7. Independent Contractor
-Status</strong></h2>
-<p>Company operates as an independent contractor. No employment
-relationship is created under this agreement. This includes, but not
-limited to, no benefits, tax withholding, or authority to bind Client.
-Client is responsible for its own compliance and decisions.</p>
-<h2 id="confidentiality"><strong>8. Confidentiality</strong></h2>
-<p>Company agrees to maintain confidentiality regarding Client business
-information, personal information and sensitive data.</p>
-<p>Client agrees to maintain confidentiality regarding any Company
-proprietary information, trade secrets and business strategies.</p>
-<p>This section shall survive termination or expiration of this
-Agreement.</p>
+<h2 id="additional-hours-overage"><strong>7. Additional Hours / Overage</strong></h2>
+<ul>
+<li><p>Overage hours are not guaranteed and will depend on your assistant's availability. If you need guaranteed additional hours each month, you'll need to upgrade to the next membership tier.</p></li>
+</ul>
+<h2 id="independent-contractor-status"><strong>8. Independent Contractor Status</strong></h2>
+<p>The company operates as an independent contractor. No employment relationship is created under this agreement. This includes, but not limited to, no benefits, tax withholding, or authority to bind Client. The client is responsible for its own compliance and decisions.</p>
+<h2 id="confidentiality"><strong>9. Confidentiality</strong></h2>
+<p>The company agrees to maintain confidentiality regarding Client business information, personal information and sensitive data.</p>
+<p>Client agrees to maintain confidentiality regarding any Company proprietary information, trade secrets and business strategies.</p>
+<p>This section shall survive termination or expiration of this Agreement.</p>
 <p>A Non-Disclosure Agreement (NDA) is available upon request.</p>
-<h2 id="limitation-of-liability"><strong>9. Limitation of
-Liability</strong></h2>
-<p>To the fullest extent permitted by applicable law, Company’s total
-cumulative liability arising out of or relating to this Agreement,
-whether in contract, tort (including negligence), strict liability, or
-otherwise, shall not exceed the total fees actually paid by Client to
-Company during the three (3) months immediately preceding the event
-giving rise to the claim.</p>
-<p>In no event shall Company be liable for any indirect, incidental,
-consequential, special, exemplary, or punitive damages, including but
-not limited to loss of profits, loss of revenue, loss of business
-opportunity, loss of data, or business interruption, arising out of or
-related to this Agreement, even if Company has been advised of the
-possibility of such damages.</p>
-<p>The limitations set forth in this section shall apply regardless of
-the form of action and shall survive termination or expiration of this
-Agreement.</p>
-<p>This section shall survive termination or expiration of this
-Agreement.</p>
-<h2 id="intellectual-property-ownership"><strong>10. Intellectual
-Property Ownership</strong></h2>
-<p>All pre-existing materials, methodologies, templates, processes,
-frameworks, systems, tools, trade secrets, and intellectual property
-owned or developed by Company prior to or independently of this
-Agreement (“Provider Materials”) shall remain the sole and exclusive
-property of Company.</p>
-<p>Upon full payment of all amounts due under this Agreement, Client
-shall own the final deliverables specifically created for Client under
-this Agreement (“Client Deliverables”). Company hereby grants Client a
-non-exclusive, perpetual, non-transferable license to use any
-incorporated Company Materials solely as part of the Client Deliverables
-and solely for Client’s internal business purposes.</p>
-<p>Client shall not resell, sublicense, distribute, or commercially
-exploit Company Materials independent of the Client Deliverables without
-Company’s prior written consent.</p>
-<p>Company retains the right to reuse, modify, and incorporate general
-knowledge, skills, experience, ideas, concepts, and know-how developed
-during the performance of services for other clients, provided that no
-confidential information of Client is disclosed.</p>
+<h2 id="limitation-of-liability"><strong>10. Limitation of Liability</strong></h2>
+<p>To the fullest extent permitted by applicable law, Company's total cumulative liability arising out of or relating to this Agreement, whether in contract, tort (including negligence), strict liability, or otherwise, shall not exceed the total fees actually paid by Client to Company during the three (3) months immediately preceding the event giving rise to the claim.</p>
+<p>In no event shall Company be liable for any indirect, incidental, consequential, special, exemplary, or punitive damages, including but not limited to loss of profits, loss of revenue, loss of business opportunity, loss of data, or business interruption, arising out of or related to this Agreement, even if Company has been advised of the possibility of such damages.</p>
+<p>The limitations set forth in this section shall apply regardless of the form of action and shall survive termination or expiration of this Agreement.</p>
+<h2 id="intellectual-property-ownership"><strong>11. Intellectual Property Ownership</strong></h2>
+<p>All pre-existing materials, methodologies, templates, processes, frameworks, systems, tools, trade secrets, and intellectual property owned or developed by Company prior to or independently of this Agreement (“Provider Materials”) shall remain the sole and exclusive property of Company.</p>
+<p>Upon full payment of all amounts due under this Agreement, Client shall own the final deliverables specifically created for Client under this Agreement (“Client Deliverables”).</p>
+<p>Company hereby grants Client a non-exclusive, perpetual, non-transferable license to use any incorporated Company Materials solely as part of the Client Deliverables and solely for Client's internal business purposes.</p>
+<p>Client shall not resell, sublicense, distribute, or commercially exploit Company Materials independent of the Client Deliverables without Company's prior written consent.</p>
+<p>Company retains the right to reuse, modify, and incorporate general knowledge, skills, experience, ideas, concepts, and know-how developed during the performance of services for other clients, provided that no confidential information of Client is disclosed.</p>
 <p>All rights not expressly granted herein are reserved by Company.</p>
-<p>This section shall survive termination or expiration of this
-Agreement.</p>
-<h2 id="indemnification"><strong>11. Indemnification</strong></h2>
-<p>Client agrees to defend, indemnify, and hold harmless Company and its
-owners, officers, employees, contractors, and agents from and against
-any and all claims, demands, actions, damages, liabilities, losses,
-costs, and expenses (including reasonable attorneys’ fees and legal
-costs) arising out of or relating to:</p>
-<ol type="1">
-<li><blockquote>
-<p>Client’s business operations, products, or services;</p>
-</blockquote></li>
-<li><blockquote>
-<p>Any materials, data, content, or information provided by Client to
-Provider;</p>
-</blockquote></li>
-<li><blockquote>
-<p>Client’s misuse, misapplication, or implementation of Provider’s
-services, recommendations, or deliverables;</p>
-</blockquote></li>
-<li><blockquote>
-<p>Client’s breach of this Agreement; or</p>
-</blockquote></li>
-<li><blockquote>
-<p>Any violation of applicable laws or regulations by Client.</p>
-</blockquote></li>
-</ol>
-<p>Company shall promptly notify Client of any claim subject to
-indemnification and shall reasonably cooperate in the defense. Client
-shall have control of the defense and settlement of such claim, provided
-that Client may not settle any claim in a manner that imposes liability
-or admission of fault on Company without Company’s prior written
-consent.</p>
-<p>This indemnification obligation shall survive termination or
-expiration of this Agreement.</p>
-<h2 id="force-majeure"><strong>12. Force Majeure</strong></h2>
-<p>Neither party shall be liable for any failure or delay in performance
-under this Agreement (except for payment obligations) to the extent such
-failure or delay is caused by events beyond the reasonable control of
-the affected party, including but not limited to acts of God, natural
-disasters, fire, flood, war, terrorism, civil unrest, labor disputes,
-government actions, embargoes, pandemics, utility failures, internet or
-telecommunications interruptions, or other unforeseen circumstances
-(“Force Majeure Event”).</p>
-<p>The affected party shall promptly notify the other party in writing
-of the Force Majeure Event and shall use commercially reasonable efforts
-to resume performance as soon as practicable.</p>
-<p>If a Force Majeure Event continues for more than thirty (30)
-consecutive days, either party may terminate this Agreement upon written
-notice without further liability, except for payment obligations accrued
-prior to the effective date of termination.</p>
+<p>This section shall survive termination or expiration of this Agreement.</p>
+<h2 id="photography-media-release"><strong>12. Photography &amp; Media Release</strong></h2>
+<p>From time to time, The Modern Concierge may photograph or record completed projects, organized spaces, home resets, behind-the-scenes work, or other services performed for the Client for marketing and promotional purposes. Such content may be used on The Modern Concierge's website, social media platforms, digital or printed marketing materials, portfolio, and other business-related promotional channels.</p>
+<p>The Modern Concierge will make reasonable efforts to protect the Client's privacy and will not intentionally disclose sensitive or personally identifying information, including private documents, financial information, addresses, access codes, or other confidential information. The Client's name, likeness, or other identifying information will not be intentionally included without additional permission.</p>
+<ul>
+<li><p>YES — Client authorizes photography/video and promotional use under the terms above.</p>
+<p>NO — Client does not authorize photography/video or promotional use of services performed for Client.</p></li>
+</ul>
+<p><strong>Client Initials:</strong></p>
+<h2 id="indemnification"><strong>13. Indemnification</strong></h2>
+<p>Client agrees to defend, indemnify, and hold harmless Company and its owners, officers, employees, contractors, and agents from and against any and all claims, demands, actions, damages, liabilities, losses, costs, and expenses (including reasonable attorneys’ fees and legal costs) arising out of or relating to:</p>
+<ul>
+<li><p>Client's business operations, products, or services;</p></li>
+<li><p>Any materials, data, content, or information provided by Client to Provider;</p></li>
+<li><p>Client's misuse, misapplication, or implementation of Provider's services, recommendations, or deliverables;</p></li>
+<li><p>Client's breach of this Agreement; or</p></li>
+<li><p>Any violation of applicable laws or regulations by Client.</p></li>
+</ul>
+<p>Company shall promptly notify Client of any claim subject to indemnification and shall reasonably cooperate in the defense. Client shall have control of the defense and settlement of such claim, provided that Client may not settle any claim in a manner that imposes liability or admission of fault on Company without Company’s prior written consent.</p>
+<p>This indemnification obligation shall survive termination or expiration of this Agreement.</p>
+<h2 id="force-majeure"><strong>14. Force Majeure</strong></h2>
+<p>Neither party shall be liable for any failure or delay in performance under this Agreement (except for payment obligations) to the extent such failure or delay is caused by events beyond the reasonable control of the affected party, including but not limited to acts of God, natural disasters, fire, flood, war, terrorism, civil unrest, labor disputes, government actions, embargoes, pandemics, utility failures, internet or telecommunications interruptions, or other unforeseen circumstances (“Force Majeure Event”).</p>
+<p>The affected party shall promptly notify the other party in writing of the Force Majeure Event and shall use commercially reasonable efforts to resume performance as soon as practicable.</p>
+<p>If a Force Majeure Event continues for more than thirty (30) consecutive days, either party may terminate this Agreement upon written notice without further liability, except for payment obligations accrued prior to the effective date of termination.</p>
 <p>This section shall survive termination of this Agreement.</p>
-<h2 id="governing-law-and-dispute-resolution"><strong>13. Governing Law
-and Dispute Resolution</strong></h2>
-<p>This Agreement shall be governed by and construed in accordance with
-the laws of the State of Louisiana, without regard to its conflict of
-law principles.</p>
-<p>The parties agree to first attempt in good faith to resolve any
-dispute arising out of or relating to this Agreement through informal
-negotiations. If the dispute cannot be resolved within thirty (30) days,
-the parties agree to submit the matter to mediation in Lafayette,
-Louisiana before initiating litigation.</p>
-<p>If mediation is unsuccessful, any legal action or proceeding arising
-under this Agreement shall be brought exclusively in the state or
-federal courts located in Lafayette, Louisiana, and the parties hereby
-consent to the personal jurisdiction and venue of such courts.</p>
-<p>The prevailing party in any action to enforce this Agreement shall be
-entitled to recover its reasonable attorneys’ fees and costs.</p>
-<h2 id="termination"><strong>14. Termination</strong></h2>
-<p>Either party may terminate this Agreement prior to the end of the
-applicable term if the other party materially breaches this Agreement
-and fails to cure such breach within ten (10) days after receiving
-written notice describing the breach in reasonable detail.</p>
+<h2 id="client-property-home-access-pets-and-safety"><strong>15. Client Property, Home Access, Pets, and Safety</strong></h2>
+<ul>
+<li><p>Client authorizes Company personnel to enter Client-designated homes, offices, or other premises as reasonably necessary to perform assigned services.</p></li>
+<li><p>Client is responsible for providing accurate keys, access codes, alarm instructions, parking instructions, and other access information and for promptly updating them.</p></li>
+<li><p>Company will use reasonable care with keys, access credentials, and Client property but is not responsible for ordinary wear, pre-existing damage, latent defects, or loss caused by third parties outside Company's reasonable control.</p></li>
+<li><p>Clients must disclose known hazards, dangerous conditions, aggressive animals, weapons that are not securely stored, contagious conditions presenting a material workplace risk, or other circumstances reasonably affecting assistant safety.</p></li>
+<li><p>Company may refuse, stop, or leave any task or location that Company reasonably believes is unsafe, unlawful, harassing, abusive, or outside the agreed scope. Such action will not constitute breach by Company.</p></li>
+</ul>
+<h2 id="third-party-communications-and-limited-authorization"><strong>16. Third-Party Communications and Limited Authorization</strong></h2>
+<p>Client authorizes Company to communicate with vendors, service providers, businesses, and other third parties on Client's behalf when reasonably necessary to perform an assigned task. This may include requesting information, coordinating appointments, obtaining quotes, scheduling services, and relaying Client-approved instructions. Company has no authority to sign contracts, incur debt, make legal representations, or otherwise legally bind Client unless Client provides specific written authorization.</p>
+<h2 id="governing-law-and-dispute-resolution"><strong>17. Governing Law and Dispute Resolution</strong></h2>
+<p>This Agreement shall be governed by and construed in accordance with the laws of the State of Louisiana, without regard to its conflict of law principles.</p>
+<p>The parties agree to first attempt in good faith to resolve any dispute arising out of or relating to this Agreement through informal negotiations. If the dispute cannot be resolved within thirty (30) days, the parties agree to submit the matter to mediation in Louisiana before initiating litigation.</p>
+<p>If mediation is unsuccessful, any legal action or proceeding arising under this Agreement shall be brought exclusively in the state or federal courts located in Lafayette, Louisiana, and the parties hereby consent to the personal jurisdiction and venue of such courts.</p>
+<p>The prevailing party in any action to enforce this Agreement shall be entitled to recover its reasonable attorneys’ fees and costs.</p>
+<h2 id="termination"><strong>18. Termination</strong></h2>
+<p>Either party may terminate this Agreement prior to the end of the applicable term if the other party materially breaches this Agreement and fails to cure such breach within ten (10) days after receiving written notice describing the breach in reasonable detail.</p>
 <p>Material breach includes, but is not limited to:</p>
 <ul>
-<li><blockquote>
-<p>Failure to make timely payment of fees</p>
-</blockquote></li>
-<li><blockquote>
-<p>Failure to provide necessary access, information, or approvals
-required for performance</p>
-</blockquote></li>
-<li><blockquote>
-<p>Violation of confidentiality obligations</p>
-</blockquote></li>
-<li><blockquote>
-<p>Any unlawful or unethical conduct that materially affects performance
-of services</p>
-</blockquote></li>
+<li><p>Failure to make timely payment of fees</p></li>
+<li><p>Failure to provide necessary access, information, or approvals required for performance</p></li>
+<li><p>Violation of confidentiality obligations</p></li>
+<li><p>Any unlawful or unethical conduct that materially affects performance of services</p></li>
 </ul>
+<p>Company may suspend services or terminate immediately, without a cure period when reasonably necessary, for threats, violence, sexual harassment, discriminatory or abusive conduct directed at Company personnel; dangerous or materially unsafe working conditions; fraud; intentional misuse of Company personnel or credentials; illegal requests; or other conduct that reasonably presents an immediate safety, legal, or security risk.</p>
 <p>If Client is terminated for cause:</p>
 <ul>
-<li><blockquote>
-<p>All unpaid amounts for length of contract become immediately due and
-payable</p>
-</blockquote></li>
-<li><blockquote>
-<p>Provider reserves the right to invoice for any work completed but not
-yet billed</p>
-</blockquote></li>
-<li><blockquote>
-<p>Any prepaid fees are non-refundable</p>
-</blockquote></li>
+<li><p>All unpaid amounts for length of contract become immediately due and payable</p></li>
+<li><p>Provider reserves the right to invoice for any work completed but not yet billed</p></li>
+<li><p>Any prepaid fees are non-refundable</p></li>
 </ul>
 <p>If Provider is terminated for cause:</p>
 <ul>
-<li><blockquote>
-<p>Client shall be responsible only for payment of services properly
-performed through the effective termination date</p>
-</blockquote></li>
-<li><blockquote>
-<p>Provider shall refund any prepaid fees for services not yet
-performed</p>
-</blockquote></li>
-<li><blockquote>
-<p>Total liability is capped at fees paid in the last 3 months of
-services provided</p>
-</blockquote></li>
-<li><blockquote>
-<p>No indirect, incidental, consequential, or lost-profit damages</p>
-</blockquote></li>
+<li><p>Client shall be responsible only for payment of services properly performed through the effective termination date</p></li>
+<li><p>Provider shall refund any prepaid fees for services not yet performed</p></li>
+<li><p>Total liability is capped at fees paid in the last 3 months of services provided</p></li>
+<li><p>No indirect, incidental, consequential, or lost-profit damages</p></li>
 </ul>
 <p>Upon termination:</p>
 <ul>
-<li><blockquote>
-<p>Client remains responsible for payment of all fees incurred through
-the effective termination date</p>
-</blockquote></li>
-<li><blockquote>
-<p>Any unpaid balances become immediately due</p>
-</blockquote></li>
-<li><blockquote>
-<p>No refunds will be issued for partially used months</p>
-</blockquote></li>
-<li><blockquote>
-<p>It is the responsibility of the Client for any collection/legal
-fees</p>
-</blockquote></li>
+<li><p>Client remains responsible for payment of all fees incurred through the effective termination date</p></li>
+<li><p>Any unpaid balances become immediately due</p></li>
+<li><p>No refunds will be issued for partially used months</p></li>
+<li><p>It is the responsibility of the Client for any collection/legal fees</p></li>
 </ul>
-<p>This Agreement constitutes the entire agreement between the parties
-and supersedes all prior and contemporaneous agreements, proposals,
-representations, negotiations, and communications, whether written or
-oral, relating to the subject matter hereof.</p>
+<h2 id="entire-agreement-amendments-notices-severability-waiver-electronic-signatures"><strong>19. Entire Agreement; Amendments; Notices; Severability; Waiver; Electronic Signatures</strong></h2>
+<ul>
+<li><p>This Agreement, including any attached schedules, custom hour allocations, and payment authorization, constitutes the entire agreement between the parties concerning its subject matter and supersedes prior or contemporaneous proposals, representations, negotiations, and communications.</p></li>
+<li><p>Any amendment, exception, pause, downgrade, custom allocation, or other material change must be in writing and accepted by both parties.</p></li>
+<li><p>Notices required under this Agreement must be sent in writing by email or another written communication method the parties customarily use and must clearly state the requested action and effective date.</p></li>
+<li><p>If any provision is held invalid or unenforceable, the remaining provisions remain in effect to the fullest extent permitted by law.</p></li>
+<li><p>Failure to enforce a provision on one occasion does not waive the right to enforce it later.</p></li>
+<li><p>This Agreement may be signed electronically and in counterparts, each of which is treated as an original and all of which together form one agreement.</p></li>
+</ul>
 <p>Client Signature: Date:</p>
 <p>Company Representative: Date:</p>
-<h2 id="section"></h2>
-<h2 id="credit-card-authorization-for-recurring-payments"><strong>Credit
-Card Authorization for Recurring Payments</strong></h2>
-<p>To streamline our billing process and ensure uninterrupted service,
-Client authorizes The Modern Concierge, LLC ("Company") to securely
-store the payment information provided below and to automatically
-process all recurring membership fees, approved overage charges,
-reimbursable expenses, and any other amounts due under this
-Agreement.</p>
-<p>Membership fees will be charged automatically every thirty (30) days
-on the agreed-upon billing date unless otherwise specified in writing by
-both parties.</p>
-<p>If Client does not wish to renew services for the next billing cycle,
-Client must provide written notice to Company at least five (5) calendar
-days prior to the next scheduled billing date. If such notice is not
-received, the membership will automatically renew and the payment method
-on file will be charged accordingly.</p>
-<p>Client represents and warrants that they are an authorized user of
-the payment method provided below and agrees to keep payment information
-current at all times. If a payment is declined for any reason, Client
-agrees to provide an updated payment method within three (3) calendar
-days. Company reserves the right to suspend services until payment is
-received in full.</p>
+<h2 id="credit-card-authorization-for-recurring-payments"><strong>Credit Card Authorization for Recurring Payments</strong></h2>
+<p>To streamline our billing process and ensure uninterrupted service, Client authorizes The Modern Concierge, LLC ("Company") to securely store the payment information provided below and to automatically process all recurring membership fees, approved overage charges, reimbursable expenses, and any other amounts due under this Agreement.</p>
+<p>Membership fees will be charged automatically every thirty (30) days on the agreed-upon billing date unless otherwise specified in writing by both parties.</p>
+<p>If Client does not wish to renew services for the next billing cycle, Client must provide written notice to Company at least five (5) calendar days prior to the next scheduled billing date. If such notice is not received, the membership will automatically renew and the payment method on file will be charged accordingly.</p>
+<p>Client represents and warrants that they are an authorized user of the payment method provided below and agrees to keep payment information current at all times. If a payment is declined for any reason, the client agrees to provide an updated payment method within three (3) calendar days. The company reserves the right to suspend services until payment is received in full.</p>
+<p>For contracts under a 3-month or 12-month term, the client's payment information will be included as part of this agreement via the attached Credit Card/ACH Authorization Form. By signing this agreement, the client authorizes The Modern Concierge to charge the payment method on file for all recurring membership fees and any applicable overage charges for the duration of the term.</p>
+<p>If the client wishes to use a different payment method than the one currently on file, please notify us before signing so we can update your account and the authorization form accordingly.</p>
 <p><strong>Payment Method Selection</strong></p>
 <p>Credit/Debit Card (2.99% processing fee applies)</p>
 <p>ACH Bank Transfer ($10 flat processing fee per billing cycle)</p>
-<h3 id="authorized-payment-method"><strong>Authorized Payment
-Method</strong></h3>
-<p><strong>Card Type (Visa, Mastercard,Discover, American
-Express):</strong></p>
+<h4 id="authorized-payment-method"><strong>Authorized Payment Method</strong></h4>
+<h4 id="card-type-visa-mastercarddiscover-american-express"><strong>Card Type (Visa, Mastercard,Discover, American Express):</strong> </h4>
 <p><strong>Name as Shown on Card:</strong></p>
 <p><strong>Card Number:</strong></p>
 <p><strong>Expiration Date (MM/YY):</strong></p>
 <p><strong>Security Code (CVV):</strong></p>
-<h3 id="billing-address"><strong>Billing Address:</strong></h3>
-<p><strong>Billing Zip Code:</strong></p>
-<h2 id="section-1"></h2>
-<h2 id="ach-payment-authorization-optional"><strong>ACH Payment
-Authorization (Optional)</strong></h2>
-<p><strong>If Client elects to pay via ACH (Automated Clearing House)
-bank transfer, Client authorizes The Modern Concierge, LLC to securely
-store the banking information provided below and initiate recurring ACH
-withdrawals for membership fees, overage charges, approved expenses, and
-any other amounts due under this Agreement.</strong></p>
-<p><strong>Client understands that ACH payments are subject to a flat
-processing fee of $10 per billing cycle and authorizes such fee to be
-charged in addition to the applicable membership amount.</strong></p>
-<h3 id="bank-account-information"><strong>Bank Account
-Information</strong></h3>
+<p><strong>Billing Address:Billing Zip Code:</strong></p>
+<h3 id="ach-payment-authorization-optional"><strong>ACH Payment Authorization (Optional)</strong></h3>
+<p>If Client elects to pay via ACH (Automated Clearing House) bank transfer, Client authorizes The Modern Concierge, LLC to securely store the banking information provided below and initiate recurring ACH withdrawals for membership fees, overage charges, approved expenses, and any other amounts due under this Agreement.</p>
+<p>Client understands that ACH payments are subject to a flat processing fee of $10 per billing cycle and authorizes such fee to be charged in addition to the applicable membership amount.</p>
+<h4 id="bank-account-information"><strong>Bank Account Information</strong></h4>
+<blockquote>
+<p>Credit/Debit Card (2.99% processing fee applies)</p>
+<p>ACH Bank Transfer ($10 flat processing fee per billing cycle)</p>
+</blockquote>
 <p><strong>Account Holder Name:</strong></p>
 <p><strong>Bank Name:</strong></p>
 <p><strong>Account Type “Checking or Savings”:</strong></p>
 <p><strong>Routing Number:</strong></p>
 <p><strong>Account Number:</strong></p>
-<h3 id="section-2"></h3>
-<h3 id="section-3"></h3>
-<h3 id="section-4"></h3>
-<h3 id="authorization"><strong>Authorization</strong></h3>
-<p><strong>By signing below, Client authorizes The Modern Concierge, LLC
-to initiate electronic debit entries from the bank account listed above
-for all charges authorized under this Agreement. This authorization
-shall remain in effect until revoked in writing by Client. Client agrees
-to provide updated banking information promptly if account details
-change and understands that failed ACH payments may be subject to late
-fees and service suspension as outlined in this Agreement.</strong></p>
-<p><strong>Client Signature:</strong></p>
-<p><strong>Date:</strong></p>`;
+<h4 id="authorization"><strong>Authorization</strong></h4>
+<p>By signing below, Client authorizes The Modern Concierge, LLC to initiate electronic debit entries from the bank account listed above for all charges authorized under this Agreement. This authorization shall remain in effect until revoked in writing by Client. Client agrees to provide updated banking information promptly if account details change and understands that failed ACH payments may be subject to late fees and service suspension as outlined in this Agreement.</p>
+<p><strong>Client Signature: Date:</strong></p>`;
 // --- Profile accordion (Profile + Notes merged into one guided page —
 // same underlying fields/arrays as before, just grouped into collapsible,
 // numbered sections instead of one long scroll of always-open cards) ---
@@ -4283,13 +4014,13 @@ function escHtml(s){
 function clientAgreementHtml(client, paymentInfo){
   let html = CLIENT_SERVICE_AGREEMENT_HTML;
   const name = (client.name||'').trim() || '_______________';
-  html = html.replace('and<br />\n("Client")</p>', 'and<br />\n<strong>'+name+'</strong> ("Client")</p>');
+  html = html.replace('<p>and the</p>\n<p>("Client")</p>', '<p>and the</p>\n<p><strong>'+name+'</strong> ("Client")</p>');
   const startDate = client.termStartDate ? parseYMD(client.termStartDate).toLocaleDateString() : '_______________';
   html = html.replace('<p>Services Start Date:</p>', '<p>Services Start Date: <strong>'+startDate+'</strong></p>');
   const TERM_LINE_MATCH = {
     pilot: '<p>One (1) Month Pilot</p>',
     "3month": '<p>Three (3) Month Term</p>',
-    "12month_new": '<p><strong>Twelve (12) Month Term (New)</strong></p>',
+    "12month_new": '<p>Twelve (12) Month Term (New)</p>',
     "12month_renewal": '<p>Twelve (12) Month Term (Renewal)</p>'
   };
   const target = TERM_LINE_MATCH[client.termType || 'pilot'];
@@ -4298,7 +4029,7 @@ function clientAgreementHtml(client, paymentInfo){
   }
   if(paymentInfo && paymentInfo.method==='card'){
     html = html.replace('<p>Credit/Debit Card (2.99% processing fee applies)</p>', '<p>Credit/Debit Card (2.99% processing fee applies) &#10003; <strong>(selected)</strong></p>');
-    html = html.replace('Card Type (Visa, Mastercard,Discover, American\nExpress):', 'Card Type (Visa, Mastercard,Discover, American\nExpress): <strong>'+escHtml(paymentInfo.cardType)+'</strong>');
+    html = html.replace('Card Type (Visa, Mastercard,Discover, American Express):', 'Card Type (Visa, Mastercard,Discover, American Express): <strong>'+escHtml(paymentInfo.cardType)+'</strong>');
     html = html.replace('Name as Shown on Card:', 'Name as Shown on Card: <strong>'+escHtml(paymentInfo.nameOnCard)+'</strong>');
     html = html.replace('Card Number:', 'Card Number: <strong>'+escHtml(paymentInfo.cardNumber)+'</strong>');
     html = html.replace('Expiration Date (MM/YY):', 'Expiration Date (MM/YY): <strong>'+escHtml(paymentInfo.exp)+'</strong>');
@@ -4642,14 +4373,14 @@ function renderClientHoursCard(client){
       <div class="row">
         <div>
           <div class="small" style="margin-bottom:4px;">Weekly recap &middot; Sat–Fri, week of ${formatPeriodRange(week)}</div>
-          <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+          <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
           <button onclick="emailClientReport('${client.id}','week')">Email client</button>
           <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
         </div>
         <div>
           <div class="small" style="margin-bottom:4px;">${periodWindow ? "Period recap &middot; ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Period recap — set a renewal date on the Membership tab"}</div>
           ${periodWindow ? `
-            <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+            <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
             <button onclick="emailClientReport('${client.id}','period')">Email client</button>
             <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
           ` : ""}
@@ -4657,7 +4388,7 @@ function renderClientHoursCard(client){
         <div>
           <div class="small" style="margin-bottom:4px;">${lastPeriodWindow ? "Last period recap &middot; " + formatPeriodRange(lastPeriodWindow) : "Last period — not enough billing history yet"}</div>
           ${lastPeriodWindow ? `
-            <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+            <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
             <button onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
             <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
           ` : ""}
@@ -4696,7 +4427,7 @@ function renderClientEmailTemplates(client){
     <div class="card">
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
-      <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+      <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
       <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','week')">Email client</button>
       <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
     </div>
@@ -4707,7 +4438,7 @@ function renderClientEmailTemplates(client){
       </div>
       <div class="small" style="margin-bottom:8px;">${periodWindow ? "Ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Set a renewal date on the Membership tab to enable"}</div>
       ${periodWindow ? `
-        <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+        <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
         <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','period')">Email client</button>
         <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
       ` : ""}
@@ -4716,7 +4447,7 @@ function renderClientEmailTemplates(client){
       <h3>Last Period Recap</h3>
       <div class="small" style="margin-bottom:8px;">${lastPeriodWindow ? formatPeriodRange(lastPeriodWindow) : "Not enough billing history yet"}</div>
       ${lastPeriodWindow ? `
-        <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+        <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
         <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
         <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
       ` : ""}
@@ -4870,6 +4601,18 @@ function renderClientMembership(client){
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
         <div><label class="small">Package price ($, billed ${cycleLabel(client.cycleType).toLowerCase()}) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
+      </div>
+      <div class="stat-row" style="margin-top:10px;">
+        <div class="stat-tile">
+          <div class="stat-label">Hours used</div>
+          <div class="stat-value">${used.toFixed(1)}</div>
+          <div class="stat-sub">this ${isHomeReset?'30-day cycle':'period'}</div>
+        </div>
+        <div class="stat-tile ${tierAlert(client)?.level==='danger'?'status-danger':tierAlert(client)?.level==='warn'?'status-warn':''}">
+          <div class="stat-label">Hours remaining this period</div>
+          <div class="stat-value">${Math.max(0,pkg-used).toFixed(1)}</div>
+          <div class="stat-sub">of ${pkg} included</div>
+        </div>
       </div>
       <div class="progress-bar" style="margin-top:10px;"><div style="width:${Math.min(100,(used/(pkg||1))*100)}%;"></div></div>
       <div class="small">${used.toFixed(1)} / ${pkg} hrs used this ${isHomeReset?'30-day cycle':'period'}${rolloverActive ? ` (includes +${client.rolloverHours} rolled over)` : ''}${extraActiveHours>0 ? ` (includes +${extraActiveHours} paid add-on)` : ''}</div>
@@ -5688,7 +5431,7 @@ function renderPayrollTool(){
           <div>${a.name}${a.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</div>
           <div style="display:flex;align-items:center;gap:10px;">
             <span class="small">${hrs.toFixed(1)} hrs · $${payrollAmountForAssistant(a,hrs).toFixed(2)}</span>
-            <button class="secondary" onclick="downloadPayrollReport('${a.id}')">Download</button>
+            <button class="secondary" onclick="downloadPayrollReport('${a.id}')">View</button>
             <button onclick="emailPayrollReport('${a.id}')">Email</button>
           </div>
         </div>`;
@@ -5791,14 +5534,14 @@ function renderReportsTab(){
           <div class="row">
             <div>
               <div class="small" style="margin-bottom:4px;">Weekly &middot; ${weekReport.inProgress.length} in progress · ${weekReport.completed.length} completed this week</div>
-              <button class="secondary" onclick="downloadClientReport('${client.id}','week')">Download</button>
+              <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
               <button onclick="emailClientReport('${client.id}','week')">Email</button>
               <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
             </div>
             <div>
               <div class="small" style="margin-bottom:4px;">${periodReport ? "Period &middot; " + periodReport.completed.length + " completed &middot; ends " + new Date(periodReport.billingPeriod.end.getTime()-1).toLocaleDateString() : "Period — set a renewal date on the Membership tab to enable"}</div>
               ${periodReport ? `
-                <button class="secondary" onclick="downloadClientReport('${client.id}','period')">Download</button>
+                <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
                 <button onclick="emailClientReport('${client.id}','period')">Email</button>
                 <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
               ` : ""}
@@ -5806,7 +5549,7 @@ function renderReportsTab(){
             <div>
               <div class="small" style="margin-bottom:4px;">${lastPeriodReport ? "Last period &middot; " + lastPeriodReport.completed.length + " completed &middot; " + formatPeriodRange(lastPeriodReport.billingPeriod) : "Last period — not enough billing history yet"}</div>
               ${lastPeriodReport ? `
-                <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">Download</button>
+                <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
                 <button onclick="emailClientReport('${client.id}','lastPeriod')">Email</button>
                 <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
               ` : ""}
@@ -7307,6 +7050,9 @@ function renderTaskEditorModal(task){
       <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;">
         <input type="checkbox" id="tf_priority" ${task.priority?'checked':''} onchange="state.modal.task.priority=this.checked"> Mark as priority — surfaces on the assignee's dashboard
       </label>
+      <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;">
+        <input type="checkbox" id="tf_good_for_content" ${task.goodForContent?'checked':''} onchange="state.modal.task.goodForContent=this.checked"> Good for content — surfaces on the Content Creator's calendar as something to plan to record
+      </label>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Client</label>
           <select id="tf_client">
@@ -7376,31 +7122,7 @@ function renderTaskEditorModal(task){
           <button class="secondary" onclick="addTaskAttachment('${task.id}')">Upload</button>
         </div>
       </div>
-      <div style="margin-top:14px;">
-        <label class="small">Discussion — visible to everyone assigned to this task</label>
-        <div style="max-height:180px;overflow-y:auto;margin:6px 0;">
-          ${(task.discussion||[]).length ? (task.discussion||[]).map(d=>{
-            const seenBy = d.seenBy || [];
-            const iSeenIt = state.currentAssistant && seenBy.some(s=>s.assistantId===state.currentAssistant.id);
-            const isMine = state.currentAssistant && d.author===state.currentAssistant.name;
-            return `
-            <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
-              <div class="flex-between">
-                <div><strong>${d.author}</strong>: ${d.text}</div>
-                <span class="small">${new Date(d.date).toLocaleString()}</span>
-              </div>
-              <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
-                <span>${seenBy.length ? "Seen by " + seenBy.map(s=>`${s.name} (${new Date(s.seenAt).toLocaleString()})`).join(", ") : "Not seen yet"}</span>
-                ${state.currentAssistant && !isMine && !iSeenIt ? `<button class="secondary" style="padding:2px 8px;" onclick="markCommentSeen('${task.id}','${d.id}')">Mark as seen</button>` : ""}
-              </div>
-            </div>`;
-          }).join("") : `<div class="small">No comments yet.</div>`}
-        </div>
-        <div style="display:flex;gap:6px;">
-          <input id="tf_new_comment" placeholder="Add a comment...">
-          <button class="secondary" onclick="addTaskComment('${task.id}')">Post</button>
-        </div>
-      </div>
+      ${renderTaskDiscussion(task, "tf_new_comment", `addTaskComment('${task.id}')`)}
       <div style="margin-top:14px;display:flex;justify-content:space-between;">
         <button class="danger" onclick="deleteTask('${task.id}')">Delete</button>
         <div>
@@ -7431,6 +7153,37 @@ function addSubtaskDraft(taskId){
   task.subtasks = (task.subtasks||[]).concat([{ text, done:false }]);
   render();
 }
+// Shared by the full task editor and the Content Creator's lightweight
+// task viewer, so both stay in sync with one implementation.
+function renderTaskDiscussion(task, inputId, postOnclick){
+  return `
+    <div style="margin-top:14px;">
+      <label class="small">Discussion — visible to everyone assigned to this task</label>
+      <div style="max-height:180px;overflow-y:auto;margin:6px 0;">
+        ${(task.discussion||[]).length ? (task.discussion||[]).map(d=>{
+          const seenBy = d.seenBy || [];
+          const iSeenIt = state.currentAssistant && seenBy.some(s=>s.assistantId===state.currentAssistant.id);
+          const isMine = state.currentAssistant && d.author===state.currentAssistant.name;
+          return `
+          <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
+            <div class="flex-between">
+              <div><strong>${d.author}</strong>: ${d.text}</div>
+              <span class="small">${new Date(d.date).toLocaleString()}</span>
+            </div>
+            <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
+              <span>${seenBy.length ? "Seen by " + seenBy.map(s=>`${s.name} (${new Date(s.seenAt).toLocaleString()})`).join(", ") : "Not seen yet"}</span>
+              ${state.currentAssistant && !isMine && !iSeenIt ? `<button class="secondary" style="padding:2px 8px;" onclick="markCommentSeen('${task.id}','${d.id}')">Mark as seen</button>` : ""}
+            </div>
+          </div>`;
+        }).join("") : `<div class="small">No comments yet.</div>`}
+      </div>
+      <div style="display:flex;gap:6px;">
+        <input id="${inputId}" placeholder="Add a comment...">
+        <button class="secondary" onclick="${postOnclick}">Post</button>
+      </div>
+    </div>
+  `;
+}
 function addTaskComment(taskId){
   const input = document.getElementById("tf_new_comment");
   const text = input.value.trim();
@@ -7455,6 +7208,45 @@ function markCommentSeen(taskId, commentId){
     if(seenBy.some(s=>s.assistantId===state.currentAssistant.id)) return d;
     return { ...d, seenBy: [...seenBy, { assistantId: state.currentAssistant.id, name: state.currentAssistant.name, seenAt: new Date().toISOString() }] };
   });
+  task.discussion = discussion;
+  upsert("tasks", taskId, { discussion });
+  render();
+}
+// Lightweight, read-mostly view of a task for the Content Creator role —
+// she doesn't get full Task Board access (status/assignees/client/delete),
+// just enough context on a "good for content" flagged task to plan around
+// it, plus the same discussion thread so she can ask the assistant
+// specifics without needing to be added as an assignee.
+function openContentTaskViewer(taskId){
+  state.modal = { type:"contentTaskViewer", taskId };
+  render();
+}
+function renderContentTaskViewerModal(taskId){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task){
+    return `<div class="modal"><div class="small">This task no longer exists.</div><div style="margin-top:10px;"><button class="secondary" onclick="closeModal()">Close</button></div></div>`;
+  }
+  const client = task.clientId===INTERNAL_CLIENT_ID ? null : state.clients.find(c=>c.id===task.clientId);
+  return `
+    <div class="modal">
+      <div class="flex-between">
+        <h3 style="margin:0;">${task.title||'(untitled)'}${task.taskNumber ? ` <span class="small">#${task.taskNumber}</span>` : ''}</h3>
+        <button class="secondary" onclick="closeModal()">Close</button>
+      </div>
+      <div class="small" style="margin-top:6px;">${client ? client.name : "Internal / Modern Co."} · ${task.dueDate ? "Due " + parseYMD(task.dueDate).toLocaleDateString() : "No due date"} · ${(task.assignees||[]).map(assistantName).join(", ")||"Unassigned"} · ${task.status||''}</div>
+      ${task.description ? `<p style="margin-top:10px;">${task.description}</p>` : `<p class="small" style="margin-top:10px;">No description added yet — ask in the comments below.</p>`}
+      ${renderTaskDiscussion(task, "ctf_new_comment", `addContentTaskComment('${task.id}')`)}
+    </div>
+  `;
+}
+function addContentTaskComment(taskId){
+  const input = document.getElementById("ctf_new_comment");
+  const text = input.value.trim();
+  if(!text) return;
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const author = state.currentAssistant ? state.currentAssistant.name : "Admin";
+  const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
   task.discussion = discussion;
   upsert("tasks", taskId, { discussion });
   render();
@@ -7524,6 +7316,7 @@ async function saveTask(taskId){
     privateNotes: document.getElementById("tf_private_notes").value.trim(),
     dueDate: document.getElementById("tf_due").value,
     priority: document.getElementById("tf_priority").checked,
+    goodForContent: document.getElementById("tf_good_for_content").checked,
     taskNumber,
     assignees,
     subtasks: task.subtasks || [],
@@ -7784,6 +7577,7 @@ function renderModal(){
     : state.modal.type==="manualTimeEntry" ? renderManualTimeEntryModal()
     : state.modal.type==="imageViewer" ? renderImageViewerModal(state.modal.dataUrl)
     : state.modal.type==="orgChartSeat" ? renderOrgChartSeatModal(state.modal.rowId, state.modal.seat)
+    : state.modal.type==="contentTaskViewer" ? renderContentTaskViewerModal(state.modal.taskId)
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;

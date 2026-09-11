@@ -158,6 +158,21 @@ exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", asyn
  * existing single-shared-passcode model for that role). Team/client use
  * the real assistant/client document ID as the uid, so
  * request.auth.uid == the record's own ID lines up directly in rules.
+ *
+ * STATUS — UNRESOLVED CONFLICT, DO NOT WIRE THIS UP YET: this function was
+ * confirmed reachable once (manually flipped to "Allow public access" in
+ * the Cloud Run console, tested successfully via curl). A separate,
+ * concurrent work session on this same repo then concluded the opposite —
+ * that this project's GCP org policy blocks making ANY Cloud Function
+ * publicly invokable at all, including via Firebase Hosting's internal
+ * rewrite proxy (see public/report.html and the CLAUDE.md note on this).
+ * Both can't be right long-term: either the org policy was enforced/
+ * reverted the public-access toggle after that manual test, or there's a
+ * real difference between what the Console UI allows vs. IAM bindings set
+ * programmatically. Re-verify reachability (curl the function URL) before
+ * building the login rewrite on top of this — if it's actually blocked,
+ * the real-per-person-Firebase-Auth-accounts path (no Cloud Function
+ * involved) is the fallback.
  */
 exports.validateLogin = onCall(async (request) => {
   const { kind, code } = request.data || {};
@@ -208,3 +223,13 @@ exports.validateLogin = onCall(async (request) => {
 
   throw new HttpsError("invalid-argument", "Unknown login kind: " + kind);
 });
+
+// Report viewing (reports/{id} -> a shareable link) is handled by
+// public/report.html via the client-side Firestore SDK instead of a Cloud
+// Function — this project's GCP org policy blocks granting a Cloud Run
+// service (what a 2nd-gen Cloud Function runs as) invoker access to
+// anything, including Firebase Hosting's own rewrite proxy, so a function
+// endpoint can't be made reachable here at all. See the comment in
+// public/report.html for the full explanation. (This is the same policy
+// that makes validateLogin's reachability above an open question — see its
+// doc comment.)
