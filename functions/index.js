@@ -29,6 +29,7 @@
  * (see README notes in the project root for the exact setup steps).
  */
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { google } = require("googleapis");
@@ -136,4 +137,74 @@ exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", asyn
   } catch (err) {
     console.error("Drive upload failed for employee agreements:", err);
   }
+});
+
+/**
+ * Server-side login. The app used to compare passcodes against data it had
+ * already loaded client-side — which only works safely if Firestore itself
+ * blocks outside reads, and it didn't (see the Sept 2026 security fix).
+ * This function is the ONLY place a passcode/access code/portal code is
+ * ever checked now: it runs with admin.firestore(), which bypasses
+ * Firestore Rules entirely, so it can look up the real data without the
+ * caller needing any read access first.
+ *
+ * On a match, it mints a custom auth token carrying exactly the claims
+ * Firestore Rules need to scope that session: role, plus clientId or
+ * assistantId. The app signs in with that token (signInWithCustomToken) —
+ * same passcode UX as always, just validated in a place a browser console
+ * can't reach.
+ *
+ * uid choices: "admin" is a fixed shared identity (matches the app's
+ * existing single-shared-passcode model for that role). Team/client use
+ * the real assistant/client document ID as the uid, so
+ * request.auth.uid == the record's own ID lines up directly in rules.
+ */
+exports.validateLogin = onCall(async (request) => {
+  const { kind, code } = request.data || {};
+  if (!kind || !code || typeof code !== "string") {
+    throw new HttpsError("invalid-argument", "Missing login kind or code.");
+  }
+  const db = admin.firestore();
+
+  if (kind === "admin") {
+    const settingsSnap = await db.collection("settings").doc("access").get();
+    const settings = settingsSnap.data() || {};
+    if (code !== settings.adminPasscode) {
+      throw new HttpsError("permission-denied", "Incorrect passcode.");
+    }
+    const token = await admin.auth().createCustomToken("admin", { role: "admin" });
+    return { token };
+  }
+
+  if (kind === "team") {
+    const settingsSnap = await db.collection("settings").doc("access").get();
+    const settings = settingsSnap.data() || {};
+    const match = (settings.assistants || []).find(
+      (a) => a.active !== false && a.accessCode && a.accessCode === code
+    );
+    if (!match) {
+      throw new HttpsError("permission-denied", "Access code not recognized.");
+    }
+    const token = await admin.auth().createCustomToken(match.id, {
+      role: "team",
+      assistantId: match.id,
+      isContentCreator: !!match.isContentCreator,
+    });
+    return { token, assistantId: match.id };
+  }
+
+  if (kind === "client") {
+    const clientsSnap = await db.collection("clients").where("portalCode", "==", code).limit(1).get();
+    if (clientsSnap.empty) {
+      throw new HttpsError("permission-denied", "Client code not recognized.");
+    }
+    const clientDoc = clientsSnap.docs[0];
+    const token = await admin.auth().createCustomToken(clientDoc.id, {
+      role: "client",
+      clientId: clientDoc.id,
+    });
+    return { token, clientId: clientDoc.id };
+  }
+
+  throw new HttpsError("invalid-argument", "Unknown login kind: " + kind);
 });
