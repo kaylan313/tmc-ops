@@ -5,11 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Report</title>
 <style>
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:640px;margin:80px auto;padding:0 20px;color:#3b3030;text-align:center;}
+  html,body{height:100%;margin:0;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#3b3030;}
+  #status{max-width:640px;margin:80px auto;padding:0 20px;text-align:center;}
+  #reportFrame{position:fixed;inset:0;width:100%;height:100%;border:none;display:none;}
 </style>
 </head>
 <body>
 <div id="status">Loading report…</div>
+<iframe id="reportFrame" title="Report"></iframe>
 
 <!--
   Renders a report stored in Firestore's `reports/{id}` collection directly
@@ -22,6 +26,16 @@
   that restriction; they're governed by firestore.rules instead, which
   already allows any request with request.auth != null, satisfied by the
   same invisible anonymous sign-in the main app already relies on.
+
+  The report renders inside an iframe (srcdoc) rather than via
+  document.write() on this page directly — document.write() called this
+  late in the page's lifecycle (well after load) is a known source of
+  inconsistent behavior across browsers for re-parsing a full new
+  <html><head> with its own <link>/<style> tags (the report's branded
+  header, using Google Fonts and its own layout, was rendering incorrectly
+  — "top part formatting off"). An iframe with srcdoc is parsed as a
+  genuinely fresh, isolated document, so the report's own head/styles load
+  exactly as they would if opened as a real file.
 -->
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
@@ -39,6 +53,7 @@ firebase.initializeApp(firebaseConfig);
 
 const id = new URLSearchParams(location.search).get("id");
 const statusEl = document.getElementById("status");
+const frameEl = document.getElementById("reportFrame");
 
 if (!id) {
   statusEl.textContent = "Missing report id.";
@@ -50,9 +65,9 @@ if (!id) {
         statusEl.textContent = "This report link is no longer valid.";
         return;
       }
-      document.open();
-      document.write(snap.data().html);
-      document.close();
+      frameEl.srcdoc = snap.data().html;
+      frameEl.style.display = "block";
+      statusEl.style.display = "none";
     })
     .catch((err) => {
       console.error(err);

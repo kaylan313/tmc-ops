@@ -1518,6 +1518,21 @@ async function saveReportAndGetLink(html, type, title){
   });
   return REPORT_VIEWER_URL + "?id=" + doc.id;
 }
+// Saves an actual .html file to disk — separate from downloadClientReport
+// (which opens the hosted report link instead, for emailing). Kept as its
+// own explicit action since "Download" and "View a link" are different
+// things a person might want, and the link-based system replaced the file
+// download entirely rather than sitting alongside it.
+async function downloadClientReportFile(clientId, kind){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const reportWindow = reportWindowFor(client, kind);
+  if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
+  const report = buildClientReport(client, reportWindow, kind);
+  const html = clientReportHtml(report);
+  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
+  downloadHtmlFileFallback(html, client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html");
+}
 function downloadHtmlFileFallback(html, filename){
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
@@ -1700,6 +1715,14 @@ async function downloadPayrollReport(assistantId){
   }else{
     downloadHtmlFileFallback(html, assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html");
   }
+}
+function downloadPayrollReportFile(assistantId){
+  const assistant = state.settings.assistants.find(a=>a.id===assistantId);
+  if(!assistant) return;
+  const period = resolvedPayrollReportPeriod();
+  const report = buildPayrollReport(assistant, period);
+  const html = payrollReportHtml(report);
+  downloadHtmlFileFallback(html, assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html");
 }
 async function emailPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
@@ -4374,6 +4397,7 @@ function renderClientHoursCard(client){
         <div>
           <div class="small" style="margin-bottom:4px;">Weekly recap &middot; Sat–Fri, week of ${formatPeriodRange(week)}</div>
           <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','week')">Download</button>
           <button onclick="emailClientReport('${client.id}','week')">Email client</button>
           <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
         </div>
@@ -4381,6 +4405,7 @@ function renderClientHoursCard(client){
           <div class="small" style="margin-bottom:4px;">${periodWindow ? "Period recap &middot; ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Period recap — set a renewal date on the Membership tab"}</div>
           ${periodWindow ? `
             <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','period')">Download</button>
             <button onclick="emailClientReport('${client.id}','period')">Email client</button>
             <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
           ` : ""}
@@ -4389,6 +4414,7 @@ function renderClientHoursCard(client){
           <div class="small" style="margin-bottom:4px;">${lastPeriodWindow ? "Last period recap &middot; " + formatPeriodRange(lastPeriodWindow) : "Last period — not enough billing history yet"}</div>
           ${lastPeriodWindow ? `
             <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','lastPeriod')">Download</button>
             <button onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
             <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
           ` : ""}
@@ -4428,6 +4454,7 @@ function renderClientEmailTemplates(client){
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
       <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','week')">Download</button>
       <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','week')">Email client</button>
       <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
     </div>
@@ -4439,6 +4466,7 @@ function renderClientEmailTemplates(client){
       <div class="small" style="margin-bottom:8px;">${periodWindow ? "Ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Set a renewal date on the Membership tab to enable"}</div>
       ${periodWindow ? `
         <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','period')">Download</button>
         <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','period')">Email client</button>
         <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
       ` : ""}
@@ -4448,6 +4476,7 @@ function renderClientEmailTemplates(client){
       <div class="small" style="margin-bottom:8px;">${lastPeriodWindow ? formatPeriodRange(lastPeriodWindow) : "Not enough billing history yet"}</div>
       ${lastPeriodWindow ? `
         <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','lastPeriod')">Download</button>
         <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
         <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
       ` : ""}
@@ -5432,6 +5461,7 @@ function renderPayrollTool(){
           <div style="display:flex;align-items:center;gap:10px;">
             <span class="small">${hrs.toFixed(1)} hrs · $${payrollAmountForAssistant(a,hrs).toFixed(2)}</span>
             <button class="secondary" onclick="downloadPayrollReport('${a.id}')">View</button>
+            <button class="secondary" onclick="downloadPayrollReportFile('${a.id}')">Download</button>
             <button onclick="emailPayrollReport('${a.id}')">Email</button>
           </div>
         </div>`;
@@ -5535,6 +5565,7 @@ function renderReportsTab(){
             <div>
               <div class="small" style="margin-bottom:4px;">Weekly &middot; ${weekReport.inProgress.length} in progress · ${weekReport.completed.length} completed this week</div>
               <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','week')">Download</button>
               <button onclick="emailClientReport('${client.id}','week')">Email</button>
               <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
             </div>
@@ -5542,6 +5573,7 @@ function renderReportsTab(){
               <div class="small" style="margin-bottom:4px;">${periodReport ? "Period &middot; " + periodReport.completed.length + " completed &middot; ends " + new Date(periodReport.billingPeriod.end.getTime()-1).toLocaleDateString() : "Period — set a renewal date on the Membership tab to enable"}</div>
               ${periodReport ? `
                 <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','period')">Download</button>
                 <button onclick="emailClientReport('${client.id}','period')">Email</button>
                 <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
               ` : ""}
@@ -5550,6 +5582,7 @@ function renderReportsTab(){
               <div class="small" style="margin-bottom:4px;">${lastPeriodReport ? "Last period &middot; " + lastPeriodReport.completed.length + " completed &middot; " + formatPeriodRange(lastPeriodReport.billingPeriod) : "Last period — not enough billing history yet"}</div>
               ${lastPeriodReport ? `
                 <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
+          <button class="secondary" onclick="downloadClientReportFile('${client.id}','lastPeriod')">Download</button>
                 <button onclick="emailClientReport('${client.id}','lastPeriod')">Email</button>
                 <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
               ` : ""}
