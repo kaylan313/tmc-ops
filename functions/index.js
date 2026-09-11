@@ -159,20 +159,17 @@ exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", asyn
  * the real assistant/client document ID as the uid, so
  * request.auth.uid == the record's own ID lines up directly in rules.
  *
- * STATUS — UNRESOLVED CONFLICT, DO NOT WIRE THIS UP YET: this function was
- * confirmed reachable once (manually flipped to "Allow public access" in
- * the Cloud Run console, tested successfully via curl). A separate,
- * concurrent work session on this same repo then concluded the opposite —
- * that this project's GCP org policy blocks making ANY Cloud Function
- * publicly invokable at all, including via Firebase Hosting's internal
- * rewrite proxy (see public/report.html and the CLAUDE.md note on this).
- * Both can't be right long-term: either the org policy was enforced/
- * reverted the public-access toggle after that manual test, or there's a
- * real difference between what the Console UI allows vs. IAM bindings set
- * programmatically. Re-verify reachability (curl the function URL) before
- * building the login rewrite on top of this — if it's actually blocked,
- * the real-per-person-Firebase-Auth-accounts path (no Cloud Function
- * involved) is the fallback.
+ * STATUS — reachable, not yet wired up. Confirmed working via direct curl
+ * (Sept 2026) after manually setting "Allow public access" in the Cloud Run
+ * console for this specific service. A separate, concurrent work session
+ * on this repo hit a hard org-policy block trying to do the same for a
+ * *different* function (viewReport, an onRequest endpoint) and also for a
+ * Firebase Hosting rewrite proxy — see public/report.html and the
+ * CLAUDE.md note. Those aren't necessarily the same restriction: this is a
+ * callable (onCall) function invoked directly, not proxied through
+ * Hosting, so it may simply not hit whatever the Hosting-rewrite policy
+ * blocks. Re-curl before relying on this if it's been a while — Google's
+ * org-policy enforcement can revoke a public IAM binding after the fact.
  */
 exports.validateLogin = onCall(async (request) => {
   const { kind, code } = request.data || {};
