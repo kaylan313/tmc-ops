@@ -592,19 +592,28 @@ async function boot(){
     }catch(err){
       console.warn("Anonymous auth sign-in failed (Anonymous provider may not be enabled yet in Firebase Console):", err);
     }
-    try{
-      state.settings = await ensureSettings();
-    }catch(err){
+    // Settings and the collection subscriptions below are independent reads
+    // — firing ensureSettings() without awaiting it lets it load IN PARALLEL
+    // with the subscribe() calls instead of one full extra network
+    // round-trip happening first. A client typing their portal code within
+    // the first second or two of the page loading was hitting a still-empty
+    // state.clients and getting "code not recognized" on a perfectly
+    // correct code — this was the main contributor to that delay.
+    ensureSettings().then(s=>{
+      state.settings = s;
+      state.settingsReady = true;
+      if(!state.modal) render();
+    }).catch(err=>{
       console.warn("Could not load settings from Firestore, using local seed data:", err);
       state.firebaseError = state.firebaseError || err.message;
-    }
+    });
     // Data still updates in the background even with a modal open (so it's
     // fresh the moment it closes) -- it just skips forcing a re-render while
     // one's open, since a background sync mid-form-fill would otherwise wipe
     // out anything typed into a field that's since been tabbed away from
     // (those values only live in the DOM until Save, nothing holds them
     // through a full re-render except the currently-focused field).
-    subscribe("clients", items=>{ state.clients = items; if(!state.modal) render(); });
+    subscribe("clients", items=>{ state.clients = items; state.clientsReady = true; if(!state.modal) render(); });
     subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
     subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
     subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
@@ -1948,12 +1957,21 @@ function dismissEmailNeeded(clientId, type){
 }
 
 // ---- 9. Auth ----
+// The settings/clients data these three checks depend on loads
+// asynchronously in the background (see boot()) — without this guard, a
+// code typed in the first second or two after the page loads gets compared
+// against still-empty data and rejected, indistinguishable from an
+// actually-wrong code. This is what was making Rickesh's (and possibly
+// others') portal code take several tries: the code was right, the data
+// just wasn't there yet.
 function tryAdminLogin(code){
+  if(FIREBASE_AVAILABLE && FIREBASE_CONFIGURED && !state.settingsReady){ alert("Still connecting — give it a couple seconds and try again."); return; }
   if(code === state.settings.adminPasscode){
     state.role = "admin"; state.view = "app"; state.activeTab="dashboard"; render();
   } else alert("Incorrect passcode.");
 }
 function tryTeamLogin(code){
+  if(FIREBASE_AVAILABLE && FIREBASE_CONFIGURED && !state.settingsReady){ alert("Still connecting — give it a couple seconds and try again."); return; }
   const match = state.settings.assistants.find(a=>a.active!==false && a.accessCode && a.accessCode===code);
   if(match){
     state.role = "team"; state.currentAssistant = match; state.view="app";
@@ -1964,6 +1982,7 @@ function tryTeamLogin(code){
   } else alert("Access code not recognized.");
 }
 function tryClientLogin(code){
+  if(FIREBASE_AVAILABLE && FIREBASE_CONFIGURED && !state.clientsReady){ alert("Still connecting — give it a couple seconds and try again."); return; }
   const match = state.clients.find(c=>c.portalCode && c.portalCode===code);
   if(match){
     state.role="client"; state.currentClientId = match.id; state.view="app"; state.activeTab="portal";
