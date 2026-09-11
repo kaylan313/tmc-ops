@@ -191,6 +191,21 @@
   .oc-tag{display:inline-block;font-size:9px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:1px 6px;border-radius:8px;margin-left:6px;}
   .oc-tag.new{background:#e4ede0;color:var(--ok);}
   .oc-tag.leaving{background:#f5e1e0;color:var(--danger);}
+  .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:1px;background:var(--cream-dark);border:1px solid var(--cream-dark);border-radius:6px;overflow:hidden;}
+  .cal-grid-header{margin-bottom:1px;}
+  .cal-headcell{background:#faf3ec;padding:6px 4px;font-size:11px;text-align:center;color:#8a7a72;font-weight:600;}
+  .cal-cell{background:#fff;min-height:88px;padding:4px;position:relative;display:flex;flex-direction:column;gap:2px;}
+  .cal-cell.cal-empty{background:#faf7f3;}
+  .cal-cell.cal-today{background:#fdf6ef;}
+  .cal-daynum{font-size:11px;color:#8a7a72;font-weight:600;}
+  .cal-pill{font-size:10.5px;padding:2px 5px;border-radius:4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cal-pill-content{background:#e4ede0;color:var(--ok);}
+  .cal-pill-task{background:var(--cream-dark);color:var(--rose-dark);}
+  .cal-add{position:absolute;top:2px;right:2px;background:none;border:none;color:#c7b8ae;font-size:13px;cursor:pointer;line-height:1;padding:2px 4px;}
+  .cal-add:hover{color:var(--rose-dark);}
+  @media (max-width:768px){
+    .cal-cell{min-height:64px;font-size:10px;}
+  }
 </style>
 </head>
 <body>
@@ -2483,6 +2498,75 @@ function renderAddOnsTab(){
   `;
 }
 // --- Content Calendar (Content Creator role + admin) ---
+function currentContentCalendarMonth(){
+  if(!state.contentCalendarMonth){
+    const d = new Date();
+    state.contentCalendarMonth = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+  }
+  return state.contentCalendarMonth;
+}
+function shiftContentCalendarMonth(delta){
+  const [year, month] = currentContentCalendarMonth().split("-").map(Number);
+  const next = new Date(year, month-1+delta, 1);
+  state.contentCalendarMonth = next.getFullYear()+"-"+String(next.getMonth()+1).padStart(2,"0");
+  render();
+}
+function scrollToContentEntry(id){
+  const el = document.getElementById("content-entry-"+id);
+  if(!el) return;
+  el.scrollIntoView({ behavior:"smooth", block:"center" });
+  el.style.outline = "2px solid var(--rose-dark)";
+  setTimeout(()=>{ el.style.outline = ""; }, 1500);
+}
+// Visual month-grid overview — the detailed list below (renderContentEntryRow)
+// is still where entries actually get added/edited; this is just for seeing
+// the shape of the month at a glance and jumping to a day's items.
+function renderContentCalendarMonth(){
+  const [year, month] = currentContentCalendarMonth().split("-").map(Number);
+  const first = new Date(year, month-1, 1);
+  const startDay = first.getDay();
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const monthLabel = first.toLocaleDateString("en-US", { month:"long", year:"numeric" });
+  const todayStr = new Date().toISOString().slice(0,10);
+
+  const byDate = {};
+  (state.settings.contentPlan||[]).filter(e=>e.type!=="idea" && e.date).forEach(e=>{
+    (byDate[e.date] = byDate[e.date]||[]).push({ kind:"content", entry:e });
+  });
+  state.tasks.filter(t=>t.goodForContent && t.dueDate).forEach(t=>{
+    (byDate[t.dueDate] = byDate[t.dueDate]||[]).push({ kind:"task", task:t });
+  });
+
+  const cells = [];
+  for(let i=0;i<startDay;i++) cells.push(`<div class="cal-cell cal-empty"></div>`);
+  for(let day=1; day<=daysInMonth; day++){
+    const dateStr = year+"-"+String(month).padStart(2,"0")+"-"+String(day).padStart(2,"0");
+    const items = byDate[dateStr] || [];
+    cells.push(`
+      <div class="cal-cell ${dateStr===todayStr?'cal-today':''}">
+        <div class="cal-daynum">${day}</div>
+        ${items.map(it=> it.kind==="content"
+          ? `<div class="cal-pill cal-pill-content" onclick="scrollToContentEntry('${it.entry.id}')">${(it.entry.title||'(untitled)')}${it.entry.platform?' · '+it.entry.platform:''}</div>`
+          : `<div class="cal-pill cal-pill-task" onclick="openContentTaskViewer('${it.task.id}')">🎥 ${(it.task.title||'(untitled)')}</div>`
+        ).join("")}
+        <button class="cal-add" onclick="addContentEntry('scheduled','${dateStr}')" title="Add scheduled content for this day">+</button>
+      </div>
+    `);
+  }
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <button class="secondary" onclick="shiftContentCalendarMonth(-1)">&larr;</button>
+        <h3 style="margin:0;">${monthLabel}</h3>
+        <button class="secondary" onclick="shiftContentCalendarMonth(1)">&rarr;</button>
+      </div>
+      <div class="cal-grid cal-grid-header">
+        ${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div class="cal-headcell">${d}</div>`).join("")}
+      </div>
+      <div class="cal-grid">${cells.join("")}</div>
+    </div>
+  `;
+}
 function renderContentCalendarTab(){
   const isAdmin = state.role==="admin";
   const plan = state.settings.contentPlan || [];
@@ -2491,8 +2575,29 @@ function renderContentCalendarTab(){
   const socialLogins = state.settings.socialLogins || [];
   const insights = (state.settings.contentInsights||[]).slice().sort((a,b)=> (b.date||'') < (a.date||'') ? -1 : 1);
   const goals = state.settings.contentGoals || [];
+  const flaggedTasks = state.tasks.filter(t=>t.goodForContent).slice().sort((a,b)=> (a.dueDate||'9999') < (b.dueDate||'9999') ? -1 : 1);
   return `
     <h2>Content Calendar</h2>
+    <datalist id="content-platform-options">
+      ${["Instagram","TikTok","Facebook","YouTube","Pinterest","LinkedIn"].map(p=>`<option value="${p}">`).join("")}
+    </datalist>
+    ${renderContentCalendarMonth()}
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Flagged for content <span class="small">(${flaggedTasks.length})</span></h3>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Tasks an assistant marked "Good for content" — click one to see the details and ask them specifics.</div>
+      ${flaggedTasks.length ? flaggedTasks.map(t=>{
+        const client = t.clientId===INTERNAL_CLIENT_ID ? null : state.clients.find(c=>c.id===t.clientId);
+        return `<div class="list-item" style="cursor:pointer;" onclick="openContentTaskViewer('${t.id}')">
+          <div>
+            <strong>${t.title||'(untitled)'}</strong>
+            <div class="small">${client ? client.name : "Internal / Modern Co."} · ${t.dueDate ? parseYMD(t.dueDate).toLocaleDateString() : "No due date"} · ${(t.assignees||[]).map(assistantName).join(", ")||"Unassigned"}</div>
+          </div>
+          <span class="badge" style="background:${t.status==='Done'?'var(--ok)':'var(--warn)'};">${t.status||''}</span>
+        </div>`;
+      }).join("") : `<div class="small">No tasks flagged yet — assistants can mark a task "Good for content" from its edit screen on the Task Board.</div>`}
+    </div>
     <div class="card">
       <div class="flex-between">
         <h3>Upcoming — scheduled content &amp; notes</h3>
@@ -2542,7 +2647,7 @@ function renderContentEntryRow(e){
   const typeLabel = e.type==="idea" ? "Idea" : e.type==="opsNote" ? "Note" : "Scheduled";
   const badgeColor = e.type==="opsNote" ? "var(--warn)" : e.type==="idea" ? "#8a7a72" : "var(--ok)";
   return `
-    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+    <div class="list-item" id="content-entry-${e.id}" style="flex-direction:column;align-items:stretch;gap:6px;">
       <div class="flex-between">
         <div>
           <span class="badge" style="background:${badgeColor};">${typeLabel}</span>
@@ -2556,7 +2661,7 @@ function renderContentEntryRow(e){
       </div>
       <div class="row">
         <div><label class="small">Title</label><input value="${e.title||''}" onchange="updateContentEntry('${e.id}','title',this.value)"></div>
-        <div><label class="small">Platform</label><input value="${e.platform||''}" placeholder="Instagram, TikTok, etc." onchange="updateContentEntry('${e.id}','platform',this.value)"></div>
+        <div><label class="small">Platform</label><input value="${e.platform||''}" list="content-platform-options" placeholder="Instagram, TikTok, etc." onchange="updateContentEntry('${e.id}','platform',this.value)"></div>
         ${e.type==="scheduled" ? `<div><label class="small">Status</label>
           <select onchange="updateContentEntry('${e.id}','status',this.value)">
             ${["Idea","Drafting","Ready","Posted"].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join("")}
@@ -2567,26 +2672,38 @@ function renderContentEntryRow(e){
     </div>
   `;
 }
-function addContentEntry(type){
+// settings/access is loaded once at boot, not watched live like
+// clients/tasks/timeEntries — every writer here must update state.settings
+// locally FIRST, then upsert that same local value, then render(). Skipping
+// the local update (as these used to) means the in-memory contentPlan never
+// reflects what you just added/changed, so it looks like the entry never
+// saved (or reverts) until the next full reload — that was the "it kind of
+// disappears" bug reported for the Content Calendar.
+function addContentEntry(type, presetDate){
   const entry = {
     id: newId("content"),
     type,
     title: type==="opsNote" ? "Heads up" : type==="idea" ? "New idea" : "New scheduled post",
-    date: type==="idea" ? "" : new Date().toISOString().slice(0,10),
+    date: type==="idea" ? "" : (presetDate || new Date().toISOString().slice(0,10)),
     platform: "",
     status: type==="scheduled" ? "Idea" : "",
     notes: "",
     addedBy: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:"")
   };
-  upsert("settings","access", { contentPlan: [...(state.settings.contentPlan||[]), entry] });
+  state.settings.contentPlan = [...(state.settings.contentPlan||[]), entry];
+  upsert("settings","access", { contentPlan: state.settings.contentPlan });
+  render();
 }
 function updateContentEntry(id, field, value){
-  const contentPlan = (state.settings.contentPlan||[]).map(e=> e.id===id ? { ...e, [field]:value } : e);
-  upsert("settings","access", { contentPlan });
+  state.settings.contentPlan = (state.settings.contentPlan||[]).map(e=> e.id===id ? { ...e, [field]:value } : e);
+  upsert("settings","access", { contentPlan: state.settings.contentPlan });
+  render();
 }
 function removeContentEntry(id){
   if(!confirm("Remove this entry?")) return;
-  upsert("settings","access", { contentPlan: (state.settings.contentPlan||[]).filter(e=>e.id!==id) });
+  state.settings.contentPlan = (state.settings.contentPlan||[]).filter(e=>e.id!==id);
+  upsert("settings","access", { contentPlan: state.settings.contentPlan });
+  render();
 }
 function renderSocialLoginRow(s){
   return `
@@ -2603,15 +2720,20 @@ function renderSocialLoginRow(s){
 }
 function addSocialLogin(){
   const login = { id:newId("social"), platform:"", username:"", password:"", notes:"" };
-  upsert("settings","access", { socialLogins: [...(state.settings.socialLogins||[]), login] });
+  state.settings.socialLogins = [...(state.settings.socialLogins||[]), login];
+  upsert("settings","access", { socialLogins: state.settings.socialLogins });
+  render();
 }
 function updateSocialLogin(id, field, value){
-  const socialLogins = (state.settings.socialLogins||[]).map(s=> s.id===id ? { ...s, [field]:value } : s);
-  upsert("settings","access", { socialLogins });
+  state.settings.socialLogins = (state.settings.socialLogins||[]).map(s=> s.id===id ? { ...s, [field]:value } : s);
+  upsert("settings","access", { socialLogins: state.settings.socialLogins });
+  render();
 }
 function removeSocialLogin(id){
   if(!confirm("Remove this login?")) return;
-  upsert("settings","access", { socialLogins: (state.settings.socialLogins||[]).filter(s=>s.id!==id) });
+  state.settings.socialLogins = (state.settings.socialLogins||[]).filter(s=>s.id!==id);
+  upsert("settings","access", { socialLogins: state.settings.socialLogins });
+  render();
 }
 function renderContentInsightRow(i){
   return `
@@ -2624,15 +2746,20 @@ function renderContentInsightRow(i){
 }
 function addContentInsight(){
   const insight = { id:newId("insight"), date:new Date().toISOString().slice(0,10), notes:"" };
-  upsert("settings","access", { contentInsights: [...(state.settings.contentInsights||[]), insight] });
+  state.settings.contentInsights = [...(state.settings.contentInsights||[]), insight];
+  upsert("settings","access", { contentInsights: state.settings.contentInsights });
+  render();
 }
 function updateContentInsight(id, field, value){
-  const contentInsights = (state.settings.contentInsights||[]).map(i=> i.id===id ? { ...i, [field]:value } : i);
-  upsert("settings","access", { contentInsights });
+  state.settings.contentInsights = (state.settings.contentInsights||[]).map(i=> i.id===id ? { ...i, [field]:value } : i);
+  upsert("settings","access", { contentInsights: state.settings.contentInsights });
+  render();
 }
 function removeContentInsight(id){
   if(!confirm("Remove this insight?")) return;
-  upsert("settings","access", { contentInsights: (state.settings.contentInsights||[]).filter(i=>i.id!==id) });
+  state.settings.contentInsights = (state.settings.contentInsights||[]).filter(i=>i.id!==id);
+  upsert("settings","access", { contentInsights: state.settings.contentInsights });
+  render();
 }
 function renderContentGoalRow(g){
   return `
@@ -2646,14 +2773,19 @@ function renderContentGoalRow(g){
 }
 function addContentGoal(){
   const goal = { id:newId("goal"), text:"", targetDate:"", done:false };
-  upsert("settings","access", { contentGoals: [...(state.settings.contentGoals||[]), goal] });
+  state.settings.contentGoals = [...(state.settings.contentGoals||[]), goal];
+  upsert("settings","access", { contentGoals: state.settings.contentGoals });
+  render();
 }
 function updateContentGoal(id, field, value){
-  const contentGoals = (state.settings.contentGoals||[]).map(g=> g.id===id ? { ...g, [field]:value } : g);
-  upsert("settings","access", { contentGoals });
+  state.settings.contentGoals = (state.settings.contentGoals||[]).map(g=> g.id===id ? { ...g, [field]:value } : g);
+  upsert("settings","access", { contentGoals: state.settings.contentGoals });
+  render();
 }
 function removeContentGoal(id){
-  upsert("settings","access", { contentGoals: (state.settings.contentGoals||[]).filter(g=>g.id!==id) });
+  state.settings.contentGoals = (state.settings.contentGoals||[]).filter(g=>g.id!==id);
+  upsert("settings","access", { contentGoals: state.settings.contentGoals });
+  render();
 }
 // --- Lead Organizer (admin only) ---
 function renderLeadOrganizerTab(){
@@ -7381,6 +7513,9 @@ function renderTaskEditorModal(task){
       <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;">
         <input type="checkbox" id="tf_priority" ${task.priority?'checked':''} onchange="state.modal.task.priority=this.checked"> Mark as priority — surfaces on the assignee's dashboard
       </label>
+      <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;">
+        <input type="checkbox" id="tf_good_for_content" ${task.goodForContent?'checked':''} onchange="state.modal.task.goodForContent=this.checked"> Good for content — surfaces on the Content Creator's calendar as something to plan to record
+      </label>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Client</label>
           <select id="tf_client">
@@ -7450,31 +7585,7 @@ function renderTaskEditorModal(task){
           <button class="secondary" onclick="addTaskAttachment('${task.id}')">Upload</button>
         </div>
       </div>
-      <div style="margin-top:14px;">
-        <label class="small">Discussion — visible to everyone assigned to this task</label>
-        <div style="max-height:180px;overflow-y:auto;margin:6px 0;">
-          ${(task.discussion||[]).length ? (task.discussion||[]).map(d=>{
-            const seenBy = d.seenBy || [];
-            const iSeenIt = state.currentAssistant && seenBy.some(s=>s.assistantId===state.currentAssistant.id);
-            const isMine = state.currentAssistant && d.author===state.currentAssistant.name;
-            return `
-            <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
-              <div class="flex-between">
-                <div><strong>${d.author}</strong>: ${d.text}</div>
-                <span class="small">${new Date(d.date).toLocaleString()}</span>
-              </div>
-              <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
-                <span>${seenBy.length ? "Seen by " + seenBy.map(s=>`${s.name} (${new Date(s.seenAt).toLocaleString()})`).join(", ") : "Not seen yet"}</span>
-                ${state.currentAssistant && !isMine && !iSeenIt ? `<button class="secondary" style="padding:2px 8px;" onclick="markCommentSeen('${task.id}','${d.id}')">Mark as seen</button>` : ""}
-              </div>
-            </div>`;
-          }).join("") : `<div class="small">No comments yet.</div>`}
-        </div>
-        <div style="display:flex;gap:6px;">
-          <input id="tf_new_comment" placeholder="Add a comment...">
-          <button class="secondary" onclick="addTaskComment('${task.id}')">Post</button>
-        </div>
-      </div>
+      ${renderTaskDiscussion(task, "tf_new_comment", `addTaskComment('${task.id}')`)}
       <div style="margin-top:14px;display:flex;justify-content:space-between;">
         <button class="danger" onclick="deleteTask('${task.id}')">Delete</button>
         <div>
@@ -7505,6 +7616,37 @@ function addSubtaskDraft(taskId){
   task.subtasks = (task.subtasks||[]).concat([{ text, done:false }]);
   render();
 }
+// Shared by the full task editor and the Content Creator's lightweight
+// task viewer, so both stay in sync with one implementation.
+function renderTaskDiscussion(task, inputId, postOnclick){
+  return `
+    <div style="margin-top:14px;">
+      <label class="small">Discussion — visible to everyone assigned to this task</label>
+      <div style="max-height:180px;overflow-y:auto;margin:6px 0;">
+        ${(task.discussion||[]).length ? (task.discussion||[]).map(d=>{
+          const seenBy = d.seenBy || [];
+          const iSeenIt = state.currentAssistant && seenBy.some(s=>s.assistantId===state.currentAssistant.id);
+          const isMine = state.currentAssistant && d.author===state.currentAssistant.name;
+          return `
+          <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
+            <div class="flex-between">
+              <div><strong>${d.author}</strong>: ${d.text}</div>
+              <span class="small">${new Date(d.date).toLocaleString()}</span>
+            </div>
+            <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
+              <span>${seenBy.length ? "Seen by " + seenBy.map(s=>`${s.name} (${new Date(s.seenAt).toLocaleString()})`).join(", ") : "Not seen yet"}</span>
+              ${state.currentAssistant && !isMine && !iSeenIt ? `<button class="secondary" style="padding:2px 8px;" onclick="markCommentSeen('${task.id}','${d.id}')">Mark as seen</button>` : ""}
+            </div>
+          </div>`;
+        }).join("") : `<div class="small">No comments yet.</div>`}
+      </div>
+      <div style="display:flex;gap:6px;">
+        <input id="${inputId}" placeholder="Add a comment...">
+        <button class="secondary" onclick="${postOnclick}">Post</button>
+      </div>
+    </div>
+  `;
+}
 function addTaskComment(taskId){
   const input = document.getElementById("tf_new_comment");
   const text = input.value.trim();
@@ -7529,6 +7671,45 @@ function markCommentSeen(taskId, commentId){
     if(seenBy.some(s=>s.assistantId===state.currentAssistant.id)) return d;
     return { ...d, seenBy: [...seenBy, { assistantId: state.currentAssistant.id, name: state.currentAssistant.name, seenAt: new Date().toISOString() }] };
   });
+  task.discussion = discussion;
+  upsert("tasks", taskId, { discussion });
+  render();
+}
+// Lightweight, read-mostly view of a task for the Content Creator role —
+// she doesn't get full Task Board access (status/assignees/client/delete),
+// just enough context on a "good for content" flagged task to plan around
+// it, plus the same discussion thread so she can ask the assistant
+// specifics without needing to be added as an assignee.
+function openContentTaskViewer(taskId){
+  state.modal = { type:"contentTaskViewer", taskId };
+  render();
+}
+function renderContentTaskViewerModal(taskId){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task){
+    return `<div class="modal"><div class="small">This task no longer exists.</div><div style="margin-top:10px;"><button class="secondary" onclick="closeModal()">Close</button></div></div>`;
+  }
+  const client = task.clientId===INTERNAL_CLIENT_ID ? null : state.clients.find(c=>c.id===task.clientId);
+  return `
+    <div class="modal">
+      <div class="flex-between">
+        <h3 style="margin:0;">${task.title||'(untitled)'}${task.taskNumber ? ` <span class="small">#${task.taskNumber}</span>` : ''}</h3>
+        <button class="secondary" onclick="closeModal()">Close</button>
+      </div>
+      <div class="small" style="margin-top:6px;">${client ? client.name : "Internal / Modern Co."} · ${task.dueDate ? "Due " + parseYMD(task.dueDate).toLocaleDateString() : "No due date"} · ${(task.assignees||[]).map(assistantName).join(", ")||"Unassigned"} · ${task.status||''}</div>
+      ${task.description ? `<p style="margin-top:10px;">${task.description}</p>` : `<p class="small" style="margin-top:10px;">No description added yet — ask in the comments below.</p>`}
+      ${renderTaskDiscussion(task, "ctf_new_comment", `addContentTaskComment('${task.id}')`)}
+    </div>
+  `;
+}
+function addContentTaskComment(taskId){
+  const input = document.getElementById("ctf_new_comment");
+  const text = input.value.trim();
+  if(!text) return;
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const author = state.currentAssistant ? state.currentAssistant.name : "Admin";
+  const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
   task.discussion = discussion;
   upsert("tasks", taskId, { discussion });
   render();
@@ -7598,6 +7779,7 @@ async function saveTask(taskId){
     privateNotes: document.getElementById("tf_private_notes").value.trim(),
     dueDate: document.getElementById("tf_due").value,
     priority: document.getElementById("tf_priority").checked,
+    goodForContent: document.getElementById("tf_good_for_content").checked,
     taskNumber,
     assignees,
     subtasks: task.subtasks || [],
@@ -7858,6 +8040,7 @@ function renderModal(){
     : state.modal.type==="manualTimeEntry" ? renderManualTimeEntryModal()
     : state.modal.type==="imageViewer" ? renderImageViewerModal(state.modal.dataUrl)
     : state.modal.type==="orgChartSeat" ? renderOrgChartSeatModal(state.modal.rowId, state.modal.seat)
+    : state.modal.type==="contentTaskViewer" ? renderContentTaskViewerModal(state.modal.taskId)
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
