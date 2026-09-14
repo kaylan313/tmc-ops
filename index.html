@@ -638,16 +638,33 @@ async function boot(){
     // out anything typed into a field that's since been tabbed away from
     // (those values only live in the DOM until Save, nothing holds them
     // through a full re-render except the currently-focused field).
+    // Only settings + clients subscribe here — those are the only two any
+    // login check actually needs. tasks/timeEntries/leads are real accounts
+    // of months of daily use by now (by far the largest collections in the
+    // app) and nobody needs them until AFTER they're actually logged in —
+    // subscribing to all of them unconditionally on every page load, before
+    // anyone's even typed a passcode, was extra network/listener load
+    // directly competing with the two collections a login is waiting on.
+    // See subscribeAppData(), called once from each successful login path.
     subscribe("clients", items=>{ state.clients = items; state.clientsReady = true; if(!state.modal) render(); });
-    subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
-    subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
-    subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
     watchOrientationSync();
   }
 
   render();
   setInterval(()=>{ if(!state.modal) render(); }, 60000); // refresh live timers every minute, but not mid-form
   setInterval(checkClockReminders, 30*60*1000); // 30-min reminder
+}
+let appDataSubscribed = false;
+// tasks/timeEntries/leads only get subscribed once someone's actually
+// logged in (see boot() above for why) — call this once from each
+// successful login path. The guard makes it safe to call more than once
+// (e.g. logging out and back in) without opening duplicate listeners.
+function subscribeAppData(){
+  if(appDataSubscribed || !FIREBASE_AVAILABLE) return;
+  appDataSubscribed = true;
+  subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
+  subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
+  subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
 }
 
 // ---- 6. Orientation sync (existing integration, preserved) ----
@@ -2049,7 +2066,8 @@ function dismissEmailNeeded(clientId, type){
 function tryAdminLogin(code){
   if(FIREBASE_AVAILABLE && FIREBASE_CONFIGURED && !state.settingsReady){ alert("Still connecting — give it a couple seconds and try again."); return; }
   if(code === state.settings.adminPasscode){
-    state.role = "admin"; state.view = "app"; state.activeTab="dashboard"; render();
+    state.role = "admin"; state.view = "app"; state.activeTab="dashboard";
+    subscribeAppData(); render();
   } else alert("Incorrect passcode.");
 }
 function tryTeamLogin(code){
@@ -2060,7 +2078,7 @@ function tryTeamLogin(code){
     state.activeTab = match.isContentCreator ? "content" : "dashboard";
     if(!match.agreementSigned){ state.modal = { type:"agreementGate", assistant: match }; }
     else if(!match.hasSeenAppGuide){ state.modal = { type:"appGuide", assistant: match }; }
-    render();
+    subscribeAppData(); render();
   } else alert("Access code not recognized.");
 }
 function tryClientLogin(code){
@@ -2069,7 +2087,7 @@ function tryClientLogin(code){
   if(match){
     state.role="client"; state.currentClientId = match.id; state.view="app"; state.activeTab="portal";
     state.clientRequestDraft = { title: "", details: "", category: "Home" };
-    render();
+    subscribeAppData(); render();
   } else alert("Client code not recognized.");
 }
 function logout(){
