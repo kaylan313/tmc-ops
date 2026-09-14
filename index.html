@@ -2646,13 +2646,13 @@ function renderContentCalendarTab(){
       <div class="flex-between">
         <h3 style="margin:0;">Flagged for content <span class="small">(${flaggedTasks.length})</span></h3>
       </div>
-      <div class="small" style="margin-bottom:10px;">Tasks an assistant marked "Good for content" — click one to see the details and ask them specifics.</div>
+      <div class="small" style="margin-bottom:10px;">Tasks an assistant marked "Good for content" — click one to see the details, comment, and add it to your calendar.</div>
       ${flaggedTasks.length ? flaggedTasks.map(t=>{
         const client = t.clientId===INTERNAL_CLIENT_ID ? null : state.clients.find(c=>c.id===t.clientId);
         return `<div class="list-item" style="cursor:pointer;" onclick="openContentTaskViewer('${t.id}')">
           <div>
             <strong>${t.title||'(untitled)'}</strong>
-            <div class="small">${client ? client.name : "Internal / Modern Co."} · ${t.dueDate ? parseYMD(t.dueDate).toLocaleDateString() : "No due date"} · ${(t.assignees||[]).map(assistantName).join(", ")||"Unassigned"}</div>
+            <div class="small">${client ? client.name : "Internal / Modern Co."} · ${t.dueDate ? parseYMD(t.dueDate).toLocaleDateString() : "No due date"} · ${(t.assignees||[]).map(assistantName).join(", ")||"Unassigned"}${t.contentPlanAdded ? ' · <span style="color:var(--ok);">✓ added</span>' : ''}</div>
           </div>
           <span class="badge" style="background:${t.status==='Done'?'var(--ok)':'var(--warn)'};">${t.status||''}</span>
         </div>`;
@@ -7286,9 +7286,38 @@ function renderContentTaskViewerModal(taskId){
       </div>
       <div class="small" style="margin-top:6px;">${client ? client.name : "Internal / Modern Co."} · ${task.dueDate ? "Due " + parseYMD(task.dueDate).toLocaleDateString() : "No due date"} · ${(task.assignees||[]).map(assistantName).join(", ")||"Unassigned"} · ${task.status||''}</div>
       ${task.description ? `<p style="margin-top:10px;">${task.description}</p>` : `<p class="small" style="margin-top:10px;">No description added yet — ask in the comments below.</p>`}
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--cream-dark);">
+        ${task.contentPlanAdded
+          ? `<span class="small" style="color:var(--ok);">✓ Added to your content calendar — find and edit it under Content Ideas or the calendar above.</span>`
+          : `<button onclick="addFlaggedTaskToContentPlan('${task.id}')">+ Add to my content calendar</button>`}
+      </div>
       ${renderTaskDiscussion(task, "ctf_new_comment", `addContentTaskComment('${task.id}')`)}
     </div>
   `;
+}
+// Turns a "Good for content"-flagged task into an actual content-plan
+// entry Zoe can schedule/edit on her own terms (platform, status, her own
+// date) — separate from the task's own due date, which an assistant may
+// not have set at all. sourceTaskId keeps the link back for context.
+function addFlaggedTaskToContentPlan(taskId){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const client = task.clientId===INTERNAL_CLIENT_ID ? null : state.clients.find(c=>c.id===task.clientId);
+  const entry = {
+    id: newId("content"),
+    type: task.dueDate ? "scheduled" : "idea",
+    title: task.title || "(untitled)",
+    date: task.dueDate || "",
+    platform: "",
+    status: task.dueDate ? "Idea" : "",
+    notes: "From a task flagged \"Good for content\"" + (client ? " for " + client.name : "") + (task.description ? ": " + task.description : "") + ".",
+    addedBy: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:""),
+    sourceTaskId: task.id
+  };
+  state.settings.contentPlan = [...(state.settings.contentPlan||[]), entry];
+  upsert("settings","access", { contentPlan: state.settings.contentPlan });
+  upsert("tasks", taskId, { contentPlanAdded: true });
+  render();
 }
 function addContentTaskComment(taskId){
   const input = document.getElementById("ctf_new_comment");
