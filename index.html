@@ -1934,11 +1934,16 @@ function upcomingReminders(windowDays){
       const days = daysUntil(next, now);
       if(days <= windowDays) results.push({ client, type:"Special date", label:d.label, date:next, days });
     });
+    // Sept 2026: the vendor form moved to a single freeform Schedule text
+    // field (Service/Company/Contact/Schedule) instead of a numeric
+    // "every N days + last service date" pair — this reminder only still
+    // fires for vendors added before that change that still carry those
+    // two fields; new vendors won't generate an automatic reminder here.
     (client.vendors||[]).forEach(v=>{
       if(!v.lastService || !v.frequencyDays) return;
       const due = new Date(parseYMD(v.lastService).getTime() + v.frequencyDays*86400000);
       const days = daysUntil(due, now);
-      if(days <= windowDays) results.push({ client, type:"Vendor service", label: v.name + " — " + v.service, date:due, days });
+      if(days <= windowDays) results.push({ client, type:"Vendor service", label: (v.company||v.name||'') + " — " + (v.service||''), date:due, days });
     });
     (client.inspections||[]).forEach(ins=>{
       if(!ins.nextDue) return;
@@ -3353,7 +3358,7 @@ function renderClientOnboardingChecklist(client){
       <div class="small" style="margin-bottom:6px;">Home/business steps shown below are based on "Client type" further down — currently <strong>${serviceType}</strong>. Set it to "Both" for a client like Susan who needs both.</div>
       <div class="checklist-item"><span class="small">${assistantAssigned ? '✅' : '⬜'} Assistant assigned ${assistantAssigned ? '— '+((client.assistantIds||[]).map(assistantName).join(', ')) : '(set on Membership tab)'}</span></div>
       <div class="checklist-item"><span class="small">${portalCodeSet ? '✅' : '⬜'} Client portal code set ${portalCodeSet ? '' : '(set on Membership tab)'}</span></div>
-      <div class="checklist-item"><span class="small">${client.contractSigned ? '✅' : '⬜'} Contract signed ${client.contractSigned ? '— by '+client.contractSignedName : '(sign it on the Service Agreement section below)'}</span></div>
+      <div class="checklist-item"><span class="small">${client.contractSigned || client.contractSignedExternally ? '✅' : '⬜'} Contract signed ${client.contractSigned ? '— by '+client.contractSignedName : client.contractSignedExternally ? '— signed externally' : '(sign it on the Service Agreement section below)'}</span></div>
       ${items.map(i=>`
         <div class="checklist-item">
           <input type="checkbox" id="cob_${client.id}_${i.id}" ${i.done?'checked':''} onchange="toggleClientOnboardingItem('${client.id}','${i.id}')">
@@ -3469,7 +3474,7 @@ const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AG
 <li><p>All twelve (12) months of the Agreement must contain the same number of service hours per month unless the Client elects to enter into a Custom Agreement as outlined below.</p></li>
 </ul>
 <p><em><strong>Custom Agreement</strong></em></p>
-<p>Prior to execution of the twelve (12) month term, the Client must select an initial service tier of either twenty five (25), thirty five (35), forty (40), sixty (60), or eighty (80) hours per month. At the time of signing, the Client may designate specific months to increase their hours to forty (40) sixty (60) or (80) eighty hours to accommodate seasonal or anticipated needs. All monthly hour allocations must be finalized prior to execution of the Agreement and will remain fixed for the duration of the one-year term. Hours may be increased above the initial tier in designated months; however, reductions below the initially selected monthly tier are not permitted.</p>
+<p>Prior to execution of the twelve (12) month term, the Client must select an initial service tier of either twenty five (25), thirty five (35), forty five (45), sixty (60), or eighty (80) hours per month. At the time of signing, the Client may designate specific months to increase their hours to forty five (45) sixty (60) or (80) eighty hours to accommodate seasonal or anticipated needs. All monthly hour allocations must be finalized prior to execution of the Agreement and will remain fixed for the duration of the one-year term. Hours may be increased above the initial tier in designated months; however, reductions below the initially selected monthly tier are not permitted.</p>
 <ul>
 <li><p>Perform tasks needed by Client</p></li>
 </ul>
@@ -3481,7 +3486,7 @@ const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AG
 <li><p>All twelve (12) months of the Agreement must contain the same number of service hours per month unless the Client elects to enter into a Custom Agreement as outlined below.</p></li>
 </ul>
 <p><em><strong>Custom Agreement</strong></em></p>
-<p>Prior to execution of the twelve (12) month term, the Client must select an initial service tier of either twenty five (25), thirty five (35), forty (40), sixty (60), or eighty (80) hours per month. At the time of signing, the Client may designate specific months to increase their hours to accommodate seasonal or anticipated needs. All monthly hour allocations must be finalized prior to execution of the Agreement and will remain fixed for the duration of the one-year term. Hours may be increased above the initial tier in designated months; however, reductions below the initially selected monthly tier are not permitted.</p>
+<p>Prior to execution of the twelve (12) month term, the Client must select an initial service tier of either twenty five (25), thirty five (35), forty five (45), sixty (60), or eighty (80) hours per month. At the time of signing, the Client may designate specific months to increase their hours to accommodate seasonal or anticipated needs. All monthly hour allocations must be finalized prior to execution of the Agreement and will remain fixed for the duration of the one-year term. Hours may be increased above the initial tier in designated months; however, reductions below the initially selected monthly tier are not permitted.</p>
 <ul>
 <li><p>Perform tasks needed by Client</p></li>
 </ul>
@@ -3546,6 +3551,7 @@ const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AG
 <li><p>Grocery Stocking</p></li>
 <li><p>Errands &amp; Returns</p></li>
 <li><p>Vendor Coordination</p></li>
+<li><p>Laundry (Put Away/Hang Up)</p></li>
 </ul>
 <ul>
 <li><p><strong>The Restore — $575 (12 Hours of Service – Flat Rate)</strong></p></li>
@@ -3986,22 +3992,21 @@ function renderClientProfile(client){
   `;
 
   const vendorsBody = `
-    <div class="small" style="margin-bottom:8px;">Recurring service providers — lawn care, house cleaning/maid, trash pickup, pool service, etc. Set "Every N days" and a last-service date to get an automatic reminder when the next one's due.</div>
+    <div class="small" style="margin-bottom:8px;">Recurring service providers — lawn care, house cleaning/maid, trash pickup, pool service, etc.</div>
+    <div class="small" style="margin-bottom:8px;color:#8a7a72;">Format: Service, Company, Contact, Schedule — e.g. "Lawn Care, Green Lawns LLC, (337) 555-0100, Every Monday @ 9am"</div>
     ${(client.vendors||[]).map((v,i)=>`
       <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
-        <input value="${v.name||''}" placeholder="Vendor name" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'name',this.value)">
         <input value="${v.service||''}" placeholder="Service" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'service',this.value)">
-        <input value="${v.phone||''}" placeholder="Number" style="max-width:130px;" onchange="updateVendorField('${client.id}',${i},'phone',this.value)">
-        <input type="date" value="${v.lastService||''}" title="Last service date" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'lastService',this.value)">
-        <input type="number" value="${v.frequencyDays||''}" placeholder="Every N days" style="max-width:110px;" onchange="updateVendorField('${client.id}',${i},'frequencyDays',parseInt(this.value,10)||0)">
+        <input value="${v.company!=null?v.company:(v.name||'')}" placeholder="Company" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'company',this.value)">
+        <input value="${v.contact!=null?v.contact:(v.phone||'')}" placeholder="Contact (name, phone, or email)" style="max-width:180px;" onchange="updateVendorField('${client.id}',${i},'contact',this.value)">
+        <input value="${v.schedule||''}" placeholder="Schedule — e.g. Every Monday @ 9am" style="min-width:200px;" onchange="updateVendorField('${client.id}',${i},'schedule',this.value)">
         <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
       </div>`).join("") || `<div class="small">No vendors on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-      <input id="v_name_${client.id}" placeholder="Vendor name" style="max-width:150px;">
-      <input id="v_service_${client.id}" placeholder="Service" style="max-width:130px;">
-      <input id="v_phone_${client.id}" placeholder="Number" style="max-width:130px;">
-      <input id="v_last_${client.id}" type="date" title="Last service date" style="max-width:150px;">
-      <input id="v_freq_${client.id}" type="number" placeholder="Every N days" style="max-width:110px;">
+      <input id="v_service_${client.id}" placeholder="Service" style="max-width:150px;">
+      <input id="v_company_${client.id}" placeholder="Company" style="max-width:150px;">
+      <input id="v_contact_${client.id}" placeholder="Contact (name, phone, or email)" style="max-width:180px;">
+      <input id="v_schedule_${client.id}" placeholder="Schedule — e.g. Every Monday @ 9am" style="min-width:200px;">
       <button class="secondary" onclick="addVendor('${client.id}')">Add</button>
     </div>
   `;
@@ -4110,6 +4115,14 @@ function renderClientProfile(client){
 function escHtml(s){
   return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+function replaceNthOccurrence(str, search, replace, n){
+  let idx = -1;
+  for(let i=0;i<=n;i++){
+    idx = str.indexOf(search, idx+1);
+    if(idx===-1) return str;
+  }
+  return str.slice(0,idx) + replace + str.slice(idx+search.length);
+}
 // paymentInfo is only ever passed at the moment of signing (see
 // saveClientAgreement) — it's never persisted as its own field anywhere.
 // It gets baked into this one-time contractHtml snapshot, which lives only
@@ -4126,9 +4139,30 @@ function clientAgreementHtml(client, paymentInfo){
     "12month_new": '<p>Twelve (12) Month Term (New)</p>',
     "12month_renewal": '<p>Twelve (12) Month Term (Renewal)</p>'
   };
+  const termOrder = ["pilot","3month","12month_new","12month_renewal"];
   const target = TERM_LINE_MATCH[client.termType || 'pilot'];
   if(target){
     html = html.replace(target, target.slice(0,-4) + ' ✓ <strong>(selected)</strong></p>');
+  }
+  // Section 3 lists the same "X Hours per Month – $Y per month" line once
+  // under each of the 4 term-type groups, in that same pilot/3month/12mo-
+  // new/12mo-renewal order — so the Nth (0-indexed) occurrence of a given
+  // price line in the document always corresponds to the Nth term group.
+  // A 20hr line only ever appears once (under Pilot), so its only
+  // occurrence is index 0, which also happens to be pilot's group index —
+  // no special-casing needed, the same formula covers both cases.
+  const PRICE_LINE_TEXT = {
+    20: "<p>20 Hours per Month – $950 per month</p>",
+    25: "<p>25 Hours per Month – $1,150 per month</p>",
+    35: "<p>35 Hours per Month – $1,600 per month</p>",
+    45: "<p>45 Hours per Month – $2,000 per month</p>",
+    60: "<p>60 Hours per Month - $2,640 per month</p>",
+    80: "<p>80 Hours per Month - $3,520 per month</p>"
+  };
+  const priceLine = PRICE_LINE_TEXT[client.packageHours];
+  if(priceLine){
+    const groupIndex = termOrder.indexOf(client.termType || 'pilot');
+    if(groupIndex>=0) html = replaceNthOccurrence(html, priceLine, priceLine.slice(0,-4) + ' ✓ <strong>(selected)</strong></p>', groupIndex);
   }
   if(paymentInfo && paymentInfo.method==='card'){
     html = html.replace('<p>Credit/Debit Card (2.99% processing fee applies)</p>', '<p>Credit/Debit Card (2.99% processing fee applies) &#10003; <strong>(selected)</strong></p>');
@@ -4149,8 +4183,15 @@ function clientAgreementHtml(client, paymentInfo){
   return html;
 }
 function renderContractSectionBody(client){
-  const signed = !!client.contractSigned;
   const isStaff = state.role!=="client";
+  if(client.contractSignedExternally){
+    return `
+      <div class="alert ok">✓ Signed outside the app${client.contractExternalNote ? ' — ' + client.contractExternalNote : ''}.</div>
+      <div class="small">Nothing to review or sign here — this client's agreement was handled elsewhere (e.g. Google eSignature) before or outside of an in-app orientation.</div>
+      ${isStaff ? `<button class="secondary" style="margin-top:10px;" onclick="unmarkContractSignedExternally('${client.id}')">Undo — they haven't actually signed</button>` : ""}
+    `;
+  }
+  const signed = !!client.contractSigned;
   const agreementHtml = signed && client.contractHtml ? client.contractHtml : clientAgreementHtml(client);
   return `
     <div class="small" style="margin-bottom:10px;">${isStaff ? "Review this agreement together with the client, then capture their signature below to confirm they've reviewed and agreed to the terms, including the selected membership tier and/or Home Reset package." : "Please review this agreement, then sign below to confirm you agree to the terms, including your selected membership tier and/or Home Reset package."}</div>
@@ -4227,8 +4268,23 @@ function renderContractSectionBody(client){
           <button onclick="saveClientAgreement('${client.id}')">Save signature &amp; sign contract</button>
         </div>
       </div>
+      ${isStaff ? `
+      <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--cream-dark);">
+        <div class="small">Already signed somewhere else — Google eSignature, before orientation, etc.?</div>
+        <button class="secondary" style="margin-top:6px;" onclick="markContractSignedExternally('${client.id}')">Mark as signed externally (don't show this agreement here)</button>
+      </div>
+      ` : ""}
     `}
   `;
+}
+function markContractSignedExternally(clientId){
+  const note = prompt("Optional note — where/when was it signed? (e.g. \"Google eSignature, 9/10/2026\")", "");
+  if(note===null) return;
+  upsert("clients", clientId, { contractSignedExternally: true, contractExternalNote: note.trim() });
+}
+function unmarkContractSignedExternally(clientId){
+  if(!confirm("Undo this? The agreement will show as unsigned again and the client will be prompted to sign in the app.")) return;
+  upsert("clients", clientId, { contractSignedExternally: false, contractExternalNote: null });
 }
 let csSigCanvas=null, csSigCtx=null, csDrawing=false, csHasDrawn=false;
 function initClientSigPad(clientId){
@@ -4634,15 +4690,13 @@ function toggleRevealLogin(clientId, index){
   render();
 }
 function addVendor(clientId){
-  const name = document.getElementById("v_name_"+clientId).value.trim();
   const service = document.getElementById("v_service_"+clientId).value.trim();
-  const phone = document.getElementById("v_phone_"+clientId).value.trim();
-  const lastService = document.getElementById("v_last_"+clientId).value;
-  const frequencyDays = parseInt(document.getElementById("v_freq_"+clientId).value, 10) || 0;
-  if(!name){ alert("Please enter a vendor name."); return; }
+  const company = document.getElementById("v_company_"+clientId).value.trim();
+  const contact = document.getElementById("v_contact_"+clientId).value.trim();
+  const schedule = document.getElementById("v_schedule_"+clientId).value.trim();
+  if(!service && !company){ alert("Please enter at least a service or company name."); return; }
   const client = state.clients.find(c=>c.id===clientId);
-  const vendor = { name, service, phone, lastService };
-  if(frequencyDays) vendor.frequencyDays = frequencyDays;
+  const vendor = { service, company, contact, schedule };
   const vendors = [...(client.vendors||[]), vendor];
   upsert("clients", clientId, { vendors });
 }
@@ -6963,7 +7017,7 @@ function renderClientPortal(){
           </div>
           <button style="margin-top:10px;" id="reqSubmitBtn" onclick="submitClientTaskRequest('${client.id}')">Submit request</button>
         </div>
-        ${!client.contractSigned ? `
+        ${!client.contractSigned && !client.contractSignedExternally ? `
         <div class="card">
           <h3>Membership Setup</h3>
           <div class="small" style="margin-bottom:8px;">For staff use during orientation: pick the package the client is choosing and their contract start date before signing below. This section disappears once the agreement is signed.</div>
@@ -7072,7 +7126,10 @@ function renderClientPortal(){
         </div>
         <div class="card">
           <h3>Vendors & inspections</h3>
-          ${(client.vendors||[]).map(v=>`<div class="list-item"><div>${v.name} — ${v.service}</div><span class="small">last: ${v.lastService||'—'}</span></div>`).join("")}
+          ${(client.vendors||[]).map(v=>{
+            const company = v.company!=null ? v.company : (v.name||'');
+            return `<div class="list-item"><div>${v.service||''}${company?' — '+company:''}</div><span class="small">${v.schedule||''}</span></div>`;
+          }).join("")}
           ${(client.inspections||[]).map(ins=>`<div class="list-item"><div>${ins.name}</div><span class="small">next due: ${ins.nextDue ? parseYMD(ins.nextDue).toLocaleDateString() : "not set"}</span></div>`).join("")}
           ${(!client.vendors||!client.vendors.length) && (!client.inspections||!client.inspections.length) ? `<div class="small">Nothing on file yet.</div>` : ""}
         </div>
