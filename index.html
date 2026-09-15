@@ -317,7 +317,7 @@ const PACKAGE_TIERS = [
   { key:"pilot20", label:"Pilot — 20 hrs/mo (1-month only)", hours:20, price:950 },
   { key:"ongoing25", label:"Ongoing 25 — 25 hrs/mo", hours:25, price:1150 },
   { key:"ongoing35", label:"Ongoing 35 — 35 hrs/mo (Most Popular)", hours:35, price:1600 },
-  { key:"ongoing40", label:"Ongoing 40 — 40 hrs/mo", hours:40, price:2000 },
+  { key:"ongoing45", label:"Ongoing 45 — 45 hrs/mo", hours:45, price:2000 },
   { key:"ongoing60", label:"Ongoing 60 — 60 hrs/mo", hours:60, price:2640 },
   { key:"ongoing80", label:"Ongoing 80 — 80 hrs/mo", hours:80, price:3520 },
   { key:"reset_refresh", label:"Home Reset — The Refresh", hours:6, price:325 },
@@ -329,7 +329,11 @@ const PACKAGE_TIERS = [
   // keep showing their real tier name instead of falling back to "Custom."
   // Never offered to new clients.
   { key:"legacy_m40_1700", label:"Legacy — 40 hrs/mo, $1,700 (grandfathered only)", hours:40, price:1700 },
-  { key:"legacy_ongoing45_2000", label:"Legacy — 45 hrs/mo, $2,000 (grandfathered only)", hours:45, price:2000 },
+  // Sept 2026 pricing correction: the contract's 45hr/$2,000 tier was
+  // briefly (and incorrectly) implemented in the app as 40hr/$2,000 —
+  // kept here as legacy so anyone signed during that window still shows
+  // their real tier instead of falling back to "Custom."
+  { key:"legacy_ongoing40_2000", label:"Legacy — 40 hrs/mo, $2,000 (grandfathered only)", hours:40, price:2000 },
   { key:"legacy_ongoing60_2400", label:"Legacy — 60 hrs/mo, $2,400 (grandfathered only)", hours:60, price:2400 },
   { key:"legacy_ongoing80_3200", label:"Legacy — 80 hrs/mo, $3,200 (grandfathered only)", hours:80, price:3200 }
 ];
@@ -3464,7 +3468,7 @@ const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AG
 <li><p>20 Hours per Month – $950 per month</p>
 <p>25 Hours per Month – $1,150 per month</p>
 <p>35 Hours per Month – $1,600 per month</p>
-<p>40 Hours per Month – $2,000 per month</p>
+<p>45 Hours per Month – $2,000 per month</p>
 <p>60 Hours per Month - $2,640 per month</p>
 <p>80 Hours per Month - $3,520 per month</p></li>
 </ul>
@@ -3472,7 +3476,7 @@ const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AG
 <ul>
 <li><p>25 Hours per Month – $1,150 per month</p>
 <p>35 Hours per Month – $1,600 per month</p>
-<p>40 Hours per Month – $2,000 per month</p>
+<p>45 Hours per Month – $2,000 per month</p>
 <p>60 Hours per Month - $2,640 per month</p>
 <p>80 Hours per Month - $3,520 per month</p></li>
 </ul>
@@ -3480,7 +3484,7 @@ const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AG
 <ul>
 <li><p>25 Hours per Month – $1,150 per month</p>
 <p>35 Hours per Month – $1,600 per month</p>
-<p>40 Hours per Month – $2,000 per month</p>
+<p>45 Hours per Month – $2,000 per month</p>
 <p>60 Hours per Month - $2,640 per month</p>
 <p>80 Hours per Month - $3,520 per month</p></li>
 </ul>
@@ -3488,7 +3492,7 @@ const CLIENT_SERVICE_AGREEMENT_HTML = `<p><strong>PERSONAL ASSISTANT SERVICES AG
 <ul>
 <li><p>25 Hours per Month – $1,150 per month</p>
 <p>35 Hours per Month – $1,600 per month</p>
-<p>40 Hours per Month – $2,000 per month</p>
+<p>45 Hours per Month – $2,000 per month</p>
 <p>60 Hours per Month - $2,640 per month</p>
 <p>80 Hours per Month - $3,520 per month</p></li>
 </ul></li>
