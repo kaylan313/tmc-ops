@@ -2339,6 +2339,19 @@ function declineClientRequest(taskId){
   remove("tasks", taskId);
   render();
 }
+// Signed at orientation (possibly via the client's own portal login, see
+// the Membership Setup card) but not yet downloaded/filed — either the
+// Drive auto-file Cloud Function hasn't picked it up yet, or Drive filing
+// isn't set up for this deployment and someone needs to grab it manually
+// via the Download button on the Membership tab.
+function contractsReadyToDownload(){
+  return state.clients.filter(c=>
+    c.id!==INTERNAL_CLIENT_ID &&
+    c.contractSigned &&
+    (c.contractHtml || c.contractSignatureDataUrl) &&
+    !c.driveContractUrl
+  );
+}
 function renderAdminDashboard(){
   const period = currentPayrollPeriod();
   const totalPayrollHours = hoursInPeriod(state.timeEntries, period);
@@ -2354,6 +2367,7 @@ function renderAdminDashboard(){
   const renewingThisWeek = clientsRenewingInWindow(currentReportWeek());
   const renewingNextWeek = clientsRenewingInWindow(nextReportWeek());
   const emailsNeeded = emailsNeededList();
+  const contractsReady = contractsReadyToDownload();
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -2432,6 +2446,20 @@ function renderAdminDashboard(){
           <div>${client.name} <span class="small">(${TERM_LABELS[client.termType||'pilot']})</span></div>
           <span class="small">${end.toLocaleDateString()}</span>
         </div>`).join("")}` : ""}
+    </div>` : ""}
+
+    ${contractsReady.length ? `
+    <div class="card">
+      <h3>Contracts ready to download</h3>
+      <div class="small" style="margin-bottom:8px;">Signed at orientation — download and file in QuickBooks + the shared drive, then clear it from the client's Membership tab.</div>
+      ${contractsReady.map(c=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
+          <div>
+            <span class="alert ok" style="margin:0;padding:2px 8px;">Signed</span>
+            <strong style="margin-left:6px;">${c.name}</strong>
+            <span class="small"> · signed by ${c.contractSignedName||'—'} on ${c.contractSignedDate?parseYMD(c.contractSignedDate).toLocaleDateString():'—'}</span>
+          </div>
+        </div>`).join("")}
     </div>` : ""}
 
     ${emailsNeeded.length ? `
@@ -6935,6 +6963,28 @@ function renderClientPortal(){
           </div>
           <button style="margin-top:10px;" id="reqSubmitBtn" onclick="submitClientTaskRequest('${client.id}')">Submit request</button>
         </div>
+        ${!client.contractSigned ? `
+        <div class="card">
+          <h3>Membership Setup</h3>
+          <div class="small" style="margin-bottom:8px;">For staff use during orientation: pick the package the client is choosing and their contract start date before signing below. This section disappears once the agreement is signed.</div>
+          <div class="row">
+            <div><label class="small">Package</label>
+              <select onchange="selectPackageTier('${client.id}',this.value)">
+                <option value="">— Select a package —</option>
+                ${PACKAGE_TIERS.filter(t=>!t.key.startsWith('legacy_')).map(t=>`<option value="${t.key}" ${client.packageHours===t.hours&&client.packagePrice===t.price?'selected':''}>${t.label} — $${t.price} (${t.hours}hrs)</option>`).join("")}
+              </select>
+            </div>
+            <div><label class="small">Term type</label>
+              <select onchange="updateClientField('${client.id}','termType',this.value)">
+                <option value="pilot" ${(!client.termType||client.termType==='pilot')?'selected':''}>One Month Pilot</option>
+                <option value="3month" ${client.termType==='3month'?'selected':''}>Three Month Term</option>
+                <option value="12month_new" ${client.termType==='12month_new'?'selected':''}>Twelve Month Term (New)</option>
+              </select>
+            </div>
+            <div><label class="small">Contract start date</label><input type="date" value="${client.termStartDate?client.termStartDate.slice(0,10):''}" onchange="updateTermStartDate('${client.id}',this.value)"></div>
+          </div>
+        </div>
+        ` : ""}
         <div class="card">
           <h3>Service Agreement</h3>
           ${renderContractSectionBody(client)}
