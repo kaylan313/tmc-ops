@@ -293,7 +293,8 @@ const SEED_SETTINGS = {
   contentPlan: [],
   socialLogins: [],
   contentInsights: [],
-  contentGoals: []
+  contentGoals: [],
+  scorecardHistory: []
 };
 
 const INTERNAL_CLIENT_ID = "internal";
@@ -2216,7 +2217,7 @@ function renderAppShell(){
   const tabs = isContentCreator
     ? [["content","Content Calendar"]]
     : state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["scorecard","Scorecard"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
     : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
 
   app.innerHTML = `
@@ -2257,6 +2258,7 @@ function renderMain(){
     case "addons": return state.role==="admin" ? renderAddOnsTab() : "";
     case "content": return (state.role==="admin" || (state.currentAssistant && state.currentAssistant.isContentCreator)) ? renderContentCalendarTab() : "";
     case "leads": return state.role==="admin" ? renderLeadOrganizerTab() : "";
+    case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
     case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
@@ -2908,6 +2910,131 @@ function removeContentGoal(id){
   state.settings.contentGoals = (state.settings.contentGoals||[]).filter(g=>g.id!==id);
   upsert("settings","access", { contentGoals: state.settings.contentGoals });
   render();
+}
+// --- Scorecard (admin only) — replaces the old Netlify "TeamHub" site.
+// Weekly numbers for a Level 10 / leadership meeting. No manual data entry:
+// every metric is computed live from the same data already in the app.
+// "Auto-updates every week" is implemented as auto-capture-on-view rather
+// than a scheduled job — there's no reliable way to run code on a timer
+// without a live person's browser open anyway (this project's Cloud
+// Functions can't be triggered by a public HTTP call per GCP org policy,
+// and a Pub/Sub-scheduled function is real infra + another deploy step for
+// something a weekly meeting already guarantees a viewer for). Instead:
+// the CURRENT week's row is silently created (or refreshed with fresh
+// live numbers) every time an admin opens this tab. Once the calendar
+// rolls into a new week, that row freezes as history and a new one starts
+// — so the trend builds itself automatically over time, and this week's
+// numbers are always live up to the moment you're looking at them in the
+// meeting itself, not just whatever they were on Monday morning.
+function scorecardWeekStart(refDate){
+  const d = refDate ? new Date(refDate) : new Date();
+  const day = d.getDay(); // 0=Sun..6=Sat
+  const diffToMonday = day===0 ? -6 : 1-day;
+  const monday = new Date(d.getFullYear(), d.getMonth(), d.getDate()+diffToMonday);
+  return monday.toISOString().slice(0,10);
+}
+function monthlyEquivalentPrice(client){
+  const price = client.packagePrice || 0;
+  const cycle = client.cycleType || "monthly";
+  if(cycle==="quarterly") return price/3;
+  if(cycle==="annual") return price/12;
+  if(cycle==="biweekly") return price*(26/12);
+  return price;
+}
+function computeScorecardMetrics(){
+  const now = new Date();
+  const weekStart = parseYMD(scorecardWeekStart(now));
+  const weekEnd = new Date(weekStart.getTime() + 7*86400000);
+  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
+  const activeClients = realClients.filter(c=>!c.clientStatus || c.clientStatus==="active");
+  const pausedClients = realClients.filter(c=>c.clientStatus==="paused");
+  const byMarket = {};
+  MARKETS.forEach(m=>byMarket[m]=0);
+  activeClients.forEach(c=>{ const m = c.market||"Lafayette"; byMarket[m]=(byMarket[m]||0)+1; });
+  const mrr = activeClients.reduce((s,c)=>s+monthlyEquivalentPrice(c),0);
+  const newLeadsThisWeek = (state.leads||[]).filter(l=>l.createdDate && parseYMD(l.createdDate)>=weekStart && parseYMD(l.createdDate)<weekEnd).length;
+  const cancelledThisWeek = realClients.filter(c=>c.clientStatus==="cancelled" && c.cancelledDate && parseYMD(c.cancelledDate)>=weekStart && parseYMD(c.cancelledDate)<weekEnd).length;
+  const payrollPeriod = currentPayrollPeriod();
+  const teamHours = hoursInPeriod(state.timeEntries, payrollPeriod);
+  const payrollCost = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), payrollPeriod)),0);
+  const internalStatus = internalHoursStatus(payrollPeriod);
+  return {
+    activeClientsTotal: activeClients.length,
+    activeLafayette: byMarket["Lafayette"]||0,
+    activeBatonRouge: byMarket["Baton Rouge"]||0,
+    activeDenver: byMarket["Denver"]||0,
+    mrr: Math.round(mrr),
+    newLeadsThisWeek,
+    pausedClients: pausedClients.length,
+    cancelledThisWeek,
+    teamHoursThisPeriod: Math.round(teamHours*10)/10,
+    payrollCostThisPeriod: Math.round(payrollCost),
+    overdueTasks: overdueTasks().length,
+    atRiskClients: realClients.filter(isAtRiskClient).length,
+    nearOverPackage: realClients.map(tierAlert).filter(Boolean).length,
+    internalHoursUsed: Math.round(internalStatus.used*10)/10
+  };
+}
+const SCORECARD_METRIC_DEFS = [
+  { key:"activeClientsTotal", label:"Active Clients (Total)", group:"Growth" },
+  { key:"activeLafayette", label:"Active — Lafayette", group:"Growth" },
+  { key:"activeBatonRouge", label:"Active — Baton Rouge", group:"Growth" },
+  { key:"activeDenver", label:"Active — Denver", group:"Growth" },
+  { key:"mrr", label:"Current MRR", group:"Growth", fmt:v=>"$"+v.toLocaleString() },
+  { key:"newLeadsThisWeek", label:"New Leads This Week", group:"Growth" },
+  { key:"pausedClients", label:"Paused Clients", group:"Growth" },
+  { key:"cancelledThisWeek", label:"Cancelled This Week", group:"Growth" },
+  { key:"teamHoursThisPeriod", label:"Team Hours (this pay period)", group:"Operations" },
+  { key:"payrollCostThisPeriod", label:"Payroll Cost (this pay period)", group:"Operations", fmt:v=>"$"+v.toLocaleString() },
+  { key:"overdueTasks", label:"Overdue Tasks (7+ days)", group:"Operations" },
+  { key:"atRiskClients", label:"At-Risk Clients", group:"Operations" },
+  { key:"nearOverPackage", label:"Clients Near/Over Package", group:"Operations" },
+  { key:"internalHoursUsed", label:"Internal/Admin Hours Used", group:"Operations" }
+];
+// Silent — no button, no confirmation. Called every time the Scorecard tab
+// renders; a no-op if this week's row is already the newest one, otherwise
+// creates or refreshes it with current live numbers.
+function ensureCurrentScorecardSnapshot(){
+  const weekStart = scorecardWeekStart();
+  const metrics = computeScorecardMetrics();
+  const history = state.settings.scorecardHistory || [];
+  const idx = history.findIndex(h=>h.weekStart===weekStart);
+  let updated;
+  if(idx>=0){
+    updated = history.slice();
+    updated[idx] = { weekStart, capturedAt: new Date().toISOString(), metrics };
+  } else {
+    updated = [...history, { weekStart, capturedAt: new Date().toISOString(), metrics }];
+  }
+  state.settings.scorecardHistory = updated;
+  upsert("settings","access", { scorecardHistory: updated });
+}
+function renderScorecardTab(){
+  ensureCurrentScorecardSnapshot();
+  const history = (state.settings.scorecardHistory||[]).slice().sort((a,b)=> b.weekStart < a.weekStart ? -1 : 1).slice(0,12);
+  const groups = ["Growth","Operations"];
+  return `
+    <h2>Scorecard</h2>
+    <div class="small" style="margin-bottom:14px;">Weekly numbers for your Level 10 / leadership meeting — computed live from the app, no manual entry. This week's column updates every time this tab is opened; past weeks are frozen once the calendar moves on.</div>
+    ${groups.map(group=>`
+    <div class="card">
+      <h3>${group}</h3>
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Metric</th>${history.map(h=>`<th>${parseYMD(h.weekStart).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${SCORECARD_METRIC_DEFS.filter(m=>m.group===group).map(m=>`
+            <tr>
+              <td>${m.label}</td>
+              ${history.map(h=>{
+                const v = h.metrics[m.key];
+                const display = v==null ? "—" : (m.fmt ? m.fmt(v) : v);
+                return `<td>${display}</td>`;
+              }).join("")}
+            </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </div>`).join("")}
+  `;
 }
 // --- Lead Organizer (admin only) ---
 function renderLeadOrganizerTab(){
