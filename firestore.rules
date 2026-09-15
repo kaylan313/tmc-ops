@@ -1,12 +1,12 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Stopgap fix: block any request that didn't come through the app at
-    // all (raw REST/curl access with no Firebase session — this is exactly
-    // how a bare Firebase project config, visible in any site's public
-    // source, gets scraped by bots). The app signs in anonymously and
-    // invisibly before touching Firestore, so this doesn't add a login step
-    // for anyone.
+    // Requiring request.auth != null everywhere below blocks any request
+    // that didn't come through the app at all (raw REST/curl access with no
+    // Firebase session — this is exactly how a bare Firebase project
+    // config, visible in any site's public source, gets scraped by bots).
+    // The app signs in anonymously and invisibly before touching Firestore,
+    // so this doesn't add a login step for anyone.
     //
     // This does NOT yet scope WHAT an authenticated session can see (e.g.
     // a client could still, in principle, read another client's document
@@ -14,8 +14,38 @@ service cloud.firestore {
     // the app's own passcode/access-code roles). That's the real fix,
     // and requires moving passcode checks server-side (Cloud Functions)
     // with custom auth claims per role — a bigger follow-up project.
-    match /{document=**} {
-      allow read, write: if request.auth != null;
-    }
+    //
+    // IMPORTANT — why this is per-collection instead of one `{document=**}`
+    // wildcard: Firestore combines multiple matching rules with OR logic —
+    // if ANY matching rule allows a request, it's allowed, full stop. A
+    // specific "allow: if false" rule for a sensitive collection does NOT
+    // override a broader wildcard rule that also matches that same path
+    // and returns true. So a single catch-all "any authenticated user can
+    // read/write everything" rule makes it structurally impossible to wall
+    // off any one collection later — there is no way to carve out an
+    // exception once a wildcard already grants access to the same path.
+    // Listing real app collections explicitly, and simply never adding a
+    // matching rule for qbTokens below, means qbTokens defaults to fully
+    // denied for every client-side request (Firestore denies by default
+    // when nothing matches) — only Cloud Functions using the Admin SDK
+    // (which bypasses security rules entirely) can ever touch it.
+    match /clients/{document=**} { allow read, write: if request.auth != null; }
+    match /tasks/{document=**} { allow read, write: if request.auth != null; }
+    match /timeEntries/{document=**} { allow read, write: if request.auth != null; }
+    match /leads/{document=**} { allow read, write: if request.auth != null; }
+    match /settings/{document=**} { allow read, write: if request.auth != null; }
+    match /reports/{document=**} { allow read, write: if request.auth != null; }
+    // Written by a separate, external onboarding-dashboard project — this
+    // app only ever reads it, never writes.
+    match /orientationClients/{document=**} { allow read: if request.auth != null; }
+
+    // qbTokens: deliberately no matching rule above, and no rule here
+    // either beyond this explicit denial (belt-and-suspenders — the real
+    // protection is the ABSENCE of a matching allow rule, not this line).
+    // QuickBooks OAuth tokens are far more sensitive than anything else in
+    // this database: they grant ongoing access to the entire accounting
+    // system, not just one client's data, until explicitly revoked. Never
+    // add a rule here that any client-side code could satisfy.
+    match /qbTokens/{document=**} { allow read, write: if false; }
   }
 }

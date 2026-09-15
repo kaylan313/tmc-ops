@@ -38,6 +38,10 @@ admin.initializeApp();
 
 const CLIENTS_FOLDER_ID = defineString("CLIENTS_FOLDER_ID");
 const EMPLOYEES_FOLDER_ID = defineString("EMPLOYEES_FOLDER_ID");
+const QB_CLIENT_ID = defineString("QB_CLIENT_ID");
+const QB_CLIENT_SECRET = defineString("QB_CLIENT_SECRET");
+const QB_REDIRECT_URI = defineString("QB_REDIRECT_URI");
+const QB_ENVIRONMENT = defineString("QB_ENVIRONMENT", { default: "sandbox" }); // "sandbox" or "production"
 
 async function getDrive() {
   const auth = new google.auth.GoogleAuth({
@@ -227,6 +231,145 @@ exports.validateLogin = onCall(async (request) => {
 // service (what a 2nd-gen Cloud Function runs as) invoker access to
 // anything, including Firebase Hosting's own rewrite proxy, so a function
 // endpoint can't be made reachable here at all. See the comment in
-// public/report.html for the full explanation. (This is the same policy
-// that makes validateLogin's reachability above an open question — see its
-// doc comment.)
+// public/report.html for the full explanation. validateLogin above (a
+// callable, not proxied through Hosting) is unaffected by this specific
+// restriction — see its own doc comment for why.
+
+/**
+ * QuickBooks Online integration — read-only. Pulls actual revenue
+ * (Payments received) and expenses (Purchases + BillPayments) into the
+ * Scorecard tab, in place of the estimate computed from package prices.
+ *
+ * Three pieces:
+ *  - exchangeQuickBooksCode: called once, right after the admin approves
+ *    access on Intuit's site and gets redirected back to
+ *    public/qb-callback.html with a one-time `code`. Exchanges it for an
+ *    access/refresh token pair and stores them in qbTokens/main via the
+ *    Admin SDK (bypasses Firestore Rules — this is the ONLY code path
+ *    that ever touches that collection; see firestore.rules for why it's
+ *    otherwise unreachable from any client).
+ *  - refreshQuickBooksTokenIfNeeded: internal helper, not exported. QBO
+ *    access tokens expire hourly; refresh tokens ROTATE on every use (the
+ *    old one stops working the moment a new one is issued), so the
+ *    refreshed pair is always re-saved in full, never just the access
+ *    token half.
+ *  - getQuickBooksSummary: called by the Scorecard tab on load. Returns
+ *    {connected:false} if nothing's been connected yet, or the actual
+ *    revenue/expense totals for the requested date range.
+ *
+ * Why Payments/Purchases instead of the Reports API's ProfitAndLoss
+ * endpoint: P&L is accrual-basis and returns a deeply nested row/summary
+ * structure that has to be walked to find the numbers you actually want.
+ * Payments and Purchases are simple, flat, and cash-basis — "money that
+ * actually moved" — which is what a weekly Scorecard number should mean.
+ */
+function qbApiBase() {
+  return QB_ENVIRONMENT.value() === "production"
+    ? "https://quickbooks.api.intuit.com"
+    : "https://sandbox-quickbooks.api.intuit.com";
+}
+async function qbTokenRequest(params) {
+  const basicAuth = Buffer.from(`${QB_CLIENT_ID.value()}:${QB_CLIENT_SECRET.value()}`).toString("base64");
+  const res = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basicAuth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams(params).toString(),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`QuickBooks token request failed: ${res.status} ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+exports.exchangeQuickBooksCode = onCall(async (request) => {
+  const { code, realmId } = request.data || {};
+  if (!code || !realmId) {
+    throw new HttpsError("invalid-argument", "Missing code or realmId.");
+  }
+  const tokenData = await qbTokenRequest({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: QB_REDIRECT_URI.value(),
+  });
+  const now = Date.now();
+  await admin.firestore().collection("qbTokens").doc("main").set({
+    realmId,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    accessTokenExpiresAt: now + tokenData.expires_in * 1000,
+    refreshTokenExpiresAt: now + tokenData.x_refresh_token_expires_in * 1000,
+    connectedAt: new Date().toISOString(),
+  });
+  return { connected: true };
+});
+// 5-minute safety margin before the real expiry, so a token that's about
+// to expire mid-request gets refreshed proactively instead of failing.
+async function refreshQuickBooksTokenIfNeeded(tokenDoc) {
+  const data = tokenDoc.data();
+  if (data.accessTokenExpiresAt > Date.now() + 5 * 60 * 1000) {
+    return data;
+  }
+  const tokenData = await qbTokenRequest({
+    grant_type: "refresh_token",
+    refresh_token: data.refreshToken,
+  });
+  const now = Date.now();
+  const updated = {
+    ...data,
+    accessToken: tokenData.access_token,
+    refreshToken: tokenData.refresh_token,
+    accessTokenExpiresAt: now + tokenData.expires_in * 1000,
+    refreshTokenExpiresAt: now + tokenData.x_refresh_token_expires_in * 1000,
+  };
+  await tokenDoc.ref.set(updated);
+  return updated;
+}
+async function qbQuery(accessToken, realmId, query) {
+  const url = `${qbApiBase()}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`QuickBooks query failed: ${res.status} ${JSON.stringify(data)}`);
+  }
+  return data.QueryResponse || {};
+}
+exports.getQuickBooksSummary = onCall(async (request) => {
+  const { startDate, endDate } = request.data || {};
+  if (!startDate || !endDate) {
+    throw new HttpsError("invalid-argument", "Missing startDate or endDate (YYYY-MM-DD).");
+  }
+  const tokenRef = admin.firestore().collection("qbTokens").doc("main");
+  const tokenDoc = await tokenRef.get();
+  if (!tokenDoc.exists) {
+    return { connected: false };
+  }
+  try {
+    const tokenData = await refreshQuickBooksTokenIfNeeded(tokenDoc);
+    const dateFilter = `TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`;
+    const [payments, purchases, billPayments] = await Promise.all([
+      qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Payment WHERE ${dateFilter} MAXRESULTS 1000`),
+      qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Purchase WHERE ${dateFilter} MAXRESULTS 1000`),
+      qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM BillPayment WHERE ${dateFilter} MAXRESULTS 1000`),
+    ]);
+    const sum = (rows) => (rows || []).reduce((s, r) => s + (r.TotalAmt || 0), 0);
+    const revenue = sum(payments.Payment);
+    const expenses = sum(purchases.Purchase) + sum(billPayments.BillPayment);
+    return { connected: true, revenue, expenses, startDate, endDate };
+  } catch (err) {
+    console.error("getQuickBooksSummary failed:", err);
+    throw new HttpsError("internal", "Could not reach QuickBooks — try again shortly.");
+  }
+});
+exports.getQuickBooksAuthConfig = onCall(async () => {
+  return { clientId: QB_CLIENT_ID.value(), redirectUri: QB_REDIRECT_URI.value() };
+});
+exports.disconnectQuickBooks = onCall(async () => {
+  await admin.firestore().collection("qbTokens").doc("main").delete();
+  return { connected: false };
+});

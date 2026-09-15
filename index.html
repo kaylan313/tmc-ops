@@ -218,6 +218,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script>
 
 <script>
 /* =========================================================================
@@ -263,11 +264,13 @@ const FIREBASE_CONFIGURED = firebaseConfig.apiKey !== "YOUR_API_KEY";
 // service (what a function runs as) invokable by anything at all.
 const REPORT_VIEWER_URL = "https://modern-co-dashboard.web.app/report.html";
 let db = null;
+let fns = null;
 let FIREBASE_AVAILABLE = false;
 try{
   if(typeof firebase === "undefined") throw new Error("Firebase SDK did not load (blocked script or no network).");
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
+  fns = firebase.functions();
   FIREBASE_AVAILABLE = true;
 }catch(e){
   console.warn("Firebase failed to initialize — running in local-only mode:", e);
@@ -393,7 +396,14 @@ let state = {
   // wiped out whatever the client had typed before they got to Submit.
   // Keeping the draft here means a render mid-typing just redraws the
   // inputs with the same values already in them, instead of blanking them.
-  clientRequestDraft: { title: "", details: "", category: "Home" }
+  clientRequestDraft: { title: "", details: "", category: "Home" },
+  // QuickBooks — connection status is unknown (null) until the first
+  // getQuickBooksSummary call comes back; qbLastFetchAt throttles refetches
+  // to once per 5 minutes instead of on every background render().
+  qbConnected: null,
+  qbSummary: null,
+  qbLastFetchAt: 0,
+  qbFetchInFlight: false
 };
 
 // ---- 4. Firestore helpers ----
@@ -2972,7 +2982,13 @@ function computeScorecardMetrics(){
     overdueTasks: overdueTasks().length,
     atRiskClients: realClients.filter(isAtRiskClient).length,
     nearOverPackage: realClients.map(tierAlert).filter(Boolean).length,
-    internalHoursUsed: Math.round(internalStatus.used*10)/10
+    internalHoursUsed: Math.round(internalStatus.used*10)/10,
+    // Only present once QuickBooks is connected and a fetch has completed
+    // for this week — see fetchQuickBooksSummaryIfStale(). Weeks captured
+    // before QuickBooks was connected simply show "—" for these two, same
+    // as any other metric with no value.
+    qbRevenue: state.qbSummary ? Math.round(state.qbSummary.revenue) : null,
+    qbExpenses: state.qbSummary ? Math.round(state.qbSummary.expenses) : null
   };
 }
 const SCORECARD_METRIC_DEFS = [
@@ -2989,7 +3005,9 @@ const SCORECARD_METRIC_DEFS = [
   { key:"overdueTasks", label:"Overdue Tasks (7+ days)", group:"Operations" },
   { key:"atRiskClients", label:"At-Risk Clients", group:"Operations" },
   { key:"nearOverPackage", label:"Clients Near/Over Package", group:"Operations" },
-  { key:"internalHoursUsed", label:"Internal/Admin Hours Used", group:"Operations" }
+  { key:"internalHoursUsed", label:"Internal/Admin Hours Used", group:"Operations" },
+  { key:"qbRevenue", label:"Actual Revenue (QuickBooks)", group:"Growth", fmt:v=>"$"+v.toLocaleString() },
+  { key:"qbExpenses", label:"Actual Expenses (QuickBooks)", group:"Operations", fmt:v=>"$"+v.toLocaleString() }
 ];
 // Silent — no button, no confirmation. Called every time the Scorecard tab
 // renders; a no-op if this week's row is already the newest one, otherwise
@@ -3009,13 +3027,83 @@ function ensureCurrentScorecardSnapshot(){
   state.settings.scorecardHistory = updated;
   upsert("settings","access", { scorecardHistory: updated });
 }
+// Read-only QuickBooks connection — see functions/index.js for the full
+// explanation of why tokens live server-side only. This app never touches
+// qbTokens directly (Firestore Rules block it entirely); everything here
+// goes through the three callable functions.
+async function connectQuickBooks(){
+  if(!fns){ alert("QuickBooks isn't available right now — try reloading the page."); return; }
+  try{
+    const { data } = await fns.httpsCallable("getQuickBooksAuthConfig")();
+    const authUrl = "https://appcenter.intuit.com/connect/oauth2"
+      + "?client_id=" + encodeURIComponent(data.clientId)
+      + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
+      + "&response_type=code"
+      + "&scope=com.intuit.quickbooks.accounting"
+      + "&state=" + encodeURIComponent(newId("qbstate"));
+    window.open(authUrl, "_blank");
+  }catch(err){
+    console.error(err);
+    alert("Couldn't start the QuickBooks connection — check the console for details.");
+  }
+}
+async function disconnectQuickBooksAccount(){
+  if(!confirm("Disconnect QuickBooks? You can reconnect any time from this tab.")) return;
+  if(!fns) return;
+  try{
+    await fns.httpsCallable("disconnectQuickBooks")();
+    state.qbConnected = false;
+    state.qbSummary = null;
+    render();
+  }catch(err){
+    console.error(err);
+    alert("Couldn't disconnect — check the console for details.");
+  }
+}
+// Throttled to once per 5 minutes so re-renders (the 60s live-timer tick,
+// any background Firestore update) don't hammer the function on every
+// paint — this tab's numbers don't need to be that fresh.
+function fetchQuickBooksSummaryIfStale(){
+  if(!fns || state.qbFetchInFlight) return;
+  if(Date.now() - state.qbLastFetchAt < 5*60*1000) return;
+  state.qbFetchInFlight = true;
+  const weekStart = scorecardWeekStart();
+  const today = new Date().toISOString().slice(0,10);
+  fns.httpsCallable("getQuickBooksSummary")({ startDate: weekStart, endDate: today })
+    .then(({data})=>{
+      state.qbConnected = !!data.connected;
+      state.qbSummary = data.connected ? data : null;
+      state.qbLastFetchAt = Date.now();
+      state.qbFetchInFlight = false;
+      if(data.connected){ ensureCurrentScorecardSnapshot(); }
+      render();
+    })
+    .catch(err=>{
+      console.warn("QuickBooks summary fetch failed:", err);
+      state.qbFetchInFlight = false;
+    });
+}
 function renderScorecardTab(){
   ensureCurrentScorecardSnapshot();
+  fetchQuickBooksSummaryIfStale();
   const history = (state.settings.scorecardHistory||[]).slice().sort((a,b)=> b.weekStart < a.weekStart ? -1 : 1).slice(0,12);
   const groups = ["Growth","Operations"];
   return `
     <h2>Scorecard</h2>
     <div class="small" style="margin-bottom:14px;">Weekly numbers for your Level 10 / leadership meeting — computed live from the app, no manual entry. This week's column updates every time this tab is opened; past weeks are frozen once the calendar moves on.</div>
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">QuickBooks</h3>
+        ${state.qbConnected ? `<button class="secondary" onclick="disconnectQuickBooksAccount()">Disconnect</button>` : `<button onclick="connectQuickBooks()">Connect QuickBooks</button>`}
+      </div>
+      <div class="small" style="margin-top:6px;">${
+        state.qbConnected
+          ? "✓ Connected — Actual Revenue and Actual Expenses below are real numbers from QuickBooks (payments received and money paid out), not estimates."
+          : state.qbConnected===false
+            ? "Not connected — Actual Revenue/Expenses rows will show \"—\" until you connect. Everything else on this Scorecard works either way."
+            : "Checking connection…"
+      }</div>
+    </div>
     ${groups.map(group=>`
     <div class="card">
       <h3>${group}</h3>
