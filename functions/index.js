@@ -29,7 +29,7 @@
  * (see README notes in the project root for the exact setup steps).
  */
 const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
-const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { google } = require("googleapis");
@@ -38,9 +38,15 @@ admin.initializeApp();
 
 const CLIENTS_FOLDER_ID = defineString("CLIENTS_FOLDER_ID");
 const EMPLOYEES_FOLDER_ID = defineString("EMPLOYEES_FOLDER_ID");
-const QB_CLIENT_ID = defineString("QB_CLIENT_ID");
-const QB_CLIENT_SECRET = defineString("QB_CLIENT_SECRET");
-const QB_REDIRECT_URI = defineString("QB_REDIRECT_URI");
+// Empty-string defaults so a deploy succeeds before real credentials
+// exist (Firebase would otherwise prompt interactively for a missing
+// param with no default, which blocks a non-interactive deploy). The
+// functions themselves will simply fail against Intuit's API with these
+// placeholders — that's fine, since nobody can click "Connect QuickBooks"
+// successfully until real values are set anyway. See CLAUDE.md for setup.
+const QB_CLIENT_ID = defineString("QB_CLIENT_ID", { default: "" });
+const QB_CLIENT_SECRET = defineString("QB_CLIENT_SECRET", { default: "" });
+const QB_REDIRECT_URI = defineString("QB_REDIRECT_URI", { default: "https://modern-co-dashboard.web.app/qb-callback.html" });
 const QB_ENVIRONMENT = defineString("QB_ENVIRONMENT", { default: "sandbox" }); // "sandbox" or "production"
 
 async function getDrive() {
@@ -372,4 +378,44 @@ exports.getQuickBooksAuthConfig = onCall(async () => {
 exports.disconnectQuickBooks = onCall(async () => {
   await admin.firestore().collection("qbTokens").doc("main").delete();
   return { connected: false };
+});
+
+/**
+ * QuickBooks' "Disconnect URL" webhook — required as a field on the Intuit
+ * app's config page, called BY INTUIT'S SERVERS (not from inside this app)
+ * if someone disconnects this app from their QuickBooks account settings
+ * (My Apps > Disconnect) instead of clicking Disconnect inside TMC Ops.
+ * Without this, that path would leave a stale, silently-broken token
+ * sitting in qbTokens/main with no way for the app to know it stopped
+ * working.
+ *
+ * This has to be a plain onRequest function (not onCall) since Intuit's
+ * servers can't attach a Firebase Auth token — it's a real
+ * server-to-server call, not a request from inside this app. Per the org
+ * policy note elsewhere in this file, the automatic IAM-invoker step at
+ * deploy time is expected to fail here too; fix it the same way as the
+ * other functions (Cloud Run console → this service → Security →
+ * "Allow public access" → Redeploy).
+ *
+ * Intuit's exact payload for this webhook isn't something I could verify
+ * with full certainty at build time, so this is written defensively: it
+ * tries to read a realmId from the query string or JSON body if present,
+ * but since this app only ever supports ONE connected QuickBooks company
+ * at a time anyway (qbTokens/main, not one doc per realm), it just clears
+ * that single doc regardless of whether a realmId was found or matched.
+ * Always responds 200 so Intuit's system doesn't treat this as a failure
+ * and retry/alert on it.
+ */
+exports.quickBooksDisconnectWebhook = onRequest(async (req, res) => {
+  try {
+    const realmId = (req.query && req.query.realmId) || (req.body && req.body.realmId) || null;
+    console.log("QuickBooks disconnect webhook called" + (realmId ? ` for realmId ${realmId}` : " (no realmId in request)"));
+    await admin.firestore().collection("qbTokens").doc("main").delete();
+  } catch (err) {
+    // Still respond 200 below even on error — Intuit doesn't need to know
+    // our cleanup failed, and the stored token will simply fail to
+    // refresh next time it's used, surfacing as "not connected" in the app.
+    console.error("quickBooksDisconnectWebhook error:", err);
+  }
+  res.status(200).send("OK");
 });
