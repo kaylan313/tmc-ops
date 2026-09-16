@@ -33,6 +33,7 @@ const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https")
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { google } = require("googleapis");
+const crypto = require("crypto");
 
 admin.initializeApp();
 
@@ -46,8 +47,19 @@ const EMPLOYEES_FOLDER_ID = defineString("EMPLOYEES_FOLDER_ID");
 // successfully until real values are set anyway. See CLAUDE.md for setup.
 const QB_CLIENT_ID = defineString("QB_CLIENT_ID", { default: "" });
 const QB_CLIENT_SECRET = defineString("QB_CLIENT_SECRET", { default: "" });
-const QB_REDIRECT_URI = defineString("QB_REDIRECT_URI", { default: "https://modern-co-dashboard.web.app/qb-callback.html" });
+// Points at the quickBooksOAuthCallback Cloud Function below (a real
+// server-side redirect endpoint), not a static Hosting page — see that
+// function's doc comment for why this matters for Intuit's security
+// review ("sensitive info in URL params" requirement).
+const QB_REDIRECT_URI = defineString("QB_REDIRECT_URI", { default: "https://us-central1-modern-co-dashboard.cloudfunctions.net/quickBooksOAuthCallback" });
 const QB_ENVIRONMENT = defineString("QB_ENVIRONMENT", { default: "sandbox" }); // "sandbox" or "production"
+// Base64-encoded 256-bit key, generated once with
+// `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
+// and stored only in functions/.env.modern-co-dashboard (gitignored) — per
+// Intuit's OAuth token management requirement: refresh tokens (and, here,
+// access tokens too) must be encrypted at rest with the key kept in a
+// separate configuration file, not alongside the encrypted data itself.
+const QB_TOKEN_ENCRYPTION_KEY = defineString("QB_TOKEN_ENCRYPTION_KEY", { default: "" });
 
 async function getDrive() {
   const auth = new google.auth.GoogleAuth({
@@ -274,6 +286,30 @@ function qbApiBase() {
     ? "https://quickbooks.api.intuit.com"
     : "https://sandbox-quickbooks.api.intuit.com";
 }
+// AES-256-GCM (authenticated encryption — tampering is detectable, not
+// just confidentiality) for tokens at rest, per Intuit's OAuth token
+// management requirement. The key never lives in this file or in
+// Firestore; it's a separate, gitignored config value (see
+// QB_TOKEN_ENCRYPTION_KEY above). Each value gets its own random IV, so
+// encrypting the same token twice never produces the same ciphertext.
+function encryptSecret(plaintext) {
+  const key = Buffer.from(QB_TOKEN_ENCRYPTION_KEY.value(), "base64");
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return Buffer.concat([iv, authTag, encrypted]).toString("base64");
+}
+function decryptSecret(encoded) {
+  const key = Buffer.from(QB_TOKEN_ENCRYPTION_KEY.value(), "base64");
+  const data = Buffer.from(encoded, "base64");
+  const iv = data.subarray(0, 12);
+  const authTag = data.subarray(12, 28);
+  const encrypted = data.subarray(28);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(authTag);
+  return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+}
 async function qbTokenRequest(params) {
   const basicAuth = Buffer.from(`${QB_CLIENT_ID.value()}:${QB_CLIENT_SECRET.value()}`).toString("base64");
   const res = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
@@ -291,48 +327,40 @@ async function qbTokenRequest(params) {
   }
   return data;
 }
-exports.exchangeQuickBooksCode = onCall(async (request) => {
-  const { code, realmId } = request.data || {};
-  if (!code || !realmId) {
-    throw new HttpsError("invalid-argument", "Missing code or realmId.");
-  }
-  const tokenData = await qbTokenRequest({
-    grant_type: "authorization_code",
-    code,
-    redirect_uri: QB_REDIRECT_URI.value(),
-  });
+async function storeQuickBooksTokens(realmId, tokenData) {
   const now = Date.now();
   await admin.firestore().collection("qbTokens").doc("main").set({
     realmId,
-    accessToken: tokenData.access_token,
-    refreshToken: tokenData.refresh_token,
+    accessToken: encryptSecret(tokenData.access_token),
+    refreshToken: encryptSecret(tokenData.refresh_token),
     accessTokenExpiresAt: now + tokenData.expires_in * 1000,
     refreshTokenExpiresAt: now + tokenData.x_refresh_token_expires_in * 1000,
     connectedAt: new Date().toISOString(),
   });
-  return { connected: true };
-});
+}
 // 5-minute safety margin before the real expiry, so a token that's about
 // to expire mid-request gets refreshed proactively instead of failing.
+// Returns tokens already DECRYPTED and ready to use — callers never touch
+// the encrypted form directly.
 async function refreshQuickBooksTokenIfNeeded(tokenDoc) {
   const data = tokenDoc.data();
   if (data.accessTokenExpiresAt > Date.now() + 5 * 60 * 1000) {
-    return data;
+    return { ...data, accessToken: decryptSecret(data.accessToken), refreshToken: decryptSecret(data.refreshToken) };
   }
   const tokenData = await qbTokenRequest({
     grant_type: "refresh_token",
-    refresh_token: data.refreshToken,
+    refresh_token: decryptSecret(data.refreshToken),
   });
   const now = Date.now();
   const updated = {
     ...data,
-    accessToken: tokenData.access_token,
-    refreshToken: tokenData.refresh_token,
+    accessToken: encryptSecret(tokenData.access_token),
+    refreshToken: encryptSecret(tokenData.refresh_token),
     accessTokenExpiresAt: now + tokenData.expires_in * 1000,
     refreshTokenExpiresAt: now + tokenData.x_refresh_token_expires_in * 1000,
   };
   await tokenDoc.ref.set(updated);
-  return updated;
+  return { ...updated, accessToken: tokenData.access_token, refreshToken: tokenData.refresh_token };
 }
 async function qbQuery(accessToken, realmId, query) {
   const url = `${qbApiBase()}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
@@ -363,6 +391,13 @@ exports.getQuickBooksSummary = onCall(async (request) => {
       qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Purchase WHERE ${dateFilter} MAXRESULTS 1000`),
       qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM BillPayment WHERE ${dateFilter} MAXRESULTS 1000`),
     ]);
+    // Only ever aggregated dollar totals leave this function — never raw
+    // transaction records (customer names, line items, invoice numbers,
+    // etc.), even though the underlying query briefly touches them. This
+    // is deliberate: Intuit's "QuickBooks data usage" requirement is that
+    // an app never stores/exports QuickBooks data beyond its own
+    // functional use, and the Scorecard's functional use is exactly "one
+    // dollar figure per week," nothing more granular.
     const sum = (rows) => (rows || []).reduce((s, r) => s + (r.TotalAmt || 0), 0);
     const revenue = sum(payments.Payment);
     const expenses = sum(purchases.Purchase) + sum(billPayments.BillPayment);
@@ -372,12 +407,83 @@ exports.getQuickBooksSummary = onCall(async (request) => {
     throw new HttpsError("internal", "Could not reach QuickBooks — try again shortly.");
   }
 });
+// Mints a random, single-use CSRF state value and stores it server-side
+// (qbTokens/pendingState, 10-minute expiry) instead of trusting a value
+// the browser alone generated and never had verified against anything —
+// the previous version generated `state` client-side and never checked it
+// on the way back in, which is exactly the CSRF gap Intuit's security
+// review tests for. quickBooksOAuthCallback below is the only code that
+// ever reads/consumes this value.
 exports.getQuickBooksAuthConfig = onCall(async () => {
-  return { clientId: QB_CLIENT_ID.value(), redirectUri: QB_REDIRECT_URI.value() };
+  const state = crypto.randomBytes(24).toString("base64url");
+  await admin.firestore().collection("qbTokens").doc("pendingState").set({
+    state,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  });
+  return { clientId: QB_CLIENT_ID.value(), redirectUri: QB_REDIRECT_URI.value(), state };
 });
 exports.disconnectQuickBooks = onCall(async () => {
   await admin.firestore().collection("qbTokens").doc("main").delete();
   return { connected: false };
+});
+
+/**
+ * The actual OAuth redirect_uri Intuit sends the admin's browser back to
+ * after they approve access. This REPLACES the old approach (a static
+ * public/qb-callback.html page that read `code`/`realmId` from the URL,
+ * did the exchange via a client-side call, and just left that sensitive
+ * URL sitting in the address bar/history the whole time).
+ *
+ * Why the rewrite: Intuit's security review explicitly requires that
+ * "web application endpoints that receive sensitive customer information
+ * and/or authentication tokens in URL parameters must not return HTML
+ * content via an HTTP Response Body... implement a 302 Found redirect
+ * instead." A one-time OAuth `code` in the URL is exactly the case this
+ * is about. This function does the whole exchange server-side in one
+ * request and IMMEDIATELY 302-redirects to a clean confirmation page with
+ * no sensitive params at all — the code/state never end up as the
+ * "current page" a browser could screenshot, bookmark, cache, or send
+ * onward in a Referer header.
+ *
+ * Also does the real CSRF check getQuickBooksAuthConfig set up: rejects
+ * the callback outright if `state` doesn't match the single-use value
+ * stored there, and deletes it either way so it can't be replayed.
+ */
+exports.quickBooksOAuthCallback = onRequest(async (req, res) => {
+  const { code, realmId, state, error } = req.query;
+  const redirectTo = (ok) => res.redirect(302, `https://modern-co-dashboard.web.app/qb-connected.html?ok=${ok ? "1" : "0"}`);
+
+  if (error) {
+    console.warn("QuickBooks OAuth callback received an error param:", error);
+    return redirectTo(false);
+  }
+  if (!code || !realmId || !state) {
+    console.warn("QuickBooks OAuth callback missing code/realmId/state.");
+    return redirectTo(false);
+  }
+
+  const pendingRef = admin.firestore().collection("qbTokens").doc("pendingState");
+  const pendingSnap = await pendingRef.get();
+  const pending = pendingSnap.exists ? pendingSnap.data() : null;
+  // Always delete on the way out (valid or not) — single-use, can't be replayed.
+  await pendingRef.delete().catch(() => {});
+  if (!pending || pending.state !== state || pending.expiresAt < Date.now()) {
+    console.warn("QuickBooks OAuth callback: state mismatch or expired — possible CSRF attempt or stale link.");
+    return redirectTo(false);
+  }
+
+  try {
+    const tokenData = await qbTokenRequest({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: QB_REDIRECT_URI.value(),
+    });
+    await storeQuickBooksTokens(realmId, tokenData);
+    return redirectTo(true);
+  } catch (err) {
+    console.error("quickBooksOAuthCallback token exchange failed:", err);
+    return redirectTo(false);
+  }
 });
 
 /**

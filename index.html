@@ -3034,13 +3034,18 @@ function ensureCurrentScorecardSnapshot(){
 async function connectQuickBooks(){
   if(!fns){ alert("QuickBooks isn't available right now — try reloading the page."); return; }
   try{
+    // The state value comes from the server (getQuickBooksAuthConfig mints
+    // and stores it), not generated here — a client-side-only state is
+    // never actually verified against anything at callback time, which is
+    // the exact CSRF gap Intuit's security review checks for. See
+    // quickBooksOAuthCallback in functions/index.js for the other half.
     const { data } = await fns.httpsCallable("getQuickBooksAuthConfig")();
     const authUrl = "https://appcenter.intuit.com/connect/oauth2"
       + "?client_id=" + encodeURIComponent(data.clientId)
       + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
       + "&response_type=code"
       + "&scope=com.intuit.quickbooks.accounting"
-      + "&state=" + encodeURIComponent(newId("qbstate"));
+      + "&state=" + encodeURIComponent(data.state);
     window.open(authUrl, "_blank");
   }catch(err){
     console.error(err);

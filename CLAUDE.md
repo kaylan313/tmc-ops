@@ -86,10 +86,36 @@ Internal operations platform for The Modern Concierge (TMC), a virtual assistant
 ## QuickBooks Integration (read-only)
 
 - Pulls actual revenue (Payments received) and expenses (Purchases + BillPayments) into the Scorecard tab's "Actual Revenue/Expenses (QuickBooks)" rows, replacing nothing else — every other Scorecard metric is computed from app data regardless of whether QuickBooks is connected.
-- **Setup still needed (Kaylan/business-owner step, not something I can do from here):** register an app at [developer.intuit.com](https://developer.intuit.com) under "QuickBooks Online API," get a Client ID + Client Secret, and set the app's Redirect URI to `https://modern-co-dashboard.web.app/qb-callback.html`. Once that exists, set `QB_CLIENT_ID`, `QB_CLIENT_SECRET`, `QB_REDIRECT_URI`, and `QB_ENVIRONMENT` (`sandbox` or `production`) in `functions/.env.modern-co-dashboard` and redeploy functions.
-- Three callable functions handle it end to end: `getQuickBooksAuthConfig` (returns the public Client ID + redirect URI so the app can build the OAuth link — the Client ID is not secret, same as Firebase's own `apiKey`), `exchangeQuickBooksCode` (called once by `public/qb-callback.html` right after Intuit redirects back with a one-time code; exchanges it for tokens and stores them), and `getQuickBooksSummary` (called by the Scorecard tab; refreshes the access token if it's within 5 minutes of expiring — QBO refresh tokens *rotate* on every use, so the full pair is always re-saved, never just the access token half).
-- Tokens live in Firestore's `qbTokens/main` document, readable/writable ONLY via the Cloud Functions' Admin SDK (which bypasses Firestore Rules entirely) — see the per-collection rules note above for why no client-side code can ever reach this collection, by design. This is deliberately more locked down than everything else in the database: a QuickBooks refresh token grants ongoing access to the entire accounting system, not just one client's data.
+- **Setup still needed (Kaylan/business-owner step, not something I can do from here):** register an app at [developer.intuit.com](https://developer.intuit.com) under "QuickBooks Online API," get a Client ID + Client Secret, and set the app's Redirect URI in Intuit's own settings to match `QB_REDIRECT_URI` below exactly — the two must always match. Then set `QB_CLIENT_ID`, `QB_CLIENT_SECRET`, `QB_REDIRECT_URI`, `QB_ENVIRONMENT` (`sandbox` or `production`), and `QB_TOKEN_ENCRYPTION_KEY` in `functions/.env.modern-co-dashboard` and redeploy functions.
+- **Flow (Sept 2026, rewritten for Intuit's App Store security review):**
+  - `getQuickBooksAuthConfig` (callable) — mints a random, single-use CSRF `state` value, stores it server-side (`qbTokens/pendingState`, 10-min expiry), and returns it plus the public Client ID/redirect URI so the app can build the OAuth authorize link.
+  - `quickBooksOAuthCallback` (plain HTTP function, NOT callable — this is the actual Redirect URI registered with Intuit) — Intuit's servers redirect the admin's browser here with `code`/`realmId`/`state`. Validates `state` against the stored value (real CSRF protection, not just cosmetic), exchanges the code for tokens, encrypts and stores them, then immediately issues a 302 redirect to `public/qb-connected.html?ok=1` (or `?ok=0` on any failure) — no sensitive code/token value is ever the content of a rendered page or lingers in the address bar/history. This directly satisfies Intuit's requirement that endpoints receiving auth tokens in URL params redirect rather than render HTML.
+  - `getQuickBooksSummary` (callable) — called by the Scorecard tab; decrypts the stored tokens, refreshes if within 5 minutes of expiring (QBO refresh tokens *rotate* on every use — the full encrypted pair is always re-saved, never just the access token half), queries Payments/Purchases/BillPayments, and returns ONLY the aggregated dollar totals — never raw transaction records.
+  - `disconnectQuickBooks` (callable) — admin clicks Disconnect in the app.
+  - `quickBooksDisconnectWebhook` (plain HTTP function) — Intuit's own "Disconnect URL" webhook, called by Intuit's servers if the connection is revoked from the QuickBooks side instead of ours.
+- Tokens live in Firestore's `qbTokens/main` document, **encrypted at rest with AES-256-GCM** (key in `QB_TOKEN_ENCRYPTION_KEY`, never alongside the ciphertext), readable/writable ONLY via the Cloud Functions' Admin SDK (which bypasses Firestore Rules entirely) — see the per-collection rules note above for why no client-side code can ever reach this collection, by design.
 - Uses cash-basis numbers (Payments/Purchases, "money that actually moved") rather than the Reports API's accrual-basis Profit & Loss endpoint, which is simpler to query but returns a nested row/summary structure that has to be parsed to extract anything.
+- **`public/qb-callback.html` no longer exists** — replaced by the `quickBooksOAuthCallback` function + `public/qb-connected.html` (a clean, no-sensitive-params landing page). If you see references to the old file anywhere, they're stale.
+
+### Intuit App Store security review — status (Sept 2026)
+
+Checked against Intuit's published security requirements for App Store listing:
+
+- **Already compliant / not applicable to this architecture:**
+  - No user QuickBooks credentials or QB financial data ever appear in `console.log`/`console.error` calls (audited).
+  - No SQL/XML injection surface — Firestore (NoSQL), no XML parsing anywhere in this integration.
+  - No third-party sharing of QuickBooks data; only aggregated dollar totals are stored, never raw transaction records (see `getQuickBooksSummary` above).
+  - No custom session cookies (Secure/HttpOnly N/A) — auth is Firebase's own SDK-managed token storage, not cookie-based.
+  - No QuickBooks *login credentials* are ever stored (OAuth means this app never sees the user's actual QuickBooks username/password) — the "User Credentials" / password-hashing requirement doesn't apply.
+  - OS/web-server/TLS patching is Google's/Netlify's responsibility as the managed hosting providers, not something this app configures directly.
+- **Fixed as part of this review (Sept 2026):**
+  - OAuth tokens now encrypted at rest (were plain text in Firestore before).
+  - Real CSRF `state` validation added (was generated client-side and never actually checked before).
+  - OAuth callback rewritten to redirect immediately instead of rendering a page at a URL carrying the auth code.
+  - `Cache-Control: no-cache, no-store` (plus `X-Content-Type-Options`/`X-Frame-Options`) added to all Firebase Hosting responses via `firebase.json`.
+- **Explicitly NOT done, and worth knowing about:**
+  - No app-wide XSS/session-management penetration test has been run — this review only covered the QuickBooks integration surface, not the whole ~7,000-line app. The existing "Known remaining gap" under Security above (no per-role server-side access control) is the biggest related item.
+  - Committing to Intuit's ongoing obligations (allowing vulnerability scans within 2 weeks of request, completing a security affidavit, annual re-review once published or over 500 connections) is a business decision for Kaylan, not something resolved by code.
 
 ## Working Conventions
 

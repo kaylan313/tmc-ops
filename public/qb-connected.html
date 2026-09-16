@@ -1,0 +1,34 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>QuickBooks</title>
+<style>
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:480px;margin:100px auto;padding:0 24px;color:#3b3030;text-align:center;line-height:1.5;}
+  .ok{color:#2f6b3f;}
+  .err{color:#a02020;}
+</style>
+</head>
+<body>
+
+<!--
+  Final landing page after the QuickBooks OAuth flow — reached only via a
+  302 redirect from the quickBooksOAuthCallback Cloud Function (see
+  functions/index.js), never directly. Deliberately carries NO sensitive
+  information in its own URL (just a plain ok=1/0 flag) — this is the
+  "clean" page the browser actually lands on and might sit at, bookmark,
+  or have in its history, per Intuit's security requirement that pages
+  reached from a URL carrying an auth code/token must not be the ones that
+  render content; a redirect away from the sensitive URL is required
+  first, which is exactly what happens here.
+-->
+<div id="status"></div>
+<script>
+const ok = new URLSearchParams(location.search).get("ok") === "1";
+document.getElementById("status").innerHTML = ok
+  ? '<span class="ok">✓ QuickBooks connected!</span><br>You can close this tab and go back to the Scorecard.'
+  : '<span class="err">Something went wrong connecting QuickBooks.</span><br>Close this tab and try again from the Scorecard tab.';
+</script>
+</body>
+</html>
