@@ -3486,6 +3486,34 @@ function openClientEditor(id){
   state.modal = { type:"clientEditor", client:c };
   render();
 }
+// Permanent, not the same as cancelling/pausing a real client — for test
+// records or ones created by mistake that shouldn't show up anywhere at
+// all (client lists, renewals, payroll history, reports). Deletes the
+// task and time-entry history along with the client record itself, since
+// a real client's canceling/pausing already has its own proper flow
+// (clientStatus) that keeps their history intact — this is specifically
+// for records that should never have existed. Typing the exact name back
+// is the confirmation, not a plain OK/Cancel dialog, given hours/payroll
+// totals for other people can be affected if this is used on a client who
+// actually has real logged time.
+function deleteClientPermanently(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client || clientId===INTERNAL_CLIENT_ID) return;
+  const entries = entriesForClient(clientId);
+  const tasks = state.tasks.filter(t=>t.clientId===clientId);
+  const typed = prompt(
+    `This permanently deletes "${client.name}" — their profile, ${tasks.length} task${tasks.length===1?'':'s'}, and ${entries.length} logged time entr${entries.length===1?'y':'ies'}. `+
+    `This cannot be undone, and will remove those hours from past payroll/report totals if anyone actually worked on this client.\n\n`+
+    `Type the client's exact name to confirm:`
+  );
+  if(typed===null) return;
+  if(typed !== client.name){ alert("Name didn't match — nothing was deleted."); return; }
+  tasks.forEach(t=>remove("tasks", t.id));
+  entries.forEach(e=>remove("timeEntries", e.id));
+  remove("clients", clientId);
+  state.selectedClientId = null;
+  render();
+}
 
 // --- Client CRM ---
 function renderClientCRM(clientId){
@@ -3503,7 +3531,12 @@ function renderClientCRM(clientId){
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
     <div class="flex-between" style="align-items:center;">
       <h2 style="margin:0;">${client.name}</h2>
-      ${state.role==="admin" ? `<button class="secondary" onclick="openClientEditor('${client.id}')">Edit name</button>` : ""}
+      ${state.role==="admin" ? `
+        <div style="display:flex;gap:8px;">
+          <button class="secondary" onclick="openClientEditor('${client.id}')">Edit name</button>
+          <button class="danger" onclick="deleteClientPermanently('${client.id}')">Delete client</button>
+        </div>
+      ` : ""}
     </div>
     ${alert ? `<div class="alert ${alert.level}">${alert.text}</div>` : ""}
     <div class="tabs">
