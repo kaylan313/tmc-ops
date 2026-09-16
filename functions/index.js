@@ -429,18 +429,60 @@ async function withOneRetry(fn) {
     return await fn();
   }
 }
-async function qbQuery(accessToken, realmId, query) {
-  const url = `${qbApiBase()}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
+async function qbReport(accessToken, realmId, reportName, params) {
+  const qs = new URLSearchParams({ minorversion: "65", ...params }).toString();
+  const url = `${qbApiBase()}/v3/company/${realmId}/reports/${reportName}?${qs}`;
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
   });
   const data = await res.json();
   if (!res.ok) {
-    const err = new Error(`QuickBooks query failed: ${res.status} ${JSON.stringify(data)}`);
+    const err = new Error(`QuickBooks report request failed: ${res.status} ${JSON.stringify(data)}`);
     if (res.status === 401) err.qbAuthError = true;
     throw err;
   }
-  return data.QueryResponse || {};
+  return data;
+}
+// Finds a top-level report Section by its own header label (e.g. "Income",
+// "Expenses") and returns its Summary total — the same "Total for X" line
+// QuickBooks itself shows. Only matches on a Section's OWN header, never
+// descends into a matched section's children first, so "Income" doesn't
+// also match the nested "Other Income" section.
+function qbReportSectionTotal(rows, label) {
+  const target = label.trim().toLowerCase();
+  for (const row of rows || []) {
+    if (row.type !== "Section") continue;
+    const headerLabel = row.Header && row.Header.ColData && row.Header.ColData[0] && row.Header.ColData[0].value;
+    if (headerLabel && headerLabel.trim().toLowerCase() === target && row.Summary && row.Summary.ColData) {
+      const amountCol = row.Summary.ColData[row.Summary.ColData.length - 1];
+      return amountCol ? parseFloat(amountCol.value) || 0 : 0;
+    }
+    const nested = row.Rows && row.Rows.Row;
+    const found = qbReportSectionTotal(nested, label);
+    if (found !== null) return found;
+  }
+  return null;
+}
+// Finds a single leaf line item (a "Data" row, not a Section) by its own
+// label — used for a standalone account like the "payroll" line nested
+// under Other Expenses, as distinct from the "Payroll expenses" Section
+// total found via qbReportSectionTotal.
+function qbReportDataValue(rows, label) {
+  const target = label.trim().toLowerCase();
+  for (const row of rows || []) {
+    if (row.type === "Data" && row.ColData && row.ColData[0]) {
+      const rowLabel = (row.ColData[0].value || "").trim().toLowerCase();
+      if (rowLabel === target) {
+        const amountCol = row.ColData[row.ColData.length - 1];
+        return amountCol ? parseFloat(amountCol.value) || 0 : 0;
+      }
+    }
+    if (row.type === "Section" && row.Rows && row.Rows.Row) {
+      const found = qbReportDataValue(row.Rows.Row, label);
+      if (found !== null) return found;
+    }
+  }
+  return null;
 }
 exports.getQuickBooksSummary = onCall(async (request) => {
   const { startDate, endDate } = request.data || {};
@@ -454,23 +496,26 @@ exports.getQuickBooksSummary = onCall(async (request) => {
   }
   try {
     const tokenData = await refreshQuickBooksTokenIfNeeded(tokenDoc);
-    const dateFilter = `TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`;
-    const [payments, purchases, billPayments] = await Promise.all([
-      withOneRetry(() => qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Payment WHERE ${dateFilter} MAXRESULTS 1000`)),
-      withOneRetry(() => qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Purchase WHERE ${dateFilter} MAXRESULTS 1000`)),
-      withOneRetry(() => qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM BillPayment WHERE ${dateFilter} MAXRESULTS 1000`)),
-    ]);
-    // Only ever aggregated dollar totals leave this function — never raw
-    // transaction records (customer names, line items, invoice numbers,
-    // etc.), even though the underlying query briefly touches them. This
-    // is deliberate: Intuit's "QuickBooks data usage" requirement is that
-    // an app never stores/exports QuickBooks data beyond its own
-    // functional use, and the Scorecard's functional use is exactly "one
-    // dollar figure per week," nothing more granular.
-    const sum = (rows) => (rows || []).reduce((s, r) => s + (r.TotalAmt || 0), 0);
-    const revenue = sum(payments.Payment);
-    const expenses = sum(purchases.Purchase) + sum(billPayments.BillPayment);
-    return { connected: true, revenue, expenses, startDate, endDate };
+    // A real Profit & Loss report, not raw transaction queries — this
+    // groups by the actual Chart of Accounts (see the P&L Kaylan shared,
+    // Sept 2026), the same categories Heidi charts transactions into.
+    // Only aggregated dollar totals ever leave this function — never raw
+    // transaction records — per Intuit's "QuickBooks data usage"
+    // requirement that an app not store/export data beyond its own
+    // functional use.
+    const report = await withOneRetry(() => qbReport(tokenData.accessToken, tokenData.realmId, "ProfitAndLoss", {
+      start_date: startDate,
+      end_date: endDate,
+      accounting_method: "Accrual",
+    }));
+    const rows = (report.Rows && report.Rows.Row) || [];
+    const income = qbReportSectionTotal(rows, "Income") || 0;
+    const expenses = qbReportSectionTotal(rows, "Expenses") || 0;
+    // "Payroll expenses" (nested inside Expenses, includes Wages) plus the
+    // standalone "payroll" line under Other Expenses — per Kaylan's own
+    // account structure, both count as payroll.
+    const payroll = (qbReportSectionTotal(rows, "Payroll expenses") || 0) + (qbReportDataValue(rows, "payroll") || 0);
+    return { connected: true, income, expenses, payroll, startDate, endDate };
   } catch (err) {
     console.error("getQuickBooksSummary failed:", err);
     if (isQuickBooksAuthError(err)) {

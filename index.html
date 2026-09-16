@@ -2988,8 +2988,9 @@ function computeScorecardMetrics(){
     // for this week — see fetchQuickBooksSummaryIfStale(). Weeks captured
     // before QuickBooks was connected simply show "—" for these two, same
     // as any other metric with no value.
-    qbRevenue: state.qbSummary ? Math.round(state.qbSummary.revenue) : null,
-    qbExpenses: state.qbSummary ? Math.round(state.qbSummary.expenses) : null
+    qbIncome: state.qbSummary ? Math.round(state.qbSummary.income) : null,
+    qbExpenses: state.qbSummary ? Math.round(state.qbSummary.expenses) : null,
+    qbPayroll: state.qbSummary ? Math.round(state.qbSummary.payroll) : null
   };
 }
 const SCORECARD_METRIC_DEFS = [
@@ -3007,8 +3008,9 @@ const SCORECARD_METRIC_DEFS = [
   { key:"atRiskClients", label:"At-Risk Clients", group:"Operations" },
   { key:"nearOverPackage", label:"Clients Near/Over Package", group:"Operations" },
   { key:"internalHoursUsed", label:"Internal/Admin Hours Used", group:"Operations" },
-  { key:"qbRevenue", label:"Actual Revenue (QuickBooks)", group:"Growth", fmt:v=>"$"+v.toLocaleString() },
-  { key:"qbExpenses", label:"Actual Expenses (QuickBooks)", group:"Operations", fmt:v=>"$"+v.toLocaleString() }
+  { key:"qbIncome", label:"Income (QuickBooks)", group:"Growth", fmt:v=>"$"+v.toLocaleString() },
+  { key:"qbExpenses", label:"Expenses (QuickBooks)", group:"Operations", fmt:v=>"$"+v.toLocaleString() },
+  { key:"qbPayroll", label:"Payroll (QuickBooks)", group:"Operations", fmt:v=>"$"+v.toLocaleString() }
 ];
 // Silent — no button, no confirmation. Called every time the Scorecard tab
 // renders; a no-op if this week's row is already the newest one, otherwise
@@ -3106,11 +3108,11 @@ function renderScorecardTab(){
       </div>
       <div class="small" style="margin-top:6px;">${
         state.qbConnected
-          ? "✓ Connected — Actual Revenue and Actual Expenses below are real numbers from QuickBooks (payments received and money paid out), not estimates."
+          ? "✓ Connected — Income, Expenses, and Payroll below are real numbers from your QuickBooks Profit &amp; Loss, not estimates."
           : state.qbReauthRequired
-            ? "Your QuickBooks connection expired — click Connect QuickBooks to reconnect. Actual Revenue/Expenses will show \"—\" until then."
+            ? "Your QuickBooks connection expired — click Connect QuickBooks to reconnect. Income/Expenses/Payroll will show \"—\" until then."
             : state.qbConnected===false
-              ? "Not connected — Actual Revenue/Expenses rows will show \"—\" until you connect. Everything else on this Scorecard works either way."
+              ? "Not connected — Income/Expenses/Payroll rows will show \"—\" until you connect. Everything else on this Scorecard works either way."
               : "Checking connection…"
       }</div>
     </div>
