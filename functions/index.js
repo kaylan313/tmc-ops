@@ -354,7 +354,11 @@ async function qbTokenRequest(params) {
   });
   const data = await res.json();
   if (!res.ok) {
-    const err = new Error(`QuickBooks token request failed: ${res.status} ${JSON.stringify(data)}`);
+    // intuit_tid identifies this exact request in Intuit's own systems —
+    // capturing it is what lets their support team actually look up what
+    // happened, rather than us describing an error with no way to trace it.
+    const intuitTid = res.headers.get("intuit_tid");
+    const err = new Error(`QuickBooks token request failed: ${res.status} intuit_tid=${intuitTid} ${JSON.stringify(data)}`);
     // 400/401 with an OAuth error body means the grant itself is bad
     // (expired/revoked refresh token, invalid_grant, etc.) — not a
     // network issue a retry would fix.
@@ -437,7 +441,8 @@ async function qbReport(accessToken, realmId, reportName, params) {
   });
   const data = await res.json();
   if (!res.ok) {
-    const err = new Error(`QuickBooks report request failed: ${res.status} ${JSON.stringify(data)}`);
+    const intuitTid = res.headers.get("intuit_tid");
+    const err = new Error(`QuickBooks report request failed: ${res.status} intuit_tid=${intuitTid} ${JSON.stringify(data)}`);
     if (res.status === 401) err.qbAuthError = true;
     throw err;
   }
