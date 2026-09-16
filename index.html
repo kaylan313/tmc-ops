@@ -401,6 +401,7 @@ let state = {
   // getQuickBooksSummary call comes back; qbLastFetchAt throttles refetches
   // to once per 5 minutes instead of on every background render().
   qbConnected: null,
+  qbReauthRequired: false,
   qbSummary: null,
   qbLastFetchAt: 0,
   qbFetchInFlight: false
@@ -3058,6 +3059,7 @@ async function disconnectQuickBooksAccount(){
   try{
     await fns.httpsCallable("disconnectQuickBooks")();
     state.qbConnected = false;
+    state.qbReauthRequired = false;
     state.qbSummary = null;
     render();
   }catch(err){
@@ -3077,6 +3079,7 @@ function fetchQuickBooksSummaryIfStale(){
   fns.httpsCallable("getQuickBooksSummary")({ startDate: weekStart, endDate: today })
     .then(({data})=>{
       state.qbConnected = !!data.connected;
+      state.qbReauthRequired = !!data.reauthRequired;
       state.qbSummary = data.connected ? data : null;
       state.qbLastFetchAt = Date.now();
       state.qbFetchInFlight = false;
@@ -3104,9 +3107,11 @@ function renderScorecardTab(){
       <div class="small" style="margin-top:6px;">${
         state.qbConnected
           ? "✓ Connected — Actual Revenue and Actual Expenses below are real numbers from QuickBooks (payments received and money paid out), not estimates."
-          : state.qbConnected===false
-            ? "Not connected — Actual Revenue/Expenses rows will show \"—\" until you connect. Everything else on this Scorecard works either way."
-            : "Checking connection…"
+          : state.qbReauthRequired
+            ? "Your QuickBooks connection expired — click Connect QuickBooks to reconnect. Actual Revenue/Expenses will show \"—\" until then."
+            : state.qbConnected===false
+              ? "Not connected — Actual Revenue/Expenses rows will show \"—\" until you connect. Everything else on this Scorecard works either way."
+              : "Checking connection…"
       }</div>
     </div>
     ${groups.map(group=>`

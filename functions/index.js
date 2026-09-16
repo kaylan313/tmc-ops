@@ -310,9 +310,40 @@ function decryptSecret(encoded) {
   decipher.setAuthTag(authTag);
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
 }
+// Intuit's OAuth 2.0 discovery document — fetched once per warm function
+// instance and cached in memory, rather than hardcoding the token endpoint
+// URL. Per Intuit's own guidance: if they ever change an endpoint, an app
+// using the discovery document keeps working automatically; a hardcoded
+// URL would just start failing.
+let _qbDiscoveryCache = null;
+async function qbDiscoveryDocument() {
+  if (_qbDiscoveryCache) return _qbDiscoveryCache;
+  const url = QB_ENVIRONMENT.value() === "production"
+    ? "https://developer.api.intuit.com/.well-known/openid_configuration"
+    : "https://developer.api.intuit.com/.well-known/openid_sandbox_configuration";
+  const res = await fetch(url);
+  if (!res.ok) {
+    // Fall back to the known-correct hardcoded endpoint rather than
+    // failing outright — the discovery doc being briefly unreachable
+    // shouldn't take the whole integration down with it.
+    console.warn(`QuickBooks discovery document fetch failed (${res.status}) — falling back to hardcoded token endpoint.`);
+    return { token_endpoint: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer" };
+  }
+  _qbDiscoveryCache = await res.json();
+  return _qbDiscoveryCache;
+}
+// True specifically for OAuth-level failures (expired/revoked refresh
+// token, invalid grant) as opposed to a transient network/server blip.
+// This distinction matters: an auth failure means the stored token is
+// permanently dead and the user needs to reconnect; a transient failure
+// means it's worth just retrying the same request once.
+function isQuickBooksAuthError(err) {
+  return err && err.qbAuthError === true;
+}
 async function qbTokenRequest(params) {
+  const { token_endpoint } = await qbDiscoveryDocument();
   const basicAuth = Buffer.from(`${QB_CLIENT_ID.value()}:${QB_CLIENT_SECRET.value()}`).toString("base64");
-  const res = await fetch("https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer", {
+  const res = await fetch(token_endpoint, {
     method: "POST",
     headers: {
       Authorization: `Basic ${basicAuth}`,
@@ -323,7 +354,14 @@ async function qbTokenRequest(params) {
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(`QuickBooks token request failed: ${res.status} ${JSON.stringify(data)}`);
+    const err = new Error(`QuickBooks token request failed: ${res.status} ${JSON.stringify(data)}`);
+    // 400/401 with an OAuth error body means the grant itself is bad
+    // (expired/revoked refresh token, invalid_grant, etc.) — not a
+    // network issue a retry would fix.
+    if ((res.status === 400 || res.status === 401) && data && data.error) {
+      err.qbAuthError = true;
+    }
+    throw err;
   }
   return data;
 }
@@ -342,15 +380,32 @@ async function storeQuickBooksTokens(realmId, tokenData) {
 // to expire mid-request gets refreshed proactively instead of failing.
 // Returns tokens already DECRYPTED and ready to use — callers never touch
 // the encrypted form directly.
+//
+// If the refresh itself fails with an auth error (expired/revoked refresh
+// token — QBO refresh tokens are good for ~100 days, so this happens
+// eventually if nobody's opened the Scorecard in a while), the stored
+// token is deleted outright rather than left sitting there failing
+// forever. The Scorecard tab reads {connected:false} from that and shows
+// "Connect QuickBooks" again — the correct behavior when reconnection is
+// genuinely required, versus a transient error where retrying makes sense.
 async function refreshQuickBooksTokenIfNeeded(tokenDoc) {
   const data = tokenDoc.data();
   if (data.accessTokenExpiresAt > Date.now() + 5 * 60 * 1000) {
     return { ...data, accessToken: decryptSecret(data.accessToken), refreshToken: decryptSecret(data.refreshToken) };
   }
-  const tokenData = await qbTokenRequest({
-    grant_type: "refresh_token",
-    refresh_token: decryptSecret(data.refreshToken),
-  });
+  let tokenData;
+  try {
+    tokenData = await qbTokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: decryptSecret(data.refreshToken),
+    });
+  } catch (err) {
+    if (isQuickBooksAuthError(err)) {
+      console.warn("QuickBooks refresh token is no longer valid — clearing stored connection so the app prompts to reconnect.");
+      await tokenDoc.ref.delete();
+    }
+    throw err;
+  }
   const now = Date.now();
   const updated = {
     ...data,
@@ -362,6 +417,18 @@ async function refreshQuickBooksTokenIfNeeded(tokenDoc) {
   await tokenDoc.ref.set(updated);
   return { ...updated, accessToken: tokenData.access_token, refreshToken: tokenData.refresh_token };
 }
+// One automatic retry for a transient failure (network blip, momentary 5xx
+// from Intuit) — never retries an auth error, since retrying the exact
+// same bad grant just fails the same way again instantly.
+async function withOneRetry(fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (isQuickBooksAuthError(err)) throw err;
+    console.warn("QuickBooks request failed, retrying once:", err.message);
+    return await fn();
+  }
+}
 async function qbQuery(accessToken, realmId, query) {
   const url = `${qbApiBase()}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=65`;
   const res = await fetch(url, {
@@ -369,7 +436,9 @@ async function qbQuery(accessToken, realmId, query) {
   });
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(`QuickBooks query failed: ${res.status} ${JSON.stringify(data)}`);
+    const err = new Error(`QuickBooks query failed: ${res.status} ${JSON.stringify(data)}`);
+    if (res.status === 401) err.qbAuthError = true;
+    throw err;
   }
   return data.QueryResponse || {};
 }
@@ -387,9 +456,9 @@ exports.getQuickBooksSummary = onCall(async (request) => {
     const tokenData = await refreshQuickBooksTokenIfNeeded(tokenDoc);
     const dateFilter = `TxnDate >= '${startDate}' AND TxnDate <= '${endDate}'`;
     const [payments, purchases, billPayments] = await Promise.all([
-      qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Payment WHERE ${dateFilter} MAXRESULTS 1000`),
-      qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Purchase WHERE ${dateFilter} MAXRESULTS 1000`),
-      qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM BillPayment WHERE ${dateFilter} MAXRESULTS 1000`),
+      withOneRetry(() => qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Payment WHERE ${dateFilter} MAXRESULTS 1000`)),
+      withOneRetry(() => qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM Purchase WHERE ${dateFilter} MAXRESULTS 1000`)),
+      withOneRetry(() => qbQuery(tokenData.accessToken, tokenData.realmId, `SELECT Id, TotalAmt FROM BillPayment WHERE ${dateFilter} MAXRESULTS 1000`)),
     ]);
     // Only ever aggregated dollar totals leave this function — never raw
     // transaction records (customer names, line items, invoice numbers,
@@ -404,6 +473,15 @@ exports.getQuickBooksSummary = onCall(async (request) => {
     return { connected: true, revenue, expenses, startDate, endDate };
   } catch (err) {
     console.error("getQuickBooksSummary failed:", err);
+    if (isQuickBooksAuthError(err)) {
+      // The underlying token was invalid (expired refresh token, revoked
+      // access, invalid_grant) — refreshQuickBooksTokenIfNeeded already
+      // deleted the dead token doc above. Tell the client explicitly so
+      // the Scorecard shows "Connect QuickBooks" instead of a generic
+      // error the user can't act on.
+      await tokenRef.delete().catch(() => {});
+      return { connected: false, reauthRequired: true };
+    }
     throw new HttpsError("internal", "Could not reach QuickBooks — try again shortly.");
   }
 });
