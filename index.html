@@ -7199,6 +7199,7 @@ function renderClientPortal(){
   const discountStatus = clientReferralDiscountStatus(client);
   const history = state.tasks.filter(t=>t.clientId===client.id && t.status==="Done")
     .sort((a,b)=> new Date(b.completedAt||0) - new Date(a.completedAt||0));
+  const isSigned = !!(client.contractSigned || client.contractSignedExternally);
   return app.innerHTML = `
     <div class="app-shell">
       <div class="sidebar">
@@ -7207,6 +7208,24 @@ function renderClientPortal(){
       </div>
       <div class="main">
         <h2>Welcome, ${client.name}</h2>
+        ${!client.orientationBookingDismissed ? `
+        <div class="card" style="border-left:4px solid var(--rose-dark);">
+          <div class="flex-between">
+            <div>
+              <h3 style="margin:0;">Schedule Home Orientation</h3>
+              <div class="small" style="margin-top:4px;">If we haven't already set this up during your consultation call, book a time here.</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <a href="https://calendar.app.google/QU71nWmK6963tLfq7" target="_blank" rel="noopener"><button>Schedule Home Orientation</button></a>
+              <button class="secondary" onclick="updateClientField('${client.id}','orientationBookingDismissed',true)">I've already scheduled this</button>
+            </div>
+          </div>
+        </div>
+        ` : ""}
+        ${!isSigned ? `
+        <div class="alert warn">Please review and sign your Service Agreement below to unlock the rest of your portal — requests, hours, task updates, and everything else become available once it's signed.</div>
+        ` : ""}
+        ${isSigned ? `
         <div class="card">
           <h3>Request help with something</h3>
           <div class="small" style="margin-bottom:8px;">Submit a request and your assistant will review and confirm it shortly.</div>
@@ -7227,6 +7246,12 @@ function renderClientPortal(){
           </div>
           <button style="margin-top:10px;" id="reqSubmitBtn" onclick="submitClientTaskRequest('${client.id}')">Submit request</button>
         </div>
+        <div class="card">
+          <h3>Need to talk to Kaylan?</h3>
+          <div class="small" style="margin-bottom:8px;">Schedule a check-in for any issue or meeting you'd like to discuss.</div>
+          <a href="https://calendar.app.google/QU71nWmK6963tLfq7" target="_blank" rel="noopener"><button class="secondary">Schedule a Check-In</button></a>
+        </div>
+        ` : ""}
         ${!client.contractSigned && !client.contractSignedExternally ? `
         <div class="card">
           <h3>Membership Setup</h3>
@@ -7253,6 +7278,7 @@ function renderClientPortal(){
           <h3>Service Agreement</h3>
           ${renderContractSectionBody(client)}
         </div>
+        ${isSigned ? `
         <div class="card">
           <h3>Your membership</h3>
           <div class="row">
@@ -7351,6 +7377,7 @@ function renderClientPortal(){
           <h3>Activity log</h3>
           ${(client.notes||[]).slice().reverse().slice(0,10).map(n=>`<div class="list-item"><div>${n.text}</div><span class="small">${new Date(n.date).toLocaleDateString()}</span></div>`).join("") || `<div class="small">No activity yet.</div>`}
         </div>
+        ` : ""}
       </div>
     </div>
   `;
