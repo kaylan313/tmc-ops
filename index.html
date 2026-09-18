@@ -380,6 +380,7 @@ let state = {
   tasks: [],
   timeEntries: [],
   leads: [],
+  vendors: [],
   activeTab: "dashboard",
   crmSubTab: "tasks",
   selectedClientId: null,
@@ -692,6 +693,7 @@ function subscribeAppData(){
   subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
   subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
   subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
+  subscribe("vendors", items=>{ state.vendors = items; if(!state.modal) render(); });
 }
 
 // ---- 6. Orientation sync (existing integration, preserved) ----
@@ -2228,8 +2230,8 @@ function renderAppShell(){
   const tabs = isContentCreator
     ? [["content","Content Calendar"]]
     : state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["scorecard","Scorecard"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
-    : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["onboarding","Onboarding"]];
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
+    : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["onboarding","Onboarding"]];
 
   app.innerHTML = `
     <div class="app-shell">
@@ -2269,6 +2271,7 @@ function renderMain(){
     case "addons": return state.role==="admin" ? renderAddOnsTab() : "";
     case "content": return (state.role==="admin" || (state.currentAssistant && state.currentAssistant.isContentCreator)) ? renderContentCalendarTab() : "";
     case "leads": return state.role==="admin" ? renderLeadOrganizerTab() : "";
+    case "vendors": return renderVendorsTab();
     case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
@@ -3229,6 +3232,122 @@ function updateLeadField(id, field, value){ upsert("leads", id, { [field]: value
 function removeLead(id){
   if(!confirm("Remove this lead?")) return;
   remove("leads", id);
+}
+// --- Vendor Directory — shared reference list of outside professionals
+// (visible to admin + team). Commission % and the referral earnings log
+// are admin-only, hidden from the assistant view entirely (not just
+// disabled) since that's business financial info, not something
+// assistants need to do the job.
+function renderVendorsTab(){
+  const isAdmin = state.role==="admin";
+  const vendors = (state.vendors||[]).slice().sort((a,b)=> (a.name||'').localeCompare(b.name||''));
+  const totalCommission = vendors.reduce((sum,v)=> sum + (v.earnings||[]).reduce((s,e)=>s+(e.commissionAmount||0),0), 0);
+  return `
+    <h2>Vendors</h2>
+    <div class="small" style="margin-bottom:14px;">Outside professionals to recommend or book for clients — one shared directory for the whole team.</div>
+    ${isAdmin ? `
+    <div class="card">
+      <h3>Commission earned (all-time)</h3>
+      <div class="stat-row"><div class="stat-tile"><div class="stat-label">Total across all vendors</div><div class="stat-value">$${totalCommission.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div></div>
+    </div>
+    ` : ""}
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Vendor Directory</h3>
+        ${isAdmin ? `<button onclick="addVendorDirectoryEntry()">+ Add vendor</button>` : ""}
+      </div>
+      ${vendors.length ? vendors.map(v=>renderVendorRow(v,isAdmin)).join("") : `<div class="small">No vendors added yet.</div>`}
+    </div>
+  `;
+}
+function renderVendorRow(v, isAdmin){
+  const earnings = v.earnings || [];
+  const vendorTotal = earnings.reduce((s,e)=>s+(e.commissionAmount||0),0);
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="row">
+        <div><label class="small">Name</label>${isAdmin ? `<input value="${escHtml(v.name||'')}" onchange="updateVendorDirectoryField('${v.id}','name',this.value)">` : `<div>${escHtml(v.name||'')}</div>`}</div>
+        <div><label class="small">Profession</label>${isAdmin ? `<input value="${escHtml(v.profession||'')}" onchange="updateVendorDirectoryField('${v.id}','profession',this.value)" placeholder="Electrician, photographer, caterer, etc.">` : `<div>${escHtml(v.profession||'')}</div>`}</div>
+        <div><label class="small">Market</label>${isAdmin ? `
+          <select onchange="updateVendorDirectoryField('${v.id}','market',this.value)">
+            <option value="">Any</option>
+            ${MARKETS.map(m=>`<option value="${m}" ${v.market===m?'selected':''}>${m}</option>`).join("")}
+          </select>` : `<div>${escHtml(v.market||'Any')}</div>`}</div>
+      </div>
+      <div class="row">
+        <div><label class="small">Phone</label>${isAdmin ? `<input value="${escHtml(v.phone||'')}" onchange="updateVendorDirectoryField('${v.id}','phone',this.value)">` : `<div>${escHtml(v.phone||'—')}</div>`}</div>
+        <div><label class="small">Email</label>${isAdmin ? `<input type="email" value="${escHtml(v.email||'')}" onchange="updateVendorDirectoryField('${v.id}','email',this.value)">` : `<div>${escHtml(v.email||'—')}</div>`}</div>
+        <div><label class="small">Rating</label>${isAdmin ? `
+          <select onchange="updateVendorDirectoryField('${v.id}','rating',this.value?Number(this.value):null)">
+            <option value="">Not rated</option>
+            ${[1,2,3,4,5].map(n=>`<option value="${n}" ${Number(v.rating)===n?'selected':''}>${'★'.repeat(n)}</option>`).join("")}
+          </select>` : `<div>${v.rating ? '★'.repeat(v.rating) : 'Not rated'}</div>`}</div>
+      </div>
+      <div><label class="small">Notes</label>${isAdmin ? `<textarea onchange="updateVendorDirectoryField('${v.id}','notes',this.value)" placeholder="Quality notes, how to reach them, anything the team should know">${escHtml(v.notes||'')}</textarea>` : `<div class="small">${escHtml(v.notes||'No notes yet.')}</div>`}</div>
+      ${isAdmin ? `
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <div class="row">
+          <div><label class="small">Commission %</label><input type="number" step="0.1" min="0" max="100" value="${v.commissionPercent!=null?v.commissionPercent:''}" onchange="updateVendorDirectoryField('${v.id}','commissionPercent',this.value?Number(this.value):null)" style="max-width:100px;"></div>
+          <div><label class="small">Total earned from this vendor</label><div style="padding-top:6px;font-weight:600;">$${vendorTotal.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
+        </div>
+        <div style="margin-top:6px;">
+          <div class="flex-between"><label class="small" style="font-weight:600;">Referral earnings log</label><button class="secondary" onclick="addVendorEarning('${v.id}')">+ Log a referral</button></div>
+          ${earnings.length ? earnings.slice().sort((a,b)=> b.date < a.date ? -1 : 1).map(e=>renderVendorEarningRow(v.id,e)).join("") : `<div class="small">No referrals logged yet.</div>`}
+        </div>
+      </div>
+      ` : ""}
+      ${isAdmin ? `<div><button class="secondary" onclick="removeVendorDirectoryEntry('${v.id}')">Remove vendor</button></div>` : ""}
+    </div>
+  `;
+}
+function renderVendorEarningRow(vendorId, e){
+  return `
+    <div class="list-item" style="gap:8px;">
+      <div class="small">${e.date ? parseYMD(e.date).toLocaleDateString() : 'No date'} — billed $${(e.billedAmount||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} → earned <strong>$${(e.commissionAmount||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</strong>${e.note?` — ${escHtml(e.note)}`:''}</div>
+      <button class="secondary" onclick="removeVendorEarning('${vendorId}','${e.id}')">Remove</button>
+    </div>
+  `;
+}
+function addVendorDirectoryEntry(){
+  const vendor = {
+    id: newId("vendor"),
+    name: "", profession: "", market: "",
+    phone: "", email: "", rating: null, notes: "",
+    commissionPercent: null, earnings: [],
+    createdDate: new Date().toISOString().slice(0,10)
+  };
+  upsert("vendors", vendor.id, vendor);
+}
+function updateVendorDirectoryField(id, field, value){ upsert("vendors", id, { [field]: value }); }
+function removeVendorDirectoryEntry(id){
+  if(!confirm("Remove this vendor from the directory? This also deletes its commission/earnings history.")) return;
+  remove("vendors", id);
+}
+// Commission is computed from the vendor's set % as a starting point but
+// always confirmable/editable per referral — real-world jobs don't always
+// match the standing rate exactly (negotiated one-offs, partial jobs).
+function addVendorEarning(vendorId){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return;
+  const billedStr = prompt("How much did the vendor bill for this job?", "");
+  if(billedStr===null) return;
+  const billedAmount = parseFloat(billedStr);
+  if(!billedAmount || billedAmount<=0){ alert("Enter a valid dollar amount."); return; }
+  const pct = vendor.commissionPercent!=null ? vendor.commissionPercent : 0;
+  const computed = Math.round(billedAmount * pct) / 100;
+  const commissionStr = prompt(`Commission earned (at ${pct}%, that's $${computed.toFixed(2)} — edit if different):`, computed.toFixed(2));
+  if(commissionStr===null) return;
+  const commissionAmount = parseFloat(commissionStr);
+  if(isNaN(commissionAmount) || commissionAmount<0){ alert("Enter a valid commission amount."); return; }
+  const note = (prompt("Note (client name, job description, etc. — optional):", "") || "").trim();
+  const earning = { id: newId("earning"), date: new Date().toISOString().slice(0,10), billedAmount, commissionAmount, note };
+  upsert("vendors", vendorId, { earnings: [...(vendor.earnings||[]), earning] });
+}
+function removeVendorEarning(vendorId, earningId){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return;
+  if(!confirm("Remove this earnings entry?")) return;
+  upsert("vendors", vendorId, { earnings: (vendor.earnings||[]).filter(e=>e.id!==earningId) });
 }
 function renderPausedClientRow(c){
   const daysSince = c.cancelledDate ? Math.round((Date.now()-parseYMD(c.cancelledDate).getTime())/86400000) : null;
