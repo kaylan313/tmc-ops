@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Software & Automation — The Modern Concierge</title>
+<style>
+  :root{--cream:#faf8f4;--blush:#e8d6cf;--taupe:#c7b8ae;--rose:#c29989;--espresso:#3b3030;}
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--cream);font-family:'Jost',sans-serif;color:var(--espresso);}
+
+  .hero{background:var(--espresso);padding:0;display:grid;grid-template-columns:1fr 1fr;min-height:560px;}
+  .hero-photo{background-image:url('https://i.imgur.com/wsoCQJ1.jpg');background-size:cover;background-position:center center;min-height:560px;}
+  .hero-content{padding:100px 80px;display:flex;flex-direction:column;justify-content:center;}
+  .eyebrow{font-size:11px;font-weight:400;letter-spacing:0.22em;text-transform:uppercase;color:var(--rose);margin-bottom:20px;display:flex;align-items:center;gap:12px;}
+  .eyebrow::before{content:'';display:block;width:28px;height:0.5px;background:var(--rose);}
+  .hero-title{font-family:'Cormorant Garamond',serif;font-size:56px;font-weight:300;line-height:1.08;color:var(--cream);margin-bottom:28px;}
+  .hero-title em{font-style:italic;color:var(--rose);}
+  .hero-sub{font-size:16px;font-weight:300;line-height:1.9;color:rgba(250,248,244,0.75);max-width:600px;}
+
+  .section{padding:80px;}
+  .section-alt{background:#f5f0eb;}
+  .sec-eyebrow{font-size:11px;font-weight:400;letter-spacing:0.22em;text-transform:uppercase;color:var(--rose);margin-bottom:12px;}
+  .sec-title{font-family:'Cormorant Garamond',serif;font-size:40px;font-weight:300;color:var(--espresso);margin-bottom:12px;}
+  .sec-title em{font-style:italic;}
+  .sec-note{font-size:14px;font-weight:400;color:#3b3030;margin-bottom:48px;max-width:720px;line-height:1.8;}
+
+  /* Software product cards */
+  .prod-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:2px;background:var(--blush);border:1px solid var(--blush);}
+  .prod{background:var(--cream);padding:44px 40px;}
+  .prod-name{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:300;color:var(--espresso);margin-bottom:8px;}
+  .prod-tagline{font-size:13px;font-weight:400;font-style:italic;color:var(--rose);margin-bottom:20px;line-height:1.6;}
+  .prod-divider{width:32px;height:0.5px;background:var(--blush);margin-bottom:20px;}
+  .prod-features{list-style:none;margin-bottom:28px;}
+  .prod-features li{font-size:13px;font-weight:400;color:#3b3030;padding:8px 0;border-bottom:0.5px solid var(--blush);display:flex;align-items:flex-start;gap:10px;line-height:1.6;}
+  .prod-features li:last-child{border-bottom:none;}
+  .prod-features li::before{content:'✦';color:var(--rose);font-size:10px;flex-shrink:0;margin-top:3px;}
+  .prod-btn{display:inline-block;text-align:center;padding:14px 28px;font-size:11px;font-weight:400;letter-spacing:0.16em;text-transform:uppercase;background:var(--espresso);color:var(--cream);text-decoration:none;transition:background 0.2s;}
+  .prod-btn:hover{background:var(--rose);}
+
+  /* Automation examples */
+  .example-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:2px;background:var(--blush);border:1px solid var(--blush);margin-bottom:56px;}
+  .example{background:var(--cream);padding:32px 36px;}
+  .example-name{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:300;color:var(--espresso);margin-bottom:10px;}
+  .example-desc{font-size:13.5px;font-weight:400;color:#4a4038;line-height:1.75;}
+
+  .pkg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;background:var(--blush);border:1px solid var(--blush);}
+  .pkg-grid-2{display:grid;grid-template-columns:repeat(2,1fr);gap:2px;background:var(--blush);border:1px solid var(--blush);}
+  .pkg{background:var(--cream);padding:40px 32px;}
+  .pkg.featured{background:var(--espresso);}
+  .pkg-num{font-size:10px;font-weight:400;letter-spacing:0.2em;text-transform:uppercase;color:var(--taupe);margin-bottom:8px;}
+  .pkg.featured .pkg-num{color:rgba(250,248,244,0.5);}
+  .pkg-name{font-family:'Cormorant Garamond',serif;font-size:28px;font-weight:300;color:var(--espresso);margin-bottom:4px;}
+  .pkg.featured .pkg-name{color:var(--cream);}
+  .pkg-hours{font-size:12px;font-weight:400;color:var(--taupe);margin-bottom:20px;line-height:1.6;}
+  .pkg.featured .pkg-hours{color:rgba(250,248,244,0.6);}
+  .pkg-price{font-family:'Cormorant Garamond',serif;font-size:40px;font-weight:300;color:var(--rose);line-height:1;margin-bottom:4px;}
+  .pkg-rate{font-size:12px;font-weight:300;color:var(--taupe);margin-bottom:20px;line-height:1.5;}
+  .pkg.featured .pkg-rate{color:rgba(250,248,244,0.5);}
+  .pkg-divider{width:32px;height:0.5px;background:var(--blush);margin-bottom:20px;}
+  .pkg.featured .pkg-divider{background:rgba(250,248,244,0.15);}
+  .pkg-desc{font-size:13px;font-weight:400;color:#5a5048;line-height:1.7;margin-bottom:20px;font-style:italic;}
+  .pkg.featured .pkg-desc{color:rgba(250,248,244,0.7);}
+  .pkg-features{list-style:none;margin-bottom:32px;}
+  .pkg-features li{font-size:13px;font-weight:400;color:#3b3030;padding:7px 0;border-bottom:0.5px solid var(--blush);display:flex;align-items:flex-start;gap:10px;line-height:1.5;}
+  .pkg.featured .pkg-features li{color:rgba(250,248,244,0.85);border-color:rgba(250,248,244,0.1);}
+  .pkg-features li.included::before{content:'✦';color:var(--rose);font-size:10px;flex-shrink:0;margin-top:2px;}
+  .pkg-btn{display:block;text-align:center;padding:14px 24px;font-size:11px;font-weight:400;letter-spacing:0.16em;text-transform:uppercase;background:var(--espresso);color:var(--cream);text-decoration:none;transition:background 0.2s;}
+  .pkg.featured .pkg-btn{background:var(--rose);}
+  .pkg-btn:hover{background:var(--rose);}
+  .pkg.featured .pkg-btn:hover{background:var(--blush);color:var(--espresso);}
+
+  .cta{background:var(--rose);padding:64px 80px;display:flex;justify-content:space-between;align-items:center;gap:32px;flex-wrap:wrap;}
+  .cta-title{font-family:'Cormorant Garamond',serif;font-size:40px;font-weight:300;color:var(--cream);margin-bottom:8px;}
+  .cta-title em{font-style:italic;}
+  .cta-sub{font-size:15px;font-weight:300;color:rgba(250,248,244,0.85);}
+  .cta-btn{font-size:11px;font-weight:400;letter-spacing:0.18em;text-transform:uppercase;color:var(--espresso);background:var(--cream);padding:18px 48px;text-decoration:none;transition:all 0.2s;white-space:nowrap;}
+  .cta-btn:hover{background:var(--espresso);color:var(--cream);}
+
+  @media(max-width:900px){
+    .hero{grid-template-columns:1fr;}
+    .hero-content{padding:48px 24px;}
+    .hero-photo{min-height:280px;}
+    .section,.cta{padding:48px 24px;}
+    .hero-title{font-size:36px;}
+    .prod-grid,.example-grid,.pkg-grid,.pkg-grid-2{grid-template-columns:1fr;}
+    .cta{flex-direction:column;align-items:flex-start;}
+  }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-content">
+    <div class="eyebrow">Software & Automation</div>
+    <h1 class="hero-title">Software that runs<br>your business <em>for you.</em></h1>
+    <p class="hero-sub">Ready-to-use dashboards built for how you actually work, plus automations that take the busywork off your plate — inbox, calendar, and to-do list included.</p>
+  </div>
+  <div class="hero-photo"></div>
+</div>
+
+<!-- SOFTWARE PRODUCTS -->
+<div class="section">
+  <div class="sec-eyebrow">Ready-to-use software</div>
+  <h2 class="sec-title">Pick the <em>dashboard</em> built for you</h2>
+  <p class="sec-note">Four tools, already built and ready to set up for your business. Book a demo and we'll walk you through exactly how it works for your day-to-day.</p>
+  <div class="prod-grid">
+
+    <div class="prod">
+      <div class="prod-name">Owner's Desk</div>
+      <div class="prod-tagline">A bird's-eye view of your entire company, in one place.</div>
+      <div class="prod-divider"></div>
+      <ul class="prod-features">
+        <li>Goals and priorities at a glance</li>
+        <li>Inbox urgencies that need your attention</li>
+        <li>Financial snapshot — cash on hand and payroll</li>
+        <li>Employee PTO tracking</li>
+        <li>Where every customer sits in your pipeline</li>
+      </ul>
+      <a class="prod-btn" href="mailto:support@themodernconcierge.co?subject=Owner's Desk Demo Request — The Modern Concierge&body=Hi Kaylan, I'd like to book a demo of Owner's Desk. Here are a few times that work for me:">Book a Demo</a>
+    </div>
+
+    <div class="prod">
+      <div class="prod-name">Realtor Check List</div>
+      <div class="prod-tagline">Track every client from first contact to closing.</div>
+      <div class="prod-divider"></div>
+      <ul class="prod-features">
+        <li>Add new clients and save their full profile</li>
+        <li>Step-by-step checklist for buying or selling</li>
+        <li>Always know exactly where each client stands</li>
+        <li>Never lose track of what a client wants</li>
+      </ul>
+      <a class="prod-btn" href="mailto:support@themodernconcierge.co?subject=Realtor Check List Demo Request — The Modern Concierge&body=Hi Kaylan, I'd like to book a demo of the Realtor Check List. Here are a few times that work for me:">Book a Demo</a>
+    </div>
+
+    <div class="prod">
+      <div class="prod-name">Designer Dashboard</div>
+      <div class="prod-tagline">HoneyBook, Owner's Desk, and Programa — combined into one system.</div>
+      <div class="prod-divider"></div>
+      <ul class="prod-features">
+        <li>Client and project management</li>
+        <li>Full business oversight in one place</li>
+        <li>Program-style workflow tools built in</li>
+        <li>Everything a designer needs, nothing they don't</li>
+      </ul>
+      <a class="prod-btn" href="mailto:support@themodernconcierge.co?subject=Designer Dashboard Demo Request — The Modern Concierge&body=Hi Kaylan, I'd like to book a demo of the Designer Dashboard. Here are a few times that work for me:">Book a Demo</a>
+    </div>
+
+    <div class="prod">
+      <div class="prod-name">Master To-Do List</div>
+      <div class="prod-tagline">One to-do list that pulls from everywhere else.</div>
+      <div class="prod-divider"></div>
+      <ul class="prod-features">
+        <li>Pulls tasks straight from your inbox, filtered by priority</li>
+        <li>Merges with Ninety.io, Motion, ClickUp — one master list instead of five</li>
+        <li>Built-in AI flags what can be delegated</li>
+        <li>Delegate with full context pulled from the original email — no re-explaining</li>
+        <li>Kanban view included</li>
+      </ul>
+      <a class="prod-btn" href="mailto:support@themodernconcierge.co?subject=Master To-Do List Demo Request — The Modern Concierge&body=Hi Kaylan, I'd like to book a demo of the Master To-Do List. Here are a few times that work for me:">Book a Demo</a>
+    </div>
+
+  </div>
+</div>
+
+<!-- AUTOMATIONS & AI -->
+<div class="section section-alt">
+  <div class="sec-eyebrow">Automations & AI</div>
+  <h2 class="sec-title">What <em>automation</em> actually looks like</h2>
+  <p class="sec-note">Real examples of what we set up for clients — so you know exactly what you're getting before you ask for it.</p>
+
+  <div class="example-grid">
+    <div class="example">
+      <div class="example-name">Inbox Labeling & Cleanup</div>
+      <div class="example-desc">New emails are automatically sorted into labels the moment they land — Clients, Vendors, Urgent, Newsletters — so your inbox is organized before you even open it.</div>
+    </div>
+    <div class="example">
+      <div class="example-name">Draft Replies, Ready to Send</div>
+      <div class="example-desc">When a routine email comes in, a reply is already drafted and waiting for you — you just review and hit send instead of writing it from scratch.</div>
+    </div>
+    <div class="example">
+      <div class="example-name">Calendar Cleanup & Labeling</div>
+      <div class="example-desc">Meetings get automatically color-coded and labeled by type — Client Call, Internal, Personal — and clutter gets cleared out, so one glance tells you what kind of day you're walking into.</div>
+    </div>
+    <div class="example">
+      <div class="example-name">Morning Recap & Debrief</div>
+      <div class="example-desc">A summary lands in your inbox every morning: what's on today's calendar, what came in overnight that needs a response, and what's still open from yesterday.</div>
+    </div>
+    <div class="example">
+      <div class="example-name">The "What Did I Miss" Recap</div>
+      <div class="example-desc">We scan back through recent email and resurface anything that slipped through the cracks — an unanswered client question, a vendor still waiting on you — before it becomes a problem.</div>
+    </div>
+  </div>
+
+  <div class="pkg-grid">
+
+    <div class="pkg">
+      <div class="pkg-num">Tier 01</div>
+      <div class="pkg-name">Quick Automation</div>
+      <div class="pkg-hours">Single automated workflow</div>
+      <div class="pkg-price">$650</div>
+      <div class="pkg-rate">Flat Fee · $100/mo Maintenance</div>
+      <div class="pkg-divider"></div>
+      <p class="pkg-desc">e.g. inbox labeling, calendar cleanup, or one drafted-reply workflow.</p>
+      <ul class="pkg-features">
+        <li class="included">One automated workflow, scoped & built</li>
+        <li class="included">Tested and handed off with a written guide</li>
+        <li class="included">Ongoing monthly maintenance included</li>
+      </ul>
+      <a class="pkg-btn" href="mailto:support@themodernconcierge.co?subject=Quick Automation Inquiry — The Modern Concierge&body=Hi Kaylan, I'd like to learn more about a Quick Automation. Here are a few times that work for me:">Book a Demo</a>
+    </div>
+
+    <div class="pkg featured">
+      <div class="pkg-num">Tier 02</div>
+      <div class="pkg-name">AI Workflow Build</div>
+      <div class="pkg-hours">Multi-step automation, 3–5 systems</div>
+      <div class="pkg-price">$2,200</div>
+      <div class="pkg-rate">Flat Fee · $200/mo Maintenance</div>
+      <div class="pkg-divider"></div>
+      <p class="pkg-desc">e.g. morning recaps, "what did I miss" catch-up scans, or a full inbox + calendar overhaul working together.</p>
+      <ul class="pkg-features">
+        <li class="included">Multi-step automation with AI decision-making</li>
+        <li class="included">Connects across 3–5 of your existing systems</li>
+        <li class="included">Testing, training & written guide</li>
+        <li class="included">Ongoing monthly maintenance included</li>
+      </ul>
+      <a class="pkg-btn" href="mailto:support@themodernconcierge.co?subject=AI Workflow Build Inquiry — The Modern Concierge&body=Hi Kaylan, I'd like to learn more about an AI Workflow Build. Here are a few times that work for me:">Book a Demo</a>
+    </div>
+
+    <div class="pkg">
+      <div class="pkg-num">Tier 03</div>
+      <div class="pkg-name">Custom AI System</div>
+      <div class="pkg-hours">Full AI agent / integration</div>
+      <div class="pkg-price" style="font-size:32px;">From $4,500</div>
+      <div class="pkg-rate">Custom Quoted · $350/mo Maintenance</div>
+      <div class="pkg-divider"></div>
+      <p class="pkg-desc">A full AI agent consolidating your inbox, calendar, and to-do lists into one system.</p>
+      <ul class="pkg-features">
+        <li class="included">Full AI agent / integration, custom scoped</li>
+        <li class="included">Consolidates multiple platforms into one system</li>
+        <li class="included">Testing, training & written guide</li>
+        <li class="included">Ongoing monthly maintenance included</li>
+      </ul>
+      <a class="pkg-btn" href="mailto:support@themodernconcierge.co?subject=Custom AI System Inquiry — The Modern Concierge&body=Hi Kaylan, I'd like to learn more about a Custom AI System. Here are a few times that work for me:">Book a Demo</a>
+    </div>
+
+  </div>
+</div>
+
+<!-- SOP ADD-ON -->
+<div class="section">
+  <div class="sec-eyebrow">One-off add-on</div>
+  <h2 class="sec-title">Need one <em>process documented?</em></h2>
+  <p class="sec-note">For anyone who wants a single SOP without a bigger project. Available at any tier, billed separately from your monthly hours.</p>
+  <div class="pkg-grid-2">
+
+    <div class="pkg">
+      <div class="pkg-num">Add-On</div>
+      <div class="pkg-name">Standard SOP</div>
+      <div class="pkg-hours">Available at any tier</div>
+      <div class="pkg-price">$450</div>
+      <div class="pkg-rate">Flat Fee</div>
+      <div class="pkg-divider"></div>
+      <p class="pkg-desc">A single process, single system — documented and ready to use.</p>
+      <ul class="pkg-features">
+        <li class="included">One documented, ready-to-use SOP</li>
+        <li class="included">Single process, single system</li>
+        <li class="included">Billed separately from your monthly hours</li>
+      </ul>
+      <a class="pkg-btn" href="mailto:support@themodernconcierge.co?subject=Standard SOP Inquiry — The Modern Concierge&body=Hi Kaylan, I'd like to learn more about a Standard SOP. Here are a few times that work for me:">Inquire</a>
+    </div>
+
+    <div class="pkg featured">
+      <div class="pkg-num">Add-On</div>
+      <div class="pkg-name">Complex SOP</div>
+      <div class="pkg-hours">Available at any tier</div>
+      <div class="pkg-price">$750</div>
+      <div class="pkg-rate">Flat Fee</div>
+      <div class="pkg-divider"></div>
+      <p class="pkg-desc">Multi-step, cross-system — includes research and stakeholder interviews.</p>
+      <ul class="pkg-features">
+        <li class="included">One documented, ready-to-use SOP</li>
+        <li class="included">Multi-step, cross-system process</li>
+        <li class="included">Includes research & stakeholder interviews</li>
+        <li class="included">Billed separately from your monthly hours</li>
+      </ul>
+      <a class="pkg-btn" href="mailto:support@themodernconcierge.co?subject=Complex SOP Inquiry — The Modern Concierge&body=Hi Kaylan, I'd like to learn more about a Complex SOP. Here are a few times that work for me:">Inquire</a>
+    </div>
+
+  </div>
+</div>
+
+<!-- CTA -->
+<div class="cta">
+  <div>
+    <h2 class="cta-title">Not sure what you <em>need?</em></h2>
+    <p class="cta-sub">Tell us what's slowing you down and we'll show you what's possible.</p>
+  </div>
+  <a class="cta-btn" href="mailto:support@themodernconcierge.co?subject=Software & Automation Inquiry — The Modern Concierge&body=Hi Kaylan, here's what I'm looking for:">Book a Demo</a>
+</div>
+
+</body>
+</html>
