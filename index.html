@@ -6493,6 +6493,14 @@ function renderOnboarding(){
       </div>
       <div class="small">Repeatable steps for opening a new city — when to appoint a local team lead, when growth/onboarding hands off from you, and when to reconsider the whole structure as markets multiply.</div>
     </div>` : ""}
+    ${state.role==="team" && state.currentAssistant ? `
+    <div class="card">
+      <h3>Upload Your License &amp; W9</h3>
+      <div class="small" style="margin-bottom:10px;">${state.currentAssistant.driveUploadFolderUrl
+        ? "Upload a copy of your license and a completed W9 to your folder below — Heidi pulls them from there. Nothing is stored in this app."
+        : "Your upload folder hasn't been set up yet — ask Kaylan or Heidi to add your Google Drive folder link, then check back here."}</div>
+      ${state.currentAssistant.driveUploadFolderUrl ? `<button onclick="window.open('${state.currentAssistant.driveUploadFolderUrl}','_blank')">Open my upload folder</button>` : ""}
+    </div>` : ""}
     <div class="card">
       <h3>New team member checklist</h3>
       ${ONBOARDING_CHECKLIST.map((item,i)=>`
@@ -6593,6 +6601,7 @@ function renderAssistantRow(a){
           </select>
         </div>
       </div>
+      <div><label class="small">Document upload folder — their private Google Drive folder link, for License &amp; W9 uploads (Onboarding tab shows them a button that opens this)</label><input value="${a.driveUploadFolderUrl||''}" placeholder="https://drive.google.com/drive/folders/..." onchange="updateAssistantField('${a.id}','driveUploadFolderUrl',this.value.trim())"></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
         <input type="checkbox" ${a.isContentCreator?'checked':''} onchange="updateAssistantField('${a.id}','isContentCreator',this.checked)">
         Content Creator — logs in to a restricted view showing only the Content Calendar
