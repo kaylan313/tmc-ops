@@ -448,31 +448,16 @@ async function qbReport(accessToken, realmId, reportName, params) {
   }
   return data;
 }
-// Finds a top-level report Section by its own header label (e.g. "Income",
-// "Expenses") and returns its Summary total — the same "Total for X" line
-// QuickBooks itself shows. Only matches on a Section's OWN header, never
-// descends into a matched section's children first, so "Income" doesn't
-// also match the nested "Other Income" section.
-function qbReportSectionTotal(rows, label) {
-  const target = label.trim().toLowerCase();
-  for (const row of rows || []) {
-    if (row.type !== "Section") continue;
-    const headerLabel = row.Header && row.Header.ColData && row.Header.ColData[0] && row.Header.ColData[0].value;
-    if (headerLabel && headerLabel.trim().toLowerCase() === target && row.Summary && row.Summary.ColData) {
-      const amountCol = row.Summary.ColData[row.Summary.ColData.length - 1];
-      return amountCol ? parseFloat(amountCol.value) || 0 : 0;
-    }
-    const nested = row.Rows && row.Rows.Row;
-    const found = qbReportSectionTotal(nested, label);
-    if (found !== null) return found;
-  }
-  return null;
-}
-// Finds a single leaf line item (a "Data" row, not a Section) by its own
-// label — used for a standalone account like the "payroll" line nested
-// under Other Expenses, as distinct from the "Payroll expenses" Section
-// total found via qbReportSectionTotal.
-function qbReportDataValue(rows, label) {
+// Finds an account/category by label anywhere in a report's Row tree and
+// returns its total — whether QuickBooks represents it as a Section (has
+// its own Summary line, e.g. when it currently has active sub-accounts)
+// or as a plain Data leaf (a flat line with no sub-accounts). Which shape
+// a given account comes back as can change from one report to the next
+// as sub-accounts gain/lose activity in the requested date range — e.g.
+// "Payroll expenses" had a nested "Wages" sub-account as of Sept 16, 2026
+// (came back as a Section) but not as of Sept 23 (came back as a flat
+// Data row) — so both shapes must be checked, not just one.
+function qbReportFind(rows, label) {
   const target = label.trim().toLowerCase();
   for (const row of rows || []) {
     if (row.type === "Data" && row.ColData && row.ColData[0]) {
@@ -481,9 +466,14 @@ function qbReportDataValue(rows, label) {
         const amountCol = row.ColData[row.ColData.length - 1];
         return amountCol ? parseFloat(amountCol.value) || 0 : 0;
       }
-    }
-    if (row.type === "Section" && row.Rows && row.Rows.Row) {
-      const found = qbReportDataValue(row.Rows.Row, label);
+    } else if (row.type === "Section") {
+      const headerLabel = row.Header && row.Header.ColData && row.Header.ColData[0] && row.Header.ColData[0].value;
+      if (headerLabel && headerLabel.trim().toLowerCase() === target && row.Summary && row.Summary.ColData) {
+        const amountCol = row.Summary.ColData[row.Summary.ColData.length - 1];
+        return amountCol ? parseFloat(amountCol.value) || 0 : 0;
+      }
+      const nested = row.Rows && row.Rows.Row;
+      const found = qbReportFind(nested, label);
       if (found !== null) return found;
     }
   }
@@ -514,12 +504,13 @@ exports.getQuickBooksSummary = onCall(async (request) => {
       accounting_method: "Accrual",
     }));
     const rows = (report.Rows && report.Rows.Row) || [];
-    const income = qbReportSectionTotal(rows, "Income") || 0;
-    const expenses = qbReportSectionTotal(rows, "Expenses") || 0;
-    // "Payroll expenses" (nested inside Expenses, includes Wages) plus the
-    // standalone "payroll" line under Other Expenses — per Kaylan's own
+    const income = qbReportFind(rows, "Income") || 0;
+    const expenses = qbReportFind(rows, "Expenses") || 0;
+    // "Payroll expenses" (inside Expenses — may or may not have a nested
+    // Wages sub-account depending on the period) plus the standalone
+    // "payroll" line under Other Expenses, when present — per Kaylan's own
     // account structure, both count as payroll.
-    const payroll = (qbReportSectionTotal(rows, "Payroll expenses") || 0) + (qbReportDataValue(rows, "payroll") || 0);
+    const payroll = (qbReportFind(rows, "Payroll expenses") || 0) + (qbReportFind(rows, "payroll") || 0);
     return { connected: true, income, expenses, payroll, startDate, endDate };
   } catch (err) {
     console.error("getQuickBooksSummary failed:", err);
