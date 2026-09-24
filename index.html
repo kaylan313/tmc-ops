@@ -2610,12 +2610,31 @@ function renderAddOnsTab(){
     .reduce((sum,r)=>sum+r.addOn.monthlyMaintenance,0);
   const statusFilter = state.addOnsStatusFilter || "all";
   const filtered = statusFilter==="all" ? rows : rows.filter(r=>r.addOn.status===statusFilter);
+  const unpaidPayments = [];
+  rows.forEach(({client,addOn})=>(addOn.payments||[]).forEach(p=>{ if(!p.paid) unpaidPayments.push({client,addOn,payment:p}); }));
+  const todayStr = new Date().toISOString().slice(0,10);
+  const duePayments = unpaidPayments.filter(r=>r.payment.dueDate).sort((a,b)=> a.payment.dueDate < b.payment.dueDate ? -1 : 1);
+  const noDatePayments = unpaidPayments.filter(r=>!r.payment.dueDate);
   return `
     <h2>Business Systems &amp; Software Add-Ons</h2>
     <div class="small" style="margin-bottom:14px;">Company-wide view of every SOP, custom build, AI automation, and productized software add-on across all clients. Add or edit one from a client's Membership tab.</div>
     <div class="stat-row">
       <div class="stat-tile"><div class="stat-label">Total add-ons</div><div class="stat-value">${rows.length}</div></div>
       <div class="stat-tile"><div class="stat-label">Active monthly maintenance</div><div class="stat-value">$${activeMaintenanceTotal.toFixed(0)}</div></div>
+    </div>
+    <div class="card">
+      <h3>Payments Due</h3>
+      <div class="small" style="margin-bottom:10px;">Every unpaid deposit/progress/final payment across all add-on projects — set a due date on a payment (inside a client's Add-Ons section) to have it show up here, soonest first.</div>
+      ${duePayments.length ? duePayments.map(({client,addOn,payment})=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+          <div>
+            <strong>${client.name}</strong> — ${addOn.label}: ${payment.label}
+            <div class="small" style="${payment.dueDate<todayStr?'color:var(--danger);':''}">${payment.dueDate<todayStr?'Overdue — ':'Due '}${parseYMD(payment.dueDate).toLocaleDateString()}</div>
+          </div>
+          <strong>$${(payment.amount||0).toFixed(0)}</strong>
+        </div>
+      `).join("") : `<div class="small">No upcoming payments with a due date set.</div>`}
+      ${noDatePayments.length ? `<div class="small" style="margin-top:10px;">${noDatePayments.length} more unpaid payment${noDatePayments.length===1?'':'s'} without a due date set yet.</div>` : ""}
     </div>
     <div class="card">
       <div class="flex-between" style="margin-bottom:10px;">
@@ -5327,27 +5346,90 @@ function renderAddOnRow(clientId, a){
         Monthly maintenance currently active/billing
       </label>` : ""}
       <div><label class="small">Notes</label><textarea onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
+      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Payment Schedule</label>
+        ${(a.payments&&a.payments.length) ? a.payments.map(p=>renderAddOnPaymentRow(clientId,a.id,p)).join("") : `
+          <div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>
+        `}
+      </div>
       <div><button class="secondary" onclick="removeClientAddOn('${clientId}','${a.id}')">Remove</button></div>
     </div>
   `;
+}
+function renderAddOnPaymentRow(clientId, addOnId, p){
+  const todayStr = new Date().toISOString().slice(0,10);
+  const overdue = !p.paid && p.dueDate && p.dueDate < todayStr;
+  return `
+    <div class="row" style="align-items:flex-end;margin-top:6px;">
+      <div><label class="small">${p.label}</label><input type="number" step="1" value="${p.amount||0}" onchange="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
+      <div><label class="small">Due${overdue?' — overdue':''}</label><input type="date" value="${p.dueDate||''}" onchange="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','dueDate',this.value)" style="${overdue?'border-color:var(--danger);':''}"></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
+        <input type="checkbox" ${p.paid?'checked':''} onchange="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','paid',this.checked)">
+        Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+')' : ''}
+      </label>
+    </div>
+  `;
+}
+// Per the SOW template's standard payment schedule: 50% deposit at
+// signing, 25% progress payment when build/revisions are complete, 25%
+// final payment at project handoff. Amounts default to that split but
+// stay independently editable per payment afterward — real projects
+// sometimes negotiate a different split, and editing here should never
+// silently get overwritten by a later flat-fee change.
+function defaultAddOnPayments(flatFee){
+  const fee = flatFee || 0;
+  return [
+    { id: newId("pay"), label:"50% Deposit", amount: Math.round(fee*0.5*100)/100, dueDate:"", paid:false, paidDate:"" },
+    { id: newId("pay"), label:"25% Progress Payment", amount: Math.round(fee*0.25*100)/100, dueDate:"", paid:false, paidDate:"" },
+    { id: newId("pay"), label:"25% Final Payment", amount: Math.round(fee*0.25*100)/100, dueDate:"", paid:false, paidDate:"" }
+  ];
 }
 function addClientAddOn(clientId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   const catalogItem = ADDON_CATALOG[0];
+  const flatFee = catalogItem.flatFee || catalogItem.noteDefault || 0;
   const addOn = {
     id: newId("addon"),
     catalogKey: catalogItem.key,
     category: catalogItem.category,
     label: catalogItem.label,
-    flatFee: catalogItem.flatFee || catalogItem.noteDefault || 0,
+    flatFee,
     monthlyMaintenance: catalogItem.maintenance || 0,
     maintenanceActive: true,
     status: "Proposed",
     addedDate: new Date().toISOString().slice(0,10),
-    notes: catalogItem.note || ""
+    notes: catalogItem.note || "",
+    payments: defaultAddOnPayments(flatFee)
   };
   upsert("clients", clientId, { addOns: [...(client.addOns||[]), addOn] });
+}
+// Backfills a 50/25/25 schedule for add-ons created before payment
+// tracking existed — never called automatically, so it can't clobber a
+// schedule that's already been customized.
+function generateAddOnPayments(clientId, addOnId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, payments: defaultAddOnPayments(a.flatFee) } : a);
+  upsert("clients", clientId, { addOns });
+}
+function updateAddOnPaymentField(clientId, addOnId, paymentId, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=>{
+    if(a.id!==addOnId) return a;
+    const payments = (a.payments||[]).map(p=>{
+      if(p.id!==paymentId) return p;
+      const updated = { ...p, [field]: value };
+      // Checking "Paid" with no paid-date yet defaults it to today rather
+      // than leaving it blank; unchecking clears it so re-checking later
+      // doesn't show a stale date from a previous mistaken check-off.
+      if(field==="paid") updated.paidDate = value ? (p.paidDate || new Date().toISOString().slice(0,10)) : "";
+      return updated;
+    });
+    return { ...a, payments };
+  });
+  upsert("clients", clientId, { addOns });
 }
 function updateAddOnCatalog(clientId, addOnId, catalogKey){
   const client = state.clients.find(c=>c.id===clientId);
