@@ -2044,10 +2044,15 @@ function nextCalendarWeek(refDate){
   const week = currentCalendarWeek(refDate);
   return { start: week.end, end: new Date(week.end.getTime() + 7*86400000) };
 }
+// "Renewing" here means the recurring 30-day (or whatever cycleType is
+// set) billing period rolling over and the card getting charged again —
+// currentBillingPeriod's end date — NOT the fixed contract term (Pilot/3
+// month/12 month) ending. Term expiry has its own separate "Terms needing
+// update" card, which is a different, longer-horizon concern.
 function clientsRenewingInWindow(window){
   return state.clients
     .filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"))
-    .map(client=>({ client, end: termEndDate(client) }))
+    .map(client=>{ const period = currentBillingPeriod(client); return { client, end: period ? period.end : null }; })
     .filter(x=>x.end && x.end>=window.start && x.end<window.end)
     .sort((a,b)=>a.end-b.end);
 }
