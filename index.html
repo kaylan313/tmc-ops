@@ -3180,7 +3180,7 @@ function renderLeadOrganizerTab(){
     <div class="card">
       <div class="flex-between">
         <h3 style="margin:0;">Leads &amp; Prospects</h3>
-        <button onclick="addLead()">+ Add lead</button>
+        <button onclick="openLeadEditor()">+ Add lead</button>
       </div>
       <div class="tabs" style="margin-top:10px;">
         <button class="${statusFilter==='all'?'active':''}" onclick="state.leadsStatusFilter='all';render();">All (${leads.length})</button>
@@ -3222,15 +3222,51 @@ function renderLeadRow(l){
     </div>
   `;
 }
-function addLead(){
+function openLeadEditor(){
+  state.modal = { type:"leadEditor" };
+  render();
+}
+function renderLeadEditorModal(){
+  return `
+    <div class="modal">
+      <h3>New lead</h3>
+      <div class="row">
+        <div><label class="small">Name</label><input id="nl_name" placeholder="e.g. Jamie Rivera"></div>
+        <div><label class="small">Email</label><input id="nl_email" type="email"></div>
+        <div><label class="small">Phone</label><input id="nl_phone"></div>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <div><label class="small">Found us via</label>
+          <select id="nl_source">
+            ${LEAD_SOURCES.map(s=>`<option value="${s}" ${s==='Other'?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Next follow-up</label><input id="nl_followup" type="date"></div>
+      </div>
+      <div style="margin-top:8px;"><label class="small">Notes</label><textarea id="nl_notes" placeholder="What was discussed, how they found us, etc."></textarea></div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="saveNewLead()">Add lead</button>
+      </div>
+    </div>
+  `;
+}
+function saveNewLead(){
+  const name = document.getElementById("nl_name").value.trim();
+  if(!name){ alert("Name is required."); return; }
   const lead = {
     id: newId("lead"),
-    name: "", email: "", phone: "",
-    source: "Other", status: "New",
-    nextFollowUpDate: "", notes: "",
+    name,
+    email: document.getElementById("nl_email").value.trim(),
+    phone: document.getElementById("nl_phone").value.trim(),
+    source: document.getElementById("nl_source").value,
+    status: "New",
+    nextFollowUpDate: document.getElementById("nl_followup").value,
+    notes: document.getElementById("nl_notes").value.trim(),
     createdDate: new Date().toISOString().slice(0,10)
   };
   upsert("leads", lead.id, lead);
+  closeModal();
 }
 function updateLeadField(id, field, value){ upsert("leads", id, { [field]: value }); }
 function removeLead(id){
@@ -8214,6 +8250,7 @@ function renderModal(){
     : state.modal.type==="imageViewer" ? renderImageViewerModal(state.modal.dataUrl)
     : state.modal.type==="orgChartSeat" ? renderOrgChartSeatModal(state.modal.rowId, state.modal.seat)
     : state.modal.type==="contentTaskViewer" ? renderContentTaskViewerModal(state.modal.taskId)
+    : state.modal.type==="leadEditor" ? renderLeadEditorModal()
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
