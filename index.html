@@ -2387,6 +2387,7 @@ function renderAdminDashboard(){
   const renewingNextWeek = clientsRenewingInWindow(nextReportWeek());
   const emailsNeeded = emailsNeededList();
   const contractsReady = contractsReadyToDownload();
+  const paymentsReady = paymentsReadyToProcess();
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -2465,6 +2466,20 @@ function renderAdminDashboard(){
           <div>${client.name} <span class="small">(${TERM_LABELS[client.termType||'pilot']})</span></div>
           <span class="small">${end.toLocaleDateString()}</span>
         </div>`).join("")}` : ""}
+    </div>` : ""}
+
+    ${paymentsReady.length ? `
+    <div class="card">
+      <h3>Payments Ready to Process</h3>
+      <div class="small" style="margin-bottom:8px;">Flagged from a client's Add-Ons section — go charge these, then check them off as Paid there.</div>
+      ${paymentsReady.map(({client,addOn,payment})=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+          <div>
+            <strong>${client.name}</strong> — ${addOn.label}: ${payment.label}
+            <div class="small">flagged ${payment.readyMarkedAt?parseYMD(payment.readyMarkedAt).toLocaleDateString():'—'}</div>
+          </div>
+          <strong>$${(payment.amount||0).toFixed(0)}</strong>
+        </div>`).join("")}
     </div>` : ""}
 
     ${contractsReady.length ? `
@@ -2602,6 +2617,13 @@ function allClientAddOns(){
     (client.addOns||[]).forEach(addOn=>rows.push({ client, addOn }));
   });
   return rows;
+}
+function paymentsReadyToProcess(){
+  const rows = [];
+  allClientAddOns().forEach(({client,addOn})=>{
+    (addOn.payments||[]).forEach(p=>{ if(p.readyToProcess && !p.paid) rows.push({ client, addOn, payment:p }); });
+  });
+  return rows.sort((a,b)=> (a.payment.readyMarkedAt||'') < (b.payment.readyMarkedAt||'') ? -1 : 1);
 }
 function renderAddOnsTab(){
   const rows = allClientAddOns();
@@ -5368,6 +5390,12 @@ function renderAddOnPaymentRow(clientId, addOnId, p){
         Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+')' : ''}
       </label>
     </div>
+    ${!p.paid ? `
+    <div style="margin-top:2px;">
+      ${p.readyToProcess
+        ? `<span class="small" style="color:var(--ok);">✓ Marked ready to process${p.readyMarkedAt?' on '+parseYMD(p.readyMarkedAt).toLocaleDateString():''} — showing on the Dashboard for Heidi.</span> <button class="secondary" style="padding:2px 8px;" onclick="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','readyToProcess',false)">Undo</button>`
+        : `<button class="secondary" onclick="markAddOnPaymentReady('${clientId}','${addOnId}','${p.id}')">Mark ready to process</button>`}
+    </div>` : ""}
   `;
 }
 // Per the SOW template's standard payment schedule: 50% deposit at
@@ -5411,6 +5439,20 @@ function generateAddOnPayments(clientId, addOnId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, payments: defaultAddOnPayments(a.flatFee) } : a);
+  upsert("clients", clientId, { addOns });
+}
+// The in-app replacement for "text Heidi when a milestone payment is
+// ready" — marking it here surfaces it on the admin Dashboard's "Payments
+// Ready to Process" card, which is the first thing anyone sees on login,
+// instead of relying on a separate text message every time.
+function markAddOnPaymentReady(clientId, addOnId, paymentId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=>{
+    if(a.id!==addOnId) return a;
+    const payments = (a.payments||[]).map(p=> p.id===paymentId ? { ...p, readyToProcess:true, readyMarkedAt:new Date().toISOString().slice(0,10) } : p);
+    return { ...a, payments };
+  });
   upsert("clients", clientId, { addOns });
 }
 function updateAddOnPaymentField(clientId, addOnId, paymentId, field, value){
