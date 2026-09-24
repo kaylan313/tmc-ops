@@ -2027,6 +2027,23 @@ function nextReportWeek(){
   const week = currentReportWeek();
   return { start: week.end, end: new Date(week.end.getTime() + 7*86400000) };
 }
+// currentReportWeek() deliberately anchors to the most recently COMPLETED
+// Sat-Fri week, since weekly client reports cover a week that's already
+// finished — that's correct there. But "renewing this week" on the
+// Dashboard needs the Sat-Fri week that actually CONTAINS today, not the
+// last finished one, or a renewal landing in the real current week gets
+// mislabeled as "next week" (or missed from both cards entirely).
+function currentCalendarWeek(refDate){
+  const now = refDate || new Date();
+  const daysSinceSaturday = (now.getDay() - 6 + 7) % 7; // Saturday = 6
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - daysSinceSaturday);
+  const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 7); // exclusive
+  return { start, end };
+}
+function nextCalendarWeek(refDate){
+  const week = currentCalendarWeek(refDate);
+  return { start: week.end, end: new Date(week.end.getTime() + 7*86400000) };
+}
 function clientsRenewingInWindow(window){
   return state.clients
     .filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"))
@@ -2383,8 +2400,8 @@ function renderAdminDashboard(){
   const termUpdateClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c));
   const internalStatus = internalHoursStatus(period);
   const reminders = upcomingReminders(14);
-  const renewingThisWeek = clientsRenewingInWindow(currentReportWeek());
-  const renewingNextWeek = clientsRenewingInWindow(nextReportWeek());
+  const renewingThisWeek = clientsRenewingInWindow(currentCalendarWeek());
+  const renewingNextWeek = clientsRenewingInWindow(nextCalendarWeek());
   const emailsNeeded = emailsNeededList();
   const contractsReady = contractsReadyToDownload();
   const paymentsReady = paymentsReadyToProcess();
@@ -2442,12 +2459,12 @@ function renderAdminDashboard(){
       <div class="stat-tile ${renewingThisWeek.length?'status-warn':''}" style="cursor:pointer;" onclick="setTab('renewals')">
         <div class="stat-label">Renewing this week</div>
         <div class="stat-value">${renewingThisWeek.length}</div>
-        <div class="stat-sub">${formatPeriodRange(currentReportWeek())}</div>
+        <div class="stat-sub">${formatPeriodRange(currentCalendarWeek())}</div>
       </div>
       <div class="stat-tile" style="cursor:pointer;" onclick="setTab('renewals')">
         <div class="stat-label">Renewing next week</div>
         <div class="stat-value">${renewingNextWeek.length}</div>
-        <div class="stat-sub">${formatPeriodRange(nextReportWeek())}</div>
+        <div class="stat-sub">${formatPeriodRange(nextCalendarWeek())}</div>
       </div>
     </div>
 
