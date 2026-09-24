@@ -91,7 +91,7 @@
   .login-box .logo{font-family:'Playfair Display',serif;font-size:26px;color:var(--brown-dark);margin-bottom:6px;}
   .login-box .tagline{font-size:13px;color:#8a7a72;margin-bottom:24px;}
   .role-btns{display:flex;flex-direction:column;gap:10px;margin-top:16px;}
-  .tabs{display:flex;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--cream-dark);}
+  .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--cream-dark);}
   .tabs button{
     background:transparent;color:var(--brown);border-radius:8px 8px 0 0;padding:8px 16px;
   }
@@ -3155,6 +3155,9 @@ function renderLeadOrganizerTab(){
   const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
   realClients.forEach(c=>{ if(c.leadSource) clientSourceCounts[c.leadSource] = (clientSourceCounts[c.leadSource]||0)+1; });
   const pausedClients = realClients.filter(c=>c.clientStatus==="paused");
+  const statusCounts = {};
+  LEAD_STATUSES.forEach(s=>{ statusCounts[s]=0; });
+  leads.forEach(l=>{ const s = l.status||"New"; statusCounts[s] = (statusCounts[s]||0)+1; });
   return `
     <h2>Lead Organizer</h2>
     <div class="small" style="margin-bottom:14px;">Prospects to follow up with, paused clients to win back, and where people are finding out about us.</div>
@@ -3177,13 +3180,11 @@ function renderLeadOrganizerTab(){
     <div class="card">
       <div class="flex-between">
         <h3 style="margin:0;">Leads &amp; Prospects</h3>
-        <div style="display:flex;gap:8px;">
-          <select onchange="state.leadsStatusFilter=this.value;render();">
-            <option value="all" ${statusFilter==='all'?'selected':''}>All statuses</option>
-            ${LEAD_STATUSES.map(s=>`<option value="${s}" ${statusFilter===s?'selected':''}>${s}</option>`).join("")}
-          </select>
-          <button onclick="addLead()">+ Add lead</button>
-        </div>
+        <button onclick="addLead()">+ Add lead</button>
+      </div>
+      <div class="tabs" style="margin-top:10px;">
+        <button class="${statusFilter==='all'?'active':''}" onclick="state.leadsStatusFilter='all';render();">All (${leads.length})</button>
+        ${LEAD_STATUSES.map(s=>`<button class="${statusFilter===s?'active':''}" onclick="state.leadsStatusFilter='${s}';render();">${s} (${statusCounts[s]})</button>`).join("")}
       </div>
       ${sorted.length ? sorted.map(renderLeadRow).join("") : `<div class="small">No leads${statusFilter!=='all'?' with status '+statusFilter:''} yet.</div>`}
     </div>
@@ -3199,9 +3200,9 @@ function renderLeadRow(l){
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
       <div class="row">
-        <div><label class="small">Name</label><input value="${l.name||''}" onchange="updateLeadField('${l.id}','name',this.value)"></div>
-        <div><label class="small">Email</label><input type="email" value="${l.email||''}" onchange="updateLeadField('${l.id}','email',this.value)"></div>
-        <div><label class="small">Phone</label><input value="${l.phone||''}" onchange="updateLeadField('${l.id}','phone',this.value)"></div>
+        <div><label class="small">Name</label><input id="lead_name_${l.id}" value="${l.name||''}" onchange="updateLeadField('${l.id}','name',this.value)"></div>
+        <div><label class="small">Email</label><input id="lead_email_${l.id}" type="email" value="${l.email||''}" onchange="updateLeadField('${l.id}','email',this.value)"></div>
+        <div><label class="small">Phone</label><input id="lead_phone_${l.id}" value="${l.phone||''}" onchange="updateLeadField('${l.id}','phone',this.value)"></div>
       </div>
       <div class="row">
         <div><label class="small">Found us via</label>
@@ -3214,9 +3215,9 @@ function renderLeadRow(l){
             ${LEAD_STATUSES.map(s=>`<option value="${s}" ${(l.status||'New')===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
-        <div><label class="small">Next follow-up</label><input type="date" value="${l.nextFollowUpDate||''}" onchange="updateLeadField('${l.id}','nextFollowUpDate',this.value)"></div>
+        <div><label class="small">Next follow-up</label><input id="lead_followup_${l.id}" type="date" value="${l.nextFollowUpDate||''}" onchange="updateLeadField('${l.id}','nextFollowUpDate',this.value)"></div>
       </div>
-      <div><label class="small">Notes</label><textarea onchange="updateLeadField('${l.id}','notes',this.value)" placeholder="What was discussed, when last contacted, etc.">${l.notes||''}</textarea></div>
+      <div><label class="small">Notes</label><textarea id="lead_notes_${l.id}" onchange="updateLeadField('${l.id}','notes',this.value)" placeholder="What was discussed, when last contacted, etc.">${l.notes||''}</textarea></div>
       <div><button class="secondary" onclick="removeLead('${l.id}')">Remove</button></div>
     </div>
   `;
