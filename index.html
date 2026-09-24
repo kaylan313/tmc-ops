@@ -2044,16 +2044,40 @@ function nextCalendarWeek(refDate){
   const week = currentCalendarWeek(refDate);
   return { start: week.end, end: new Date(week.end.getTime() + 7*86400000) };
 }
+// Finds the client's recurring billing date (anchor + N cycles) that
+// falls inside a given window, walking forward from renewalDate — NOT
+// relative to "today" the way currentBillingPeriod() is. That distinction
+// matters here specifically: currentBillingPeriod() only ever looks
+// forward from today, so a renewal that already happened earlier in the
+// SAME week (e.g. Monday, with today being Thursday) never surfaces —
+// its "current period" has already moved past that date. Walking forward
+// from the window's own start instead catches a renewal anywhere in the
+// window, whether that day has already passed or hasn't happened yet.
+function billingOccurrenceInWindow(client, window){
+  if(!client.renewalDate) return null;
+  const cycle = client.cycleType || "monthly";
+  const advance = (d)=>{
+    const nd = new Date(d);
+    if(cycle==="biweekly") nd.setDate(nd.getDate()+14);
+    else if(cycle==="quarterly") nd.setMonth(nd.getMonth()+3);
+    else if(cycle==="annual") nd.setFullYear(nd.getFullYear()+1);
+    else nd.setDate(nd.getDate()+30);
+    return nd;
+  };
+  let d = parseYMD(client.renewalDate);
+  while(d < window.start) d = advance(d);
+  return d < window.end ? d : null;
+}
 // "Renewing" here means the recurring 30-day (or whatever cycleType is
 // set) billing period rolling over and the card getting charged again —
-// currentBillingPeriod's end date — NOT the fixed contract term (Pilot/3
-// month/12 month) ending. Term expiry has its own separate "Terms needing
-// update" card, which is a different, longer-horizon concern.
+// NOT the fixed contract term (Pilot/3 month/12 month) ending. Term
+// expiry has its own separate "Terms needing update" card, which is a
+// different, longer-horizon concern.
 function clientsRenewingInWindow(window){
   return state.clients
     .filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"))
-    .map(client=>{ const period = currentBillingPeriod(client); return { client, end: period ? period.end : null }; })
-    .filter(x=>x.end && x.end>=window.start && x.end<window.end)
+    .map(client=>({ client, end: billingOccurrenceInWindow(client, window) }))
+    .filter(x=>x.end)
     .sort((a,b)=>a.end-b.end);
 }
 // Drives the Dashboard "Emails to send" alert — period recaps and renewal
