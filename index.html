@@ -4385,15 +4385,15 @@ function renderClientProfile(client){
     </div>
     <div class="small" style="margin-top:4px;">Client type controls which onboarding section shows below.</div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Email</label><input type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
-      <div><label class="small">Phone</label><input value="${p.phone||''}" onchange="updateProfileField('${client.id}','phone',this.value)"></div>
-      <div><label class="small">Emergency contact</label><input value="${p.emergencyContact||''}" onchange="updateProfileField('${client.id}','emergencyContact',this.value)"></div>
+      <div><label class="small">Email</label><input id="prof_email_${client.id}" type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
+      <div><label class="small">Phone</label><input id="prof_phone_${client.id}" value="${p.phone||''}" onchange="updateProfileField('${client.id}','phone',this.value)"></div>
+      <div><label class="small">Emergency contact</label><input id="prof_emergencyContact_${client.id}" value="${p.emergencyContact||''}" onchange="updateProfileField('${client.id}','emergencyContact',this.value)"></div>
     </div>
   `;
 
   const homeBody = `
     <div class="row">
-      <div><label class="small">Home address</label><input value="${p.homeAddress||''}" onchange="updateProfileField('${client.id}','homeAddress',this.value)"></div>
+      <div><label class="small">Home address</label><input id="prof_homeAddress_${client.id}" value="${p.homeAddress||''}" onchange="updateProfileField('${client.id}','homeAddress',this.value)"></div>
     </div>
     <div style="margin-top:12px;">
       <label class="small">Family / household members (name & age)</label>
@@ -4410,45 +4410,45 @@ function renderClientProfile(client){
       </div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Home access (hidden key, door code, alarm code, parking, etc.)</label><textarea onchange="updateProfileField('${client.id}','homeAccess',this.value)">${p.homeAccess||''}</textarea></div>
+      <div><label class="small">Home access (hidden key, door code, alarm code, parking, etc.)</label><textarea id="prof_homeAccess_${client.id}" onchange="updateProfileField('${client.id}','homeAccess',this.value)">${p.homeAccess||''}</textarea></div>
     </div>
     <div style="margin-top:12px;">
       <label class="small">Top 3 priorities to start with</label>
-      ${[0,1,2].map(i=>`<input style="margin-top:4px;" placeholder="Priority ${i+1}" value="${priorities[i]||''}" onchange="updatePriority('${client.id}',${i},this.value)">`).join("")}
+      ${[0,1,2].map(i=>`<input id="prof_priority_${i}_${client.id}" style="margin-top:4px;" placeholder="Priority ${i+1}" value="${priorities[i]||''}" onchange="updatePriority('${client.id}',${i},this.value)">`).join("")}
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Weekly schedule</label><textarea onchange="updateProfileField('${client.id}','weeklySchedule',this.value)">${p.weeklySchedule||''}</textarea></div>
+      <div><label class="small">Weekly schedule</label><textarea id="prof_weeklySchedule_${client.id}" onchange="updateProfileField('${client.id}','weeklySchedule',this.value)">${p.weeklySchedule||''}</textarea></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Pets (names, feeding/walking, vet info)</label><textarea onchange="updateProfileField('${client.id}','petInfo',this.value)">${p.petInfo||''}</textarea></div>
+      <div><label class="small">Pets (names, feeding/walking, vet info)</label><textarea id="prof_petInfo_${client.id}" onchange="updateProfileField('${client.id}','petInfo',this.value)">${p.petInfo||''}</textarea></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Other preferences (groceries, communication style, etc.)</label><textarea onchange="updateProfileField('${client.id}','specialPreferences',this.value)">${p.specialPreferences||''}</textarea></div>
+      <div><label class="small">Other preferences (groceries, communication style, etc.)</label><textarea id="prof_specialPreferences_${client.id}" onchange="updateProfileField('${client.id}','specialPreferences',this.value)">${p.specialPreferences||''}</textarea></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Preferred communication (method & best times to reach them)</label><input value="${p.communicationPreference||''}" onchange="updateProfileField('${client.id}','communicationPreference',this.value)"></div>
+      <div><label class="small">Preferred communication (method & best times to reach them)</label><input id="prof_communicationPreference_${client.id}" value="${p.communicationPreference||''}" onchange="updateProfileField('${client.id}','communicationPreference',this.value)"></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Budget / reimbursement notes</label><textarea onchange="updateProfileField('${client.id}','budgetNotes',this.value)">${p.budgetNotes||''}</textarea></div>
+      <div><label class="small">Budget / reimbursement notes</label><textarea id="prof_budgetNotes_${client.id}" onchange="updateProfileField('${client.id}','budgetNotes',this.value)">${p.budgetNotes||''}</textarea></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Off-limits / things to avoid</label><textarea onchange="updateProfileField('${client.id}','offLimits',this.value)">${p.offLimits||''}</textarea></div>
+      <div><label class="small">Off-limits / things to avoid</label><textarea id="prof_offLimits_${client.id}" onchange="updateProfileField('${client.id}','offLimits',this.value)">${p.offLimits||''}</textarea></div>
     </div>
   `;
 
   const businessBody = `
     <div class="row">
-      <div><label class="small">Office address</label><input value="${p.officeAddress||''}" onchange="updateProfileField('${client.id}','officeAddress',this.value)"></div>
-      <div><label class="small">Office hours</label><input value="${p.officeHours||''}" onchange="updateProfileField('${client.id}','officeHours',this.value)"></div>
+      <div><label class="small">Office address</label><input id="prof_officeAddress_${client.id}" value="${p.officeAddress||''}" onchange="updateProfileField('${client.id}','officeAddress',this.value)"></div>
+      <div><label class="small">Office hours</label><input id="prof_officeHours_${client.id}" value="${p.officeHours||''}" onchange="updateProfileField('${client.id}','officeHours',this.value)"></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Team member names & roles</label><textarea onchange="updateProfileField('${client.id}','teamMembers',this.value)">${p.teamMembers||''}</textarea></div>
+      <div><label class="small">Team member names & roles</label><textarea id="prof_teamMembers_${client.id}" onchange="updateProfileField('${client.id}','teamMembers',this.value)">${p.teamMembers||''}</textarea></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">Tools/software used (email, calendar, project management, etc.)</label><textarea onchange="updateProfileField('${client.id}','businessTools',this.value)">${p.businessTools||''}</textarea></div>
+      <div><label class="small">Tools/software used (email, calendar, project management, etc.)</label><textarea id="prof_businessTools_${client.id}" onchange="updateProfileField('${client.id}','businessTools',this.value)">${p.businessTools||''}</textarea></div>
     </div>
     <div class="row" style="margin-top:12px;">
-      <div><label class="small">What they need help with at work / for the business</label><textarea onchange="updateProfileField('${client.id}','businessNeeds',this.value)">${p.businessNeeds||''}</textarea></div>
+      <div><label class="small">What they need help with at work / for the business</label><textarea id="prof_businessNeeds_${client.id}" onchange="updateProfileField('${client.id}','businessNeeds',this.value)">${p.businessNeeds||''}</textarea></div>
     </div>
   `;
 
@@ -4498,10 +4498,10 @@ function renderClientProfile(client){
     <div class="small" style="margin-bottom:8px;color:#8a7a72;">Format: Service, Company, Contact, Schedule — e.g. "Lawn Care, Green Lawns LLC, (337) 555-0100, Every Monday @ 9am"</div>
     ${(client.vendors||[]).map((v,i)=>`
       <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
-        <input value="${v.service||''}" placeholder="Service" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'service',this.value)">
-        <input value="${v.company!=null?v.company:(v.name||'')}" placeholder="Company" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'company',this.value)">
-        <input value="${v.contact!=null?v.contact:(v.phone||'')}" placeholder="Contact (name, phone, or email)" style="max-width:180px;" onchange="updateVendorField('${client.id}',${i},'contact',this.value)">
-        <input value="${v.schedule||''}" placeholder="Schedule — e.g. Every Monday @ 9am" style="min-width:200px;" onchange="updateVendorField('${client.id}',${i},'schedule',this.value)">
+        <input id="vendor_service_${i}_${client.id}" value="${v.service||''}" placeholder="Service" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'service',this.value)">
+        <input id="vendor_company_${i}_${client.id}" value="${v.company!=null?v.company:(v.name||'')}" placeholder="Company" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'company',this.value)">
+        <input id="vendor_contact_${i}_${client.id}" value="${v.contact!=null?v.contact:(v.phone||'')}" placeholder="Contact (name, phone, or email)" style="max-width:180px;" onchange="updateVendorField('${client.id}',${i},'contact',this.value)">
+        <input id="vendor_schedule_${i}_${client.id}" value="${v.schedule||''}" placeholder="Schedule — e.g. Every Monday @ 9am" style="min-width:200px;" onchange="updateVendorField('${client.id}',${i},'schedule',this.value)">
         <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
       </div>`).join("") || `<div class="small">No vendors on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
@@ -4517,7 +4517,7 @@ function renderClientProfile(client){
     <div class="small" style="margin-bottom:8px;">Periodic home maintenance checks — pest control, HVAC filter replacement, gutter clean-out, pressure washing, etc. Set the next due date and you'll get a reminder as it approaches.</div>
     ${(client.inspections||[]).map((ins,i)=>`
       <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
-        <input value="${ins.name||''}" placeholder="e.g. Pest control, HVAC filter, Gutters, Pressure wash" style="min-width:220px;" onchange="updateInspectionField('${client.id}',${i},'name',this.value)">
+        <input id="inspection_name_${i}_${client.id}" value="${ins.name||''}" placeholder="e.g. Pest control, HVAC filter, Gutters, Pressure wash" style="min-width:220px;" onchange="updateInspectionField('${client.id}',${i},'name',this.value)">
         <input type="date" value="${ins.nextDue||''}" onchange="updateInspectionField('${client.id}',${i},'nextDue',this.value)">
         <button class="danger" onclick="removeInspection('${client.id}',${i})">Remove</button>
       </div>`).join("") || `<div class="small">Nothing scheduled.</div>`}
