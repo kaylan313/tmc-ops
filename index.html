@@ -2556,14 +2556,13 @@ function renderAdminDashboard(){
     ${unackedAssignments.length ? `
     <div class="card">
       <h3>Newly Assigned — Not Yet Acknowledged</h3>
-      <div class="small" style="margin-bottom:8px;">Since Heidi/Tori/etc. usually log in with the shared Admin passcode, this is how they see what's just been assigned to them — click your own name once you've seen it.</div>
+      <div class="small" style="margin-bottom:8px;">Internal tasks assigned to leadership — since Heidi/Tori usually log in with the shared Admin passcode, this is how they see what's just been assigned to them. Click your own name once you've seen it.</div>
       ${unackedAssignments.map(({task,assistant})=>{
-        const taskClient = state.clients.find(c=>c.id===task.clientId);
         return `
         <div class="list-item">
           <div>
             <strong>${assistant.name}</strong> — ${task.title||'(untitled task)'}
-            <div class="small">${taskClient?taskClient.name:'Internal / Modern Co.'}${task.dueDate?' · due '+parseYMD(task.dueDate).toLocaleDateString():''}</div>
+            <div class="small">${task.dueDate?'due '+parseYMD(task.dueDate).toLocaleDateString():'no due date'}</div>
           </div>
           <button class="secondary" onclick="ackTaskAssignment('${task.id}','${assistant.id}')">I'm ${assistant.name} — got it</button>
         </div>`;
@@ -6891,6 +6890,10 @@ function renderAssistantRow(a){
         <input type="checkbox" ${a.isContentCreator?'checked':''} onchange="updateAssistantField('${a.id}','isContentCreator',this.checked)">
         Content Creator — logs in to a restricted view showing only the Content Calendar
       </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <input type="checkbox" ${a.isLeadership?'checked':''} onchange="updateAssistantField('${a.id}','isLeadership',this.checked)">
+        Leadership — gets "Newly Assigned" alerts on the admin Dashboard for Internal tasks assigned to them (since they mostly log in with the shared Admin passcode, not their own code)
+      </label>
       ${onboarding.length ? `
         <div>
           <div class="small">Onboarding: ${doneCount}/${onboarding.length} complete</div>
@@ -8023,18 +8026,22 @@ function renderTaskEditorModal(task){
     </div>
   `;
 }
-// Every open task's assignees who haven't acknowledged being put on it —
-// the in-app stand-in for "text Heidi/Tori when I assign them something,"
-// for anyone (like leadership sharing the Admin login) the normal
-// logged-in-as-yourself "my tasks" view doesn't reach.
+// Internal-only tasks assigned to a "Leadership" assistant (see the
+// checkbox on the Team tab) who hasn't acknowledged being put on it yet —
+// the in-app stand-in for "text Heidi/Tori when I assign them something
+// internal," for the two of them specifically, since they mostly log in
+// with the shared Admin passcode rather than their own code, so the
+// normal logged-in-as-yourself "my tasks" view never reaches them.
+// Deliberately NOT every assistant/every client task — just Internal work
+// assigned to leadership.
 function unacknowledgedAssignments(){
   const rows = [];
-  state.tasks.filter(t=>t.status!=="Done").forEach(t=>{
+  state.tasks.filter(t=>t.status!=="Done" && t.clientId===INTERNAL_CLIENT_ID).forEach(t=>{
     (t.assignees||[]).forEach(aid=>{
       const acked = (t.assignmentAcks||[]).some(a=>a.assistantId===aid);
       if(acked) return;
       const assistant = state.settings.assistants.find(a=>a.id===aid);
-      if(assistant) rows.push({ task:t, assistant });
+      if(assistant && assistant.isLeadership) rows.push({ task:t, assistant });
     });
   });
   return rows;
