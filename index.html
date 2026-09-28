@@ -686,6 +686,7 @@ async function boot(){
   setInterval(checkClockReminders, 30*60*1000); // 30-min reminder
 }
 let appDataSubscribed = false;
+let ranTaskCleanup = false;
 // tasks/timeEntries/leads only get subscribed once someone's actually
 // logged in (see boot() above for why) — call this once from each
 // successful login path. The guard makes it safe to call more than once
@@ -693,7 +694,14 @@ let appDataSubscribed = false;
 function subscribeAppData(){
   if(appDataSubscribed || !FIREBASE_AVAILABLE) return;
   appDataSubscribed = true;
-  subscribe("tasks", items=>{ state.tasks = items; if(!state.modal) render(); });
+  subscribe("tasks", items=>{
+    state.tasks = items;
+    // Once, on the first real batch of tasks after an admin logs in — not
+    // on every snapshot, since the sweep's own deletes would otherwise
+    // re-trigger it repeatedly against a partially-updated list.
+    if(state.role==="admin" && !ranTaskCleanup){ ranTaskCleanup = true; cleanupOldCompletedTasks(); }
+    if(!state.modal) render();
+  });
   subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
   subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
   subscribe("vendors", items=>{ state.vendors = items; if(!state.modal) render(); });
@@ -1099,6 +1107,36 @@ function resolvedPayrollReportPeriod(){
 }
 function setPayrollFilterAssistant(val){ state.payrollFilter.assistantId = val; render(); }
 function togglePayrollAdminOnly(checked){ state.payrollFilter.adminOnly = checked; render(); }
+// Keyed by a payroll period's own end-date ISO string (unique per period).
+// Marking a period paid is what lets cleanupOldCompletedTasks() below ever
+// delete a completed task from that period — nothing gets auto-deleted
+// for a period nobody's confirmed was actually paid out.
+function togglePayrollPeriodPaid(periodEndIso, paid){
+  const set = new Set(state.settings.paidPayrollPeriods || []);
+  if(paid) set.add(periodEndIso); else set.delete(periodEndIso);
+  state.settings.paidPayrollPeriods = Array.from(set);
+  upsert("settings","access", { paidPayrollPeriods: state.settings.paidPayrollPeriods });
+  render();
+}
+// Permanently deletes a completed task once BOTH: (a) it's more than 60
+// days past its completion date — safely outside the current AND previous
+// 30-day payroll period, and (b) the payroll period it was completed in
+// has been explicitly marked paid via the Payroll tab. Runs once per admin
+// login (see subscribeAppData) rather than on every render, since it's a
+// real delete, not a display filter.
+function cleanupOldCompletedTasks(){
+  const paidPeriods = new Set(state.settings.paidPayrollPeriods || []);
+  if(!paidPeriods.size) return;
+  const cutoff = Date.now() - 60*24*3600000;
+  state.tasks.forEach(t=>{
+    if(t.status!=="Done" || !t.completedAt) return;
+    const completedAt = new Date(t.completedAt).getTime();
+    if(isNaN(completedAt) || completedAt > cutoff) return;
+    const period = currentPayrollPeriod(new Date(completedAt));
+    if(!paidPeriods.has(period.end.toISOString())) return;
+    remove("tasks", t.id);
+  });
+}
 function hoursInPeriod(entries, period){
   return entries
     .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
@@ -6092,6 +6130,8 @@ function renderPayrollTool(){
     return payrollHoursForAssistant(a.id, period, pf.adminOnly) > 0;
   });
   const periodLabel = PAYROLL_FILTER_PRESETS.find(([v])=>v===pf.preset)[1];
+  const periodPaidKey = isPayrollPeriodPreset ? period.end.toISOString() : null;
+  const periodIsPaid = periodPaidKey ? (state.settings.paidPayrollPeriods||[]).includes(periodPaidKey) : false;
 
   return `
     <div class="flex-between">
@@ -6118,6 +6158,12 @@ function renderPayrollTool(){
           </label>
         </div>
       </div>
+      ${periodPaidKey ? `
+      <div class="small" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        ${periodIsPaid
+          ? `✓ ${periodLabel} (${formatPeriodRange(period)}) is marked paid. <a href="#" onclick="togglePayrollPeriodPaid('${periodPaidKey}',false);return false;">Undo</a>`
+          : `${periodLabel} (${formatPeriodRange(period)}) not yet marked paid. <a href="#" onclick="togglePayrollPeriodPaid('${periodPaidKey}',true);return false;">Mark as paid</a> — once a completed task's period is marked paid and it's 60+ days old, it's permanently deleted automatically to keep the Task Board clean.`}
+      </div>` : ""}
     </div>
 
     <div class="stat-row">
