@@ -2434,6 +2434,7 @@ function renderAdminDashboard(){
   const emailsNeeded = emailsNeededList();
   const contractsReady = contractsReadyToDownload();
   const paymentsReady = paymentsReadyToProcess();
+  const unackedAssignments = unacknowledgedAssignments();
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -2512,6 +2513,23 @@ function renderAdminDashboard(){
           <div>${client.name} <span class="small">(${TERM_LABELS[client.termType||'pilot']})</span></div>
           <span class="small">${end.toLocaleDateString()}</span>
         </div>`).join("")}` : ""}
+    </div>` : ""}
+
+    ${unackedAssignments.length ? `
+    <div class="card">
+      <h3>Newly Assigned — Not Yet Acknowledged</h3>
+      <div class="small" style="margin-bottom:8px;">Since Heidi/Tori/etc. usually log in with the shared Admin passcode, this is how they see what's just been assigned to them — click your own name once you've seen it.</div>
+      ${unackedAssignments.map(({task,assistant})=>{
+        const taskClient = state.clients.find(c=>c.id===task.clientId);
+        return `
+        <div class="list-item">
+          <div>
+            <strong>${assistant.name}</strong> — ${task.title||'(untitled task)'}
+            <div class="small">${taskClient?taskClient.name:'Internal / Modern Co.'}${task.dueDate?' · due '+parseYMD(task.dueDate).toLocaleDateString():''}</div>
+          </div>
+          <button class="secondary" onclick="ackTaskAssignment('${task.id}','${assistant.id}')">I'm ${assistant.name} — got it</button>
+        </div>`;
+      }).join("")}
     </div>` : ""}
 
     ${paymentsReady.length ? `
@@ -7959,6 +7977,30 @@ function renderTaskEditorModal(task){
     </div>
   `;
 }
+// Every open task's assignees who haven't acknowledged being put on it —
+// the in-app stand-in for "text Heidi/Tori when I assign them something,"
+// for anyone (like leadership sharing the Admin login) the normal
+// logged-in-as-yourself "my tasks" view doesn't reach.
+function unacknowledgedAssignments(){
+  const rows = [];
+  state.tasks.filter(t=>t.status!=="Done").forEach(t=>{
+    (t.assignees||[]).forEach(aid=>{
+      const acked = (t.assignmentAcks||[]).some(a=>a.assistantId===aid);
+      if(acked) return;
+      const assistant = state.settings.assistants.find(a=>a.id===aid);
+      if(assistant) rows.push({ task:t, assistant });
+    });
+  });
+  return rows;
+}
+function ackTaskAssignment(taskId, assistantId){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const acks = task.assignmentAcks || [];
+  if(acks.some(a=>a.assistantId===assistantId)) return;
+  const assistant = state.settings.assistants.find(a=>a.id===assistantId);
+  upsert("tasks", taskId, { assignmentAcks: [...acks, { assistantId, name: assistant?assistant.name:'', ackedAt:new Date().toISOString() }] });
+}
 function toggleSubtask(taskId, i){
   const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
   if(!task || !(task.subtasks||[])[i]) return;
@@ -8162,6 +8204,19 @@ async function saveTask(taskId){
       return;
     }
   }
+  // Tracks which assignees have acknowledged being put on this task — the
+  // "notify without texting" queue on the Dashboard reads this. An existing
+  // task that predates this feature (assignmentAcks never set) gets its
+  // current assignees grandfathered in as already-acked on first save, so
+  // editing something unrelated (due date, status) on a long-standing task
+  // doesn't suddenly flag it as a brand-new assignment. A genuinely new
+  // task, or a newly-added assignee on an existing tracked task, starts
+  // unacked — that's the real "you have something new" signal.
+  const existingTask = state.tasks.find(t=>t.id===taskId);
+  const prevAcks = existingTask ? existingTask.assignmentAcks : undefined;
+  const assignmentAcks = (existingTask && prevAcks===undefined)
+    ? assignees.map(id=>({ assistantId:id, ackedAt:new Date().toISOString() }))
+    : (prevAcks||[]).filter(ack=>assignees.includes(ack.assistantId));
   const payload = {
     title: document.getElementById("tf_title").value.trim(),
     clientId: document.getElementById("tf_client").value,
@@ -8174,6 +8229,7 @@ async function saveTask(taskId){
     goodForContent: document.getElementById("tf_good_for_content").checked,
     taskNumber,
     assignees,
+    assignmentAcks,
     subtasks: task.subtasks || [],
     discussion: task.discussion || [],
     completedAt
