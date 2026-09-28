@@ -308,7 +308,7 @@ const INTERNAL_CLIENT_ID = "internal";
 // existed before markets were tracked — new markets get added here as they
 // open rather than needing a schema change.
 const MARKETS = ["Lafayette","Baton Rouge","Denver","Virtual"];
-const STATUSES = ["To do","Researching","In progress","Pending approval","Done"];
+const STATUSES = ["To do","Researching","In progress","Paused","Pending approval","Done"];
 const TIER_THRESHOLDS = [50,75,90,100];
 // Real rate card from the Personal Assistant Services Agreement — same
 // pricing regardless of term type (pilot / 3-month / 12-month). A client
@@ -1905,9 +1905,20 @@ function daysOpen(task){
   const created = taskCreatedDate(task);
   return created ? (Date.now() - created.getTime())/86400000 : null;
 }
+// A cancelled/paused client's tasks that never got closed out otherwise
+// stick around forever in every "open task" view on the Dashboard, long
+// after the client is gone — used by both overdueTasks() and
+// tasksPastDueDate() below. Internal tasks and tasks whose client record
+// no longer exists always pass through (fail open, don't silently hide
+// a real data issue).
+function taskBelongsToActiveClient(t){
+  if(!t.clientId || t.clientId===INTERNAL_CLIENT_ID) return true;
+  const client = state.clients.find(c=>c.id===t.clientId);
+  return !client || !client.clientStatus || client.clientStatus==="active";
+}
 function overdueTasks(){
   return state.tasks
-    .filter(t=>t.status!=="Done")
+    .filter(t=>t.status!=="Done" && taskBelongsToActiveClient(t))
     .map(t=>({ task:t, days: daysOpen(t) }))
     .filter(x=>x.days!==null && x.days>=7)
     .sort((a,b)=>b.days-a.days);
@@ -1939,7 +1950,7 @@ function needsTermUpdate(client){
 function tasksPastDueDate(){
   const now = new Date();
   return state.tasks
-    .filter(t=>t.status!=="Done" && t.dueDate)
+    .filter(t=>t.status!=="Done" && t.dueDate && taskBelongsToActiveClient(t))
     .map(t=>({ task:t, daysLate: -daysUntil(parseYMD(t.dueDate), now) }))
     .filter(x=>x.daysLate > 0)
     .sort((a,b)=>b.daysLate-a.daysLate);
@@ -2460,7 +2471,7 @@ function renderAdminDashboard(){
   const totalPayrollHours = hoursInPeriod(state.timeEntries, period);
   const overdue = overdueTasks();
   const pastDue = tasksPastDueDate();
-  const openTasks = state.tasks.filter(t=>t.status!=="Done");
+  const openTasks = state.tasks.filter(t=>t.status!=="Done" && taskBelongsToActiveClient(t));
   const pending = state.tasks.filter(t=>t.status==="Pending approval");
   const clientAlerts = state.clients.map(tierAlert).filter(Boolean);
   const atRiskClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c));
