@@ -38,6 +38,12 @@ service cloud.firestore {
     // admin-only field in this app; Firestore rules can't restrict by
     // field without the bigger per-role-claims project noted above.
     match /vendors/{document=**} { allow read, write: if request.auth != null; }
+    // Client card purchase log (anti-theft accountability tool) — writable
+    // by assistants submitting a purchase, but only the admin-facing UI
+    // ever reads the review list back; same field-level caveat as vendors
+    // above (rules can't hide it from an assistant poking at devtools,
+    // that's the bigger per-role-claims project noted elsewhere).
+    match /cardPurchases/{document=**} { allow read, write: if request.auth != null; }
     match /settings/{document=**} { allow read, write: if request.auth != null; }
     match /reports/{document=**} { allow read, write: if request.auth != null; }
     // Written by a separate, external onboarding-dashboard project — this
