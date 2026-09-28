@@ -2574,7 +2574,7 @@ function renderAdminDashboard(){
       <h3>Payments Ready to Process</h3>
       <div class="small" style="margin-bottom:8px;">Flagged from a client's Add-Ons section — go charge these, then check them off as Paid there.</div>
       ${paymentsReady.map(({client,addOn,payment})=>`
-        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
           <div>
             <strong>${client.name}</strong> — ${addOn.label}: ${payment.label}
             <div class="small">flagged ${payment.readyMarkedAt?parseYMD(payment.readyMarkedAt).toLocaleDateString():'—'}</div>
@@ -2749,7 +2749,7 @@ function renderAddOnsTab(){
       <h3>Payments Due</h3>
       <div class="small" style="margin-bottom:10px;">Every unpaid deposit/progress/final payment across all add-on projects — set a due date on a payment (inside a client's Add-Ons section) to have it show up here, soonest first.</div>
       ${duePayments.length ? duePayments.map(({client,addOn,payment})=>`
-        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
           <div>
             <strong>${client.name}</strong> — ${addOn.label}: ${payment.label}
             <div class="small" style="${payment.dueDate<todayStr?'color:var(--danger);':''}">${payment.dueDate<todayStr?'Overdue — ':'Due '}${parseYMD(payment.dueDate).toLocaleDateString()}</div>
@@ -2769,7 +2769,7 @@ function renderAddOnsTab(){
       </div>
       ${filtered.length===0 ? `<div class="small">No add-ons${statusFilter!=='all'?' with status '+statusFilter:''} yet.</div>` :
         filtered.map(({client,addOn})=>`
-        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
           <div>
             <strong>${client.name}</strong> — ${addOn.category}: ${addOn.label}
             <div class="small">$${(addOn.flatFee||0).toFixed(0)} flat${addOn.monthlyMaintenance>0 ? ` + $${addOn.monthlyMaintenance}/mo maintenance${addOn.maintenanceActive===false?' (paused)':''}` : ''} · added ${addOn.addedDate ? parseYMD(addOn.addedDate).toLocaleDateString() : '—'}</div>
@@ -3364,18 +3364,34 @@ function renderLeadRow(l){
     </div>
   `;
 }
-function openLeadEditor(){
-  state.modal = { type:"leadEditor" };
+function openLeadEditor(prefill){
+  state.modal = { type:"leadEditor", prefill: prefill||{} };
   render();
 }
-function renderLeadEditorModal(){
+// Lets a client's own record start a lead with their info already filled
+// in — used by the "Send to Lead Organizer" button for a paused client or
+// someone who scheduled orientation and decided not now, so Kaylan can
+// follow up in a few months without retyping their contact info.
+function sendClientToLeadOrganizer(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  openLeadEditor({
+    name: client.name || "",
+    email: client.email || "",
+    phone: (client.profile && client.profile.phone) || "",
+    status: "Follow-up Needed",
+    notes: "Previously a TMC client — "
+  });
+}
+function renderLeadEditorModal(prefill){
+  prefill = prefill || {};
   return `
     <div class="modal">
       <h3>New lead</h3>
       <div class="row">
-        <div><label class="small">Name</label><input id="nl_name" placeholder="e.g. Jamie Rivera"></div>
-        <div><label class="small">Email</label><input id="nl_email" type="email"></div>
-        <div><label class="small">Phone</label><input id="nl_phone"></div>
+        <div><label class="small">Name</label><input id="nl_name" placeholder="e.g. Jamie Rivera" value="${escHtml(prefill.name||'')}"></div>
+        <div><label class="small">Email</label><input id="nl_email" type="email" value="${escHtml(prefill.email||'')}"></div>
+        <div><label class="small">Phone</label><input id="nl_phone" value="${escHtml(prefill.phone||'')}"></div>
       </div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Found us via</label>
@@ -3383,9 +3399,14 @@ function renderLeadEditorModal(){
             ${LEAD_SOURCES.map(s=>`<option value="${s}" ${s==='Other'?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
+        <div><label class="small">Status</label>
+          <select id="nl_status">
+            ${LEAD_STATUSES.map(s=>`<option value="${s}" ${(prefill.status||'New')===s?'selected':''}>${s}</option>`).join("")}
+          </select>
+        </div>
         <div><label class="small">Next follow-up</label><input id="nl_followup" type="date"></div>
       </div>
-      <div style="margin-top:8px;"><label class="small">Notes</label><textarea id="nl_notes" placeholder="What was discussed, how they found us, etc."></textarea></div>
+      <div style="margin-top:8px;"><label class="small">Notes</label><textarea id="nl_notes" placeholder="What was discussed, how they found us, etc.">${escHtml(prefill.notes||'')}</textarea></div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
         <button onclick="saveNewLead()">Add lead</button>
@@ -3402,7 +3423,7 @@ function saveNewLead(){
     email: document.getElementById("nl_email").value.trim(),
     phone: document.getElementById("nl_phone").value.trim(),
     source: document.getElementById("nl_source").value,
-    status: "New",
+    status: document.getElementById("nl_status").value,
     nextFollowUpDate: document.getElementById("nl_followup").value,
     notes: document.getElementById("nl_notes").value.trim(),
     createdDate: new Date().toISOString().slice(0,10)
@@ -3838,7 +3859,7 @@ function renderClientCRM(clientId){
   // billing/contract terms anyway. Hours used/remaining (what they DO need)
   // is still visible on the Tasks tab's hours card, no $ attached.
   const subtabs = [["profile","Profile"],["tasks","Tasks"]];
-  if(state.role==="admin") subtabs.push(["membership","Membership"]);
+  if(state.role==="admin") subtabs.push(["membership","Membership"],["softwareBuild","Software Build"]);
   subtabs.push(["emailTemplates","Email Templates"]);
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
@@ -3847,6 +3868,7 @@ function renderClientCRM(clientId){
       ${state.role==="admin" ? `
         <div style="display:flex;gap:8px;">
           <button class="secondary" onclick="openClientEditor('${client.id}')">Edit name</button>
+          <button class="secondary" onclick="sendClientToLeadOrganizer('${client.id}')" title="Paused and need to check back in, or scheduled orientation and decided not now — this doesn't change anything on their record here, just adds a follow-up entry to Lead Organizer.">Send to Lead Organizer</button>
           <button class="danger" onclick="deleteClientPermanently('${client.id}')">Delete client</button>
         </div>
       ` : ""}
@@ -3858,6 +3880,7 @@ function renderClientCRM(clientId){
     ${state.crmSubTab==="profile" ? renderClientProfile(client) : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
     ${state.crmSubTab==="membership" && state.role==="admin" ? renderClientMembership(client) : ""}
+    ${state.crmSubTab==="softwareBuild" && state.role==="admin" ? renderClientAddOnsSection(client) : ""}
     ${state.crmSubTab==="emailTemplates" ? renderClientEmailTemplates(client) : ""}
   `;
 }
@@ -5427,7 +5450,6 @@ function renderClientMembership(client){
       </div>
       <div class="small">${(client.assistantIds||[]).map(assistantName).join(", ") || "No assistant assigned yet."}</div>
     </div>
-    ${renderClientAddOnsSection(client)}
   `;
 }
 function renderClientAddOnsSection(client){
@@ -6321,6 +6343,12 @@ function viewClientMembership(clientId){
   state.activeTab = "clients";
   state.selectedClientId = clientId;
   state.crmSubTab = "membership";
+  render();
+}
+function viewClientSoftwareBuild(clientId){
+  state.activeTab = "clients";
+  state.selectedClientId = clientId;
+  state.crmSubTab = "softwareBuild";
   render();
 }
 
@@ -8542,7 +8570,7 @@ function renderModal(){
     : state.modal.type==="imageViewer" ? renderImageViewerModal(state.modal.dataUrl)
     : state.modal.type==="orgChartSeat" ? renderOrgChartSeatModal(state.modal.rowId, state.modal.seat)
     : state.modal.type==="contentTaskViewer" ? renderContentTaskViewerModal(state.modal.taskId)
-    : state.modal.type==="leadEditor" ? renderLeadEditorModal()
+    : state.modal.type==="leadEditor" ? renderLeadEditorModal(state.modal.prefill)
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
