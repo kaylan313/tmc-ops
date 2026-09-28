@@ -6047,7 +6047,13 @@ function renderPayrollTool(){
   const isPayrollPeriodPreset = pf.preset==="period" || pf.preset==="lastPeriod";
   const internal = internalHoursStatus(period);
   const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
-  const rows = realClients.map(c=>{
+  // "Paid for" hours/revenue only make sense for clients currently active —
+  // expectedHoursPerPayrollPeriod() just reads packageHours with no
+  // active/cancelled check of its own, so a cancelled client's leftover
+  // package data was silently inflating every stat here (and the "across
+  // N clients" count) even though they're no longer being billed.
+  const activeClients = realClients.filter(c=>!c.clientStatus || c.clientStatus==="active");
+  const rows = activeClients.map(c=>{
     const expected = expectedHoursPerPayrollPeriod(c);
     const actual = hoursForClientInPeriod(c.id, period);
     return { client:c, expected, actual, variance: actual - expected };
@@ -6055,11 +6061,18 @@ function renderPayrollTool(){
   const totalExpected = rows.reduce((s,r)=>s+r.expected,0);
   const totalActual = rows.reduce((s,r)=>s+r.actual,0);
   const flagged = rows.filter(r=>Math.abs(r.variance)>=2);
-  const totalRevenue = realClients.reduce((s,c)=>s+expectedRevenuePerPayrollPeriod(c),0);
+  const totalRevenue = activeClients.reduce((s,c)=>s+expectedRevenuePerPayrollPeriod(c),0);
   const totalPayrollCost = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
   const estMargin = totalRevenue - totalPayrollCost;
 
-  const shownAssistants = state.settings.assistants.filter(a=>pf.assistantId==="all" || a.id===pf.assistantId);
+  // Former employees only show up here if they're actually still owed
+  // something for this period (unpaid hours from right before they left) —
+  // otherwise they just clutter the list every payroll period forever.
+  const shownAssistants = state.settings.assistants.filter(a=>{
+    if(pf.assistantId!=="all") return a.id===pf.assistantId;
+    if(a.active!==false) return true;
+    return payrollHoursForAssistant(a.id, period, pf.adminOnly) > 0;
+  });
   const periodLabel = PAYROLL_FILTER_PRESETS.find(([v])=>v===pf.preset)[1];
 
   return `
@@ -6099,7 +6112,7 @@ function renderPayrollTool(){
       <div class="stat-tile">
         <div class="stat-label">Client hours paid for (prorated)</div>
         <div class="stat-value">${totalExpected.toFixed(1)}</div>
-        <div class="stat-sub">this payroll period, across ${realClients.length} clients</div>
+        <div class="stat-sub">this payroll period, across ${activeClients.length} active clients</div>
       </div>
       <div class="stat-tile">
         <div class="stat-label">Client hours actually clocked</div>
