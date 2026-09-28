@@ -2888,15 +2888,15 @@ function renderContentEntryRow(e){
         </div>
       </div>
       <div class="row">
-        <div><label class="small">Title</label><input value="${e.title||''}" onchange="updateContentEntry('${e.id}','title',this.value)"></div>
-        <div><label class="small">Platform</label><input value="${e.platform||''}" list="content-platform-options" placeholder="Instagram, TikTok, etc." onchange="updateContentEntry('${e.id}','platform',this.value)"></div>
+        <div><label class="small">Title</label><input id="content_title_${e.id}" value="${e.title||''}" onchange="updateContentEntry('${e.id}','title',this.value)"></div>
+        <div><label class="small">Platform</label><input id="content_platform_${e.id}" value="${e.platform||''}" list="content-platform-options" placeholder="Instagram, TikTok, etc." onchange="updateContentEntry('${e.id}','platform',this.value)"></div>
         ${e.type==="scheduled" ? `<div><label class="small">Status</label>
           <select onchange="updateContentEntry('${e.id}','status',this.value)">
             ${["Idea","Drafting","Ready","Posted"].map(s=>`<option value="${s}" ${e.status===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>` : ""}
       </div>
-      <div><label class="small">Notes</label><textarea onchange="updateContentEntry('${e.id}','notes',this.value)">${e.notes||''}</textarea></div>
+      <div><label class="small">Notes</label><textarea id="content_notes_${e.id}" onchange="updateContentEntry('${e.id}','notes',this.value)">${e.notes||''}</textarea></div>
     </div>
   `;
 }
@@ -2937,11 +2937,11 @@ function renderSocialLoginRow(s){
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
       <div class="row">
-        <div><label class="small">Platform</label><input value="${s.platform||''}" placeholder="Instagram, Facebook, TikTok..." onchange="updateSocialLogin('${s.id}','platform',this.value)"></div>
-        <div><label class="small">Username/Email</label><input value="${s.username||''}" onchange="updateSocialLogin('${s.id}','username',this.value)"></div>
-        <div><label class="small">Password</label><input type="text" value="${s.password||''}" onchange="updateSocialLogin('${s.id}','password',this.value)"></div>
+        <div><label class="small">Platform</label><input id="social_platform_${s.id}" value="${s.platform||''}" placeholder="Instagram, Facebook, TikTok..." onchange="updateSocialLogin('${s.id}','platform',this.value)"></div>
+        <div><label class="small">Username/Email</label><input id="social_username_${s.id}" value="${s.username||''}" onchange="updateSocialLogin('${s.id}','username',this.value)"></div>
+        <div><label class="small">Password</label><input id="social_password_${s.id}" type="text" value="${s.password||''}" onchange="updateSocialLogin('${s.id}','password',this.value)"></div>
       </div>
-      <div><label class="small">Notes</label><input value="${s.notes||''}" placeholder="2FA method, recovery info, etc." onchange="updateSocialLogin('${s.id}','notes',this.value)"></div>
+      <div><label class="small">Notes</label><input id="social_notes_${s.id}" value="${s.notes||''}" placeholder="2FA method, recovery info, etc." onchange="updateSocialLogin('${s.id}','notes',this.value)"></div>
       <div><button class="secondary" onclick="removeSocialLogin('${s.id}')">Remove</button></div>
     </div>
   `;
@@ -2967,7 +2967,7 @@ function renderContentInsightRow(i){
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
       <div><label class="small">Date</label><input type="date" value="${i.date||''}" onchange="updateContentInsight('${i.id}','date',this.value)"></div>
-      <div><textarea onchange="updateContentInsight('${i.id}','notes',this.value)" placeholder="e.g. Reels are getting 3x the engagement of static posts this month">${i.notes||''}</textarea></div>
+      <div><textarea id="insight_notes_${i.id}" onchange="updateContentInsight('${i.id}','notes',this.value)" placeholder="e.g. Reels are getting 3x the engagement of static posts this month">${i.notes||''}</textarea></div>
       <div><button class="secondary" onclick="removeContentInsight('${i.id}')">Remove</button></div>
     </div>
   `;
@@ -2993,7 +2993,7 @@ function renderContentGoalRow(g){
   return `
     <div class="checklist-item">
       <input type="checkbox" ${g.done?'checked':''} onchange="updateContentGoal('${g.id}','done',this.checked)">
-      <input value="${(g.text||'').replace(/"/g,'&quot;')}" style="flex:1;" onchange="updateContentGoal('${g.id}','text',this.value)">
+      <input id="goal_text_${g.id}" value="${(g.text||'').replace(/"/g,'&quot;')}" style="flex:1;" onchange="updateContentGoal('${g.id}','text',this.value)">
       <input type="date" style="width:150px;" value="${g.targetDate||''}" onchange="updateContentGoal('${g.id}','targetDate',this.value)">
       <button class="secondary" onclick="removeContentGoal('${g.id}')">✕</button>
     </div>
@@ -3393,8 +3393,8 @@ function renderVendorRow(v, isAdmin){
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
       <div class="row">
-        <div><label class="small">Name</label>${isAdmin ? `<input value="${escHtml(v.name||'')}" onchange="updateVendorDirectoryField('${v.id}','name',this.value)">` : `<div>${escHtml(v.name||'')}</div>`}</div>
-        <div><label class="small">Profession</label>${isAdmin ? `<input value="${escHtml(v.profession||'')}" onchange="updateVendorDirectoryField('${v.id}','profession',this.value)" placeholder="Electrician, photographer, caterer, etc.">` : `<div>${escHtml(v.profession||'')}</div>`}</div>
+        <div><label class="small">Name</label>${isAdmin ? `<input id="vd_name_${v.id}" value="${escHtml(v.name||'')}" onchange="updateVendorDirectoryField('${v.id}','name',this.value)">` : `<div>${escHtml(v.name||'')}</div>`}</div>
+        <div><label class="small">Profession</label>${isAdmin ? `<input id="vd_profession_${v.id}" value="${escHtml(v.profession||'')}" onchange="updateVendorDirectoryField('${v.id}','profession',this.value)" placeholder="Electrician, photographer, caterer, etc.">` : `<div>${escHtml(v.profession||'')}</div>`}</div>
         <div><label class="small">Market</label>${isAdmin ? `
           <select onchange="updateVendorDirectoryField('${v.id}','market',this.value)">
             <option value="">Any</option>
@@ -3402,19 +3402,19 @@ function renderVendorRow(v, isAdmin){
           </select>` : `<div>${escHtml(v.market||'Any')}</div>`}</div>
       </div>
       <div class="row">
-        <div><label class="small">Phone</label>${isAdmin ? `<input value="${escHtml(v.phone||'')}" onchange="updateVendorDirectoryField('${v.id}','phone',this.value)">` : `<div>${escHtml(v.phone||'—')}</div>`}</div>
-        <div><label class="small">Email</label>${isAdmin ? `<input type="email" value="${escHtml(v.email||'')}" onchange="updateVendorDirectoryField('${v.id}','email',this.value)">` : `<div>${escHtml(v.email||'—')}</div>`}</div>
+        <div><label class="small">Phone</label>${isAdmin ? `<input id="vd_phone_${v.id}" value="${escHtml(v.phone||'')}" onchange="updateVendorDirectoryField('${v.id}','phone',this.value)">` : `<div>${escHtml(v.phone||'—')}</div>`}</div>
+        <div><label class="small">Email</label>${isAdmin ? `<input id="vd_email_${v.id}" type="email" value="${escHtml(v.email||'')}" onchange="updateVendorDirectoryField('${v.id}','email',this.value)">` : `<div>${escHtml(v.email||'—')}</div>`}</div>
         <div><label class="small">Rating</label>${isAdmin ? `
           <select onchange="updateVendorDirectoryField('${v.id}','rating',this.value?Number(this.value):null)">
             <option value="">Not rated</option>
             ${[1,2,3,4,5].map(n=>`<option value="${n}" ${Number(v.rating)===n?'selected':''}>${'★'.repeat(n)}</option>`).join("")}
           </select>` : `<div>${v.rating ? '★'.repeat(v.rating) : 'Not rated'}</div>`}</div>
       </div>
-      <div><label class="small">Notes</label>${isAdmin ? `<textarea onchange="updateVendorDirectoryField('${v.id}','notes',this.value)" placeholder="Quality notes, how to reach them, anything the team should know">${escHtml(v.notes||'')}</textarea>` : `<div class="small">${escHtml(v.notes||'No notes yet.')}</div>`}</div>
+      <div><label class="small">Notes</label>${isAdmin ? `<textarea id="vd_notes_${v.id}" onchange="updateVendorDirectoryField('${v.id}','notes',this.value)" placeholder="Quality notes, how to reach them, anything the team should know">${escHtml(v.notes||'')}</textarea>` : `<div class="small">${escHtml(v.notes||'No notes yet.')}</div>`}</div>
       ${isAdmin ? `
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cream-dark);">
         <div class="row">
-          <div><label class="small">Commission %</label><input type="number" step="0.1" min="0" max="100" value="${v.commissionPercent!=null?v.commissionPercent:''}" onchange="updateVendorDirectoryField('${v.id}','commissionPercent',this.value?Number(this.value):null)" style="max-width:100px;"></div>
+          <div><label class="small">Commission %</label><input id="vd_commission_${v.id}" type="number" step="0.1" min="0" max="100" value="${v.commissionPercent!=null?v.commissionPercent:''}" onchange="updateVendorDirectoryField('${v.id}','commissionPercent',this.value?Number(this.value):null)" style="max-width:100px;"></div>
           <div><label class="small">Total earned from this vendor</label><div style="padding-top:6px;font-weight:600;">$${vendorTotal.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div></div>
         </div>
         <div style="margin-top:6px;">
@@ -3487,7 +3487,7 @@ function renderPausedClientRow(c){
       <div class="row">
         <div><label class="small">Last re-engagement contact</label><input type="date" value="${c.lastReengagementDate||''}" onchange="updateClientField('${c.id}','lastReengagementDate',this.value)"></div>
       </div>
-      <div><label class="small">Re-engagement notes</label><textarea onchange="updateClientField('${c.id}','reengagementNotes',this.value)" placeholder="What's been tried, their response, when to try again">${c.reengagementNotes||''}</textarea></div>
+      <div><label class="small">Re-engagement notes</label><textarea id="reengage_notes_${c.id}" onchange="updateClientField('${c.id}','reengagementNotes',this.value)" placeholder="What's been tried, their response, when to try again">${c.reengagementNotes||''}</textarea></div>
       <div><button class="secondary" onclick="openClient('${c.id}')">View client</button></div>
     </div>
   `;
@@ -4904,7 +4904,7 @@ function renderPaymentSectionBody(client){
       <input type="checkbox" ${client.salesReceiptCreated?'checked':''} onchange="updateClientField('${client.id}','salesReceiptCreated',this.checked)">
       Sales receipt created and payment collected in QuickBooks.
     </label>
-    <div><label class="small">Secure payment link (if used)</label><input value="${client.paymentLink||''}" placeholder="https://…secure payment link…" onchange="updateClientField('${client.id}','paymentLink',this.value)"></div>
+    <div><label class="small">Secure payment link (if used)</label><input id="pay_link_${client.id}" value="${client.paymentLink||''}" placeholder="https://…secure payment link…" onchange="updateClientField('${client.id}','paymentLink',this.value)"></div>
     <label style="display:flex;align-items:center;gap:8px;margin-top:12px;">
       <input type="checkbox" ${client.paymentConfirmed?'checked':''} onchange="updateClientField('${client.id}','paymentConfirmed',this.checked)">
       Client has entered payment info and card on file is confirmed.
@@ -5264,8 +5264,8 @@ function renderClientMembership(client){
       </div>
       <div class="small" style="margin-top:4px;">The anchor date is the original date cycles are calculated from — it's <strong>not</strong> this period's start date, and normally shouldn't need to change once set. Auto-fills from the contract start date on the Agreement card below; only change it if this client's hours actually reset on a different day than their contract began. The "Current period" box on the right always shows the live, rolling 30-day window — that's the one to go by day-to-day.</div>
       <div class="row" style="margin-top:10px;">
-        <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
-        <div><label class="small">Package price ($, billed ${cycleLabel(client.cycleType).toLowerCase()}) ${currentTier?'':'(custom)'}</label><input type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Package hours ${currentTier?'':'(custom)'}</label><input id="pkg_hours_${client.id}" value="${client.packageHours||0}" onchange="updateClientField('${client.id}','packageHours',parseFloat(this.value))"></div>
+        <div><label class="small">Package price ($, billed ${cycleLabel(client.cycleType).toLowerCase()}) ${currentTier?'':'(custom)'}</label><input id="pkg_price_${client.id}" type="number" step="1" value="${client.packagePrice||0}" onchange="updateClientField('${client.id}','packagePrice',parseFloat(this.value)||0)"></div>
       </div>
       <div class="stat-row" style="margin-top:10px;">
         <div class="stat-tile">
@@ -5313,8 +5313,8 @@ function renderClientMembership(client){
         </div>
       </div>
       <div class="row" style="margin-top:10px;">
-        <div><label class="small">Client portal code</label><input value="${client.portalCode||''}" onchange="updateClientField('${client.id}','portalCode',this.value)"></div>
-        <div><label class="small">Client email (for weekly reports)</label><input type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
+        <div><label class="small">Client portal code</label><input id="portal_code_${client.id}" value="${client.portalCode||''}" onchange="updateClientField('${client.id}','portalCode',this.value)"></div>
+        <div><label class="small">Client email (for weekly reports)</label><input id="portal_email_${client.id}" type="email" value="${client.email||''}" onchange="updateClientField('${client.id}','email',this.value)"></div>
       </div>
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small">Payment method on file — which saved method should we charge for this client?</label>
@@ -5326,7 +5326,7 @@ function renderClientMembership(client){
               <option value="ach" ${client.paymentMethodType==='ach'?'selected':''}>ACH</option>
             </select>
           </div>
-          <div><label class="small">Reference (e.g. "Visa ending 4242" or "Chase checking ending 1234")</label><input value="${client.paymentMethodNote||''}" onchange="updateClientField('${client.id}','paymentMethodNote',this.value)" placeholder="Card/account nickname or last 4 only"></div>
+          <div><label class="small">Reference (e.g. "Visa ending 4242" or "Chase checking ending 1234")</label><input id="pay_method_note_${client.id}" value="${client.paymentMethodNote||''}" onchange="updateClientField('${client.id}','paymentMethodNote',this.value)" placeholder="Card/account nickname or last 4 only"></div>
         </div>
         <div class="small" style="margin-top:4px;color:var(--warn);">Reference only — never enter a full card number, CVV, or bank account number here. Look up the actual method in QuickBooks when charging; this field is just so we always know which saved method is current.</div>
       </div>
@@ -5404,8 +5404,8 @@ function renderAddOnRow(clientId, a){
         </div>
       </div>
       <div class="row">
-        <div><label class="small">Flat fee ($)</label><input type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
-        <div><label class="small">Monthly maintenance ($)</label><input type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Flat fee ($)</label><input id="addon_fee_${a.id}" type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Monthly maintenance ($)</label><input id="addon_maint_${a.id}" type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
         <div><label class="small">Date added</label><input type="date" value="${a.addedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','addedDate',this.value)"></div>
       </div>
       ${a.monthlyMaintenance>0 ? `
@@ -5413,7 +5413,7 @@ function renderAddOnRow(clientId, a){
         <input type="checkbox" ${a.maintenanceActive!==false?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','maintenanceActive',this.checked)">
         Monthly maintenance currently active/billing
       </label>` : ""}
-      <div><label class="small">Notes</label><textarea onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
+      <div><label class="small">Notes</label><textarea id="addon_notes_${a.id}" onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Payment Schedule</label>
         ${(a.payments&&a.payments.length) ? a.payments.map(p=>renderAddOnPaymentRow(clientId,a.id,p)).join("") : `
@@ -5429,7 +5429,7 @@ function renderAddOnPaymentRow(clientId, addOnId, p){
   const overdue = !p.paid && p.dueDate && p.dueDate < todayStr;
   return `
     <div class="row" style="align-items:flex-end;margin-top:6px;">
-      <div><label class="small">${p.label}</label><input type="number" step="1" value="${p.amount||0}" onchange="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
+      <div><label class="small">${p.label}</label><input id="addon_pay_amt_${p.id}" type="number" step="1" value="${p.amount||0}" onchange="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
       <div><label class="small">Due${overdue?' — overdue':''}</label><input type="date" value="${p.dueDate||''}" onchange="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','dueDate',this.value)" style="${overdue?'border-color:var(--danger);':''}"></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
         <input type="checkbox" ${p.paid?'checked':''} onchange="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','paid',this.checked)">
@@ -6191,7 +6191,7 @@ function renderPayrollTool(){
       <h3>Admin/internal hours budget</h3>
       <div class="small">Set the max hours per payroll period the team should spend on "Internal / Modern Co." work before it eats into margin.</div>
       <div class="row" style="margin-top:8px;">
-        <div><input type="number" step="0.5" value="${state.settings.internalHoursBudget||''}" placeholder="e.g. 20" onchange="updateInternalBudget(this.value)"></div>
+        <div><input id="internal_hours_budget" type="number" step="0.5" value="${state.settings.internalHoursBudget||''}" placeholder="e.g. 20" onchange="updateInternalBudget(this.value)"></div>
       </div>
     </div>
 
@@ -6761,7 +6761,7 @@ function renderTeamAdmin(){
     </div>` : ""}
     <div class="card">
       <h3>Admin passcode</h3>
-      <input value="${state.settings.adminPasscode}" onchange="updateAdminPasscode(this.value)">
+      <input id="admin_passcode" value="${state.settings.adminPasscode}" onchange="updateAdminPasscode(this.value)">
     </div>
   `;
 }
@@ -6775,7 +6775,7 @@ function renderAssistantRow(a){
       <div class="flex-between">
         <div><strong>${a.name}</strong> <span class="small">· agreement ${a.agreementSigned ? "signed" : "not yet signed"}</span></div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <input style="width:140px;" value="${a.accessCode||''}" placeholder="access code" onchange="updateAssistantCode('${a.id}',this.value)">
+          <input id="asst_code_${a.id}" style="width:140px;" value="${a.accessCode||''}" placeholder="access code" onchange="updateAssistantCode('${a.id}',this.value)">
           <button class="danger" onclick="removeEmployee('${a.id}')">Remove</button>
         </div>
       </div>
@@ -6797,19 +6797,19 @@ function renderAssistantRow(a){
           </select>
         </div>
         ${a.payType==="flat" ? `
-        <div><label class="small">Flat rate per pay period ($)</label><input type="number" step="1" value="${a.flatRatePerPeriod||0}" onchange="updateAssistantField('${a.id}','flatRatePerPeriod',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Flat rate per pay period ($)</label><input id="asst_flatrate_${a.id}" type="number" step="1" value="${a.flatRatePerPeriod||0}" onchange="updateAssistantField('${a.id}','flatRatePerPeriod',parseFloat(this.value)||0)"></div>
         ` : `
-        <div><label class="small">Hourly rate ($)</label><input type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Hourly rate ($)</label><input id="asst_hourlyrate_${a.id}" type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
         `}
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
-        <div><label class="small">Email (for payroll reports)</label><input type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
+        <div><label class="small">Email (for payroll reports)</label><input id="asst_email_${a.id}" type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
         <div><label class="small">Market</label>
           <select onchange="updateAssistantField('${a.id}','market',this.value)">
             ${MARKETS.map(m=>`<option value="${m}" ${(a.market||'Lafayette')===m?'selected':''}>${m}</option>`).join("")}
           </select>
         </div>
       </div>
-      <div><label class="small">Document upload folder — their private Google Drive folder link, for License &amp; W9 uploads (Onboarding tab shows them a button that opens this)</label><input value="${a.driveUploadFolderUrl||''}" placeholder="https://drive.google.com/drive/folders/..." onchange="updateAssistantField('${a.id}','driveUploadFolderUrl',this.value.trim())"></div>
+      <div><label class="small">Document upload folder — their private Google Drive folder link, for License &amp; W9 uploads (Onboarding tab shows them a button that opens this)</label><input id="asst_drivefolder_${a.id}" value="${a.driveUploadFolderUrl||''}" placeholder="https://drive.google.com/drive/folders/..." onchange="updateAssistantField('${a.id}','driveUploadFolderUrl',this.value.trim())"></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
         <input type="checkbox" ${a.isContentCreator?'checked':''} onchange="updateAssistantField('${a.id}','isContentCreator',this.checked)">
         Content Creator — logs in to a restricted view showing only the Content Calendar
