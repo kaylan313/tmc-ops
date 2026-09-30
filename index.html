@@ -3862,6 +3862,10 @@ function setClientMarketFilter(val){ state.clientMarketFilter = val; render(); }
 // clients don't go through the pilot -> 3month -> 1year membership
 // lifecycle at all. Checked in order; first match wins.
 const CLIENT_GROUP_DEFS = [
+  // Checked first — a client with an active software build/custom package
+  // shows up here instead of their term group, not in both, so builds
+  // don't get lost mixed in among regular Pilot/3-Month/1-Year clients.
+  { key:"softwareBuild", label:"Software Builds & Custom Packages", match:c=>(c.addOns||[]).some(a=>a.status!=="Cancelled") },
   { key:"oneTime", label:"One-Time", match:c=>{
       const tier = PACKAGE_TIERS.find(t=>t.hours===c.packageHours && t.price===c.packagePrice);
       return !!(tier && tier.key.startsWith("reset_"));
