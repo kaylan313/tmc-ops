@@ -2391,8 +2391,9 @@ function renderAppShell(){
   const tabs = isContentCreator
     ? [["content","Content Calendar"]]
     : state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["vendors","Vendors"],["cardPurchases","Card Purchases"],["scorecard","Scorecard"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
-    : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["onboarding","Onboarding"]];
+    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["vendors","Vendors"],["cardPurchases","Card Purchases"],["scorecard","Scorecard"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
+    : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["onboarding","Onboarding"],
+       ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : [])];
 
   app.innerHTML = `
     <div class="app-shell">
@@ -2434,6 +2435,7 @@ function renderMain(){
     case "leads": return state.role==="admin" ? renderLeadOrganizerTab() : "";
     case "vendors": return renderVendorsTab();
     case "cardPurchases": return state.role==="admin" ? renderCardPurchasesTab() : "";
+    case "builds": return renderBuildsTab();
     case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
@@ -5707,18 +5709,44 @@ function renderAddOnRow(clientId, a){
       </label>` : ""}
       <div><label class="small">Notes</label><textarea id="addon_notes_${a.id}" onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Flat-Fee Build — Assistant Pay (optional)</label>
+        <div class="small" style="margin-bottom:6px;">For a flat-fee build an assistant does instead of hourly work — her cut is a % of this build fee, paid out as each payment milestone below is actually received. Leave blank if this add-on isn't assistant-built work.</div>
+        <div class="row">
+          <div><label class="small">Assigned assistant</label>
+            <select onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantId',this.value||null)">
+              <option value="">— None —</option>
+              ${state.settings.assistants.filter(x=>x.active!==false).map(x=>`<option value="${x.id}" ${a.buildAssistantId===x.id?'selected':''}>${x.name}</option>`).join("")}
+            </select>
+          </div>
+          <div><label class="small">Her % of build fee</label><input id="addon_buildpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.buildAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
+          <div><label class="small">Day 1 (deposit received)</label><input type="date" value="${a.buildStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','buildStartDate',this.value)"></div>
+        </div>
+      </div>
+      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Payment Schedule</label>
-        ${(a.payments&&a.payments.length) ? a.payments.map(p=>renderAddOnPaymentRow(clientId,a.id,p)).join("") : `
+        ${(a.payments&&a.payments.length) ? a.payments.map(p=>renderAddOnPaymentRow(clientId,a,p)).join("") : `
           <div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>
         `}
       </div>
+      ${a.buildAssistantId ? `
+      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <div class="flex-between">
+          <label class="small" style="font-weight:600;">Build To-Dos &amp; Deadlines</label>
+          <button class="secondary" style="padding:2px 8px;" onclick="addBuildTodo('${clientId}','${a.id}')">+ Add to-do</button>
+        </div>
+        ${(a.buildTodos&&a.buildTodos.length) ? renderBuildTodoList(clientId, a, true) : `
+          <div class="small" style="margin-top:6px;">No to-dos yet. <a href="#" onclick="seedDefaultBuildTodos('${clientId}','${a.id}');return false;">Start from the standard build checklist</a>, or add your own.</div>
+        `}
+      </div>` : ""}
       <div><button class="secondary" onclick="removeClientAddOn('${clientId}','${a.id}')">Remove</button></div>
     </div>
   `;
 }
-function renderAddOnPaymentRow(clientId, addOnId, p){
+function renderAddOnPaymentRow(clientId, a, p){
+  const addOnId = a.id;
   const todayStr = new Date().toISOString().slice(0,10);
   const overdue = !p.paid && p.dueDate && p.dueDate < todayStr;
+  const cut = buildAssistantCut(a, p);
   return `
     <div class="row" style="align-items:flex-end;margin-top:6px;">
       <div><label class="small">${p.label}</label><input id="addon_pay_amt_${p.id}" type="number" step="1" value="${p.amount||0}" onchange="updateAddOnPaymentField('${clientId}','${addOnId}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
@@ -5728,6 +5756,7 @@ function renderAddOnPaymentRow(clientId, addOnId, p){
         Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+')' : ''}
       </label>
     </div>
+    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${assistantName(a.buildAssistantId)} earns $${cut.toFixed(2)} (${a.buildAssistantPercent}%) ${p.paid?'— counted in her payroll for '+parseYMD(p.paidDate).toLocaleDateString():'once this payment is marked paid'}</div>` : ""}
     ${!p.paid ? `
     <div style="margin-top:2px;">
       ${p.readyToProcess
@@ -5736,12 +5765,105 @@ function renderAddOnPaymentRow(clientId, addOnId, p){
     </div>` : ""}
   `;
 }
+function renderBuildTodoList(clientId, a, isAdmin){
+  const phases = [];
+  (a.buildTodos||[]).forEach(t=>{ if(!phases.includes(t.phase)) phases.push(t.phase); });
+  return phases.map(phase=>`
+    <div style="margin-top:8px;">
+      <div class="small" style="font-weight:600;">${phase}</div>
+      ${a.buildTodos.filter(t=>t.phase===phase).map(t=>{
+        const due = buildTodoDueDate(a, t);
+        const overdue = !t.done && due && due.getTime() < Date.now();
+        return `
+        <div class="checklist-item">
+          <input type="checkbox" ${t.done?'checked':''} onchange="toggleBuildTodo('${clientId}','${a.id}','${t.id}',this.checked)">
+          <label style="flex:1;">${escHtml(t.text)}${due?` <span class="small" style="${overdue?'color:var(--danger);':''}">— ${overdue?'overdue, was due':'due'} ${due.toLocaleDateString()}</span>`:''}</label>
+          ${isAdmin ? `<button class="secondary" style="padding:2px 8px;" onclick="removeBuildTodo('${clientId}','${a.id}','${t.id}')">✕</button>` : ""}
+        </div>`;
+      }).join("")}
+    </div>
+  `).join("");
+}
 // Per the SOW template's standard payment schedule: 50% deposit at
 // signing, 25% progress payment when build/revisions are complete, 25%
 // final payment at project handoff. Amounts default to that split but
 // stay independently editable per payment afterward — real projects
 // sometimes negotiate a different split, and editing here should never
 // silently get overwritten by a later flat-fee change.
+// A reasonable generic starting checklist for a flat-fee build assigned to
+// an assistant (website build, dashboard, automation, etc.) — phases match
+// the standard build/revision/handoff shape most of these projects follow.
+// Admin can edit/remove/add items per build since real scope always
+// varies; this is just a fast starting point, not a fixed template.
+const DEFAULT_BUILD_TODOS = [
+  { phase:"Setup", text:"Review intake details (brand, colors, fonts, logo, content)", dueDayOffset:3 },
+  { phase:"Setup", text:"Collect any outstanding content/photos from the client", dueDayOffset:3 },
+  { phase:"Setup", text:"Send design direction for admin approval", dueDayOffset:3 },
+  { phase:"Build", text:"Build out all pages/features", dueDayOffset:10 },
+  { phase:"Build", text:"Send full build to admin for review", dueDayOffset:10 },
+  { phase:"Build", text:"Send to client for their review", dueDayOffset:14 },
+  { phase:"Revisions", text:"Complete each round of revisions within 2 business days", dueDayOffset:28 },
+  { phase:"Revisions", text:"Final check across devices after the last round", dueDayOffset:28 },
+  { phase:"Handoff", text:"Send details for the how-to guide", dueDayOffset:28 },
+  { phase:"Handoff", text:"Submit all deliverables, confirm launch-ready", dueDayOffset:28 }
+];
+function seedDefaultBuildTodos(clientId, addOnId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=>{
+    if(a.id!==addOnId) return a;
+    if(a.buildTodos && a.buildTodos.length) return a; // never overwrite existing work
+    return { ...a, buildTodos: DEFAULT_BUILD_TODOS.map(t=>({ id:newId("todo"), ...t, done:false, doneAt:"" })) };
+  });
+  upsert("clients", clientId, { addOns });
+}
+function addBuildTodo(clientId, addOnId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const text = (prompt("To-do text:") || "").trim();
+  if(!text) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? {
+    ...a,
+    buildTodos: [...(a.buildTodos||[]), { id:newId("todo"), phase:"Build", text, dueDayOffset:null, done:false, doneAt:"" }]
+  } : a);
+  upsert("clients", clientId, { addOns });
+}
+function updateBuildTodoField(clientId, addOnId, todoId, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=>{
+    if(a.id!==addOnId) return a;
+    const buildTodos = (a.buildTodos||[]).map(t=> t.id===todoId ? { ...t, [field]:value } : t);
+    return { ...a, buildTodos };
+  });
+  upsert("clients", clientId, { addOns });
+}
+function toggleBuildTodo(clientId, addOnId, todoId, done){
+  updateBuildTodoField(clientId, addOnId, todoId, "done", done);
+  updateBuildTodoField(clientId, addOnId, todoId, "doneAt", done ? new Date().toISOString() : "");
+}
+function removeBuildTodo(clientId, addOnId, todoId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!confirm("Remove this to-do?")) return;
+  const addOns = (client.addOns||[]).map(a=>{
+    if(a.id!==addOnId) return a;
+    return { ...a, buildTodos: (a.buildTodos||[]).filter(t=>t.id!==todoId) };
+  });
+  upsert("clients", clientId, { addOns });
+}
+// The assistant's cut of a single payment milestone — e.g. 25% of the
+// deposit — derived live from the existing payment schedule rather than
+// stored separately, so there's only ever one set of numbers to keep in
+// sync (the client's own payment amounts).
+function buildAssistantCut(addOn, payment){
+  if(!addOn.buildAssistantId || !addOn.buildAssistantPercent) return 0;
+  return Math.round((payment.amount||0) * (addOn.buildAssistantPercent/100) * 100) / 100;
+}
+function buildTodoDueDate(addOn, todo){
+  if(!addOn.buildStartDate || todo.dueDayOffset==null) return null;
+  return new Date(parseYMD(addOn.buildStartDate).getTime() + todo.dueDayOffset*24*3600000);
+}
 function defaultAddOnPayments(flatFee){
   const fee = flatFee || 0;
   return [
@@ -6347,6 +6469,27 @@ function payrollAmountForAssistant(assistant, hours){
   if(assistant.payType==="flat") return assistant.flatRatePerPeriod||0;
   return hours*(assistant.hourlyRate||0);
 }
+// Flat-fee build payouts (website builds, etc.) for an assistant — counted
+// in whichever payroll period the client's payment was actually marked
+// paid, not when the build was assigned or when work happened, since
+// that's the real point Hannah is "owed" that cut. Scans every client's
+// add-ons rather than being its own collection, since the payment data it
+// depends on already lives there.
+function buildPayForAssistantInPeriod(assistantId, period){
+  let total = 0;
+  state.clients.forEach(client=>{
+    (client.addOns||[]).forEach(a=>{
+      if(a.buildAssistantId!==assistantId) return;
+      (a.payments||[]).forEach(p=>{
+        if(!p.paid || !p.paidDate) return;
+        const paidAt = new Date(p.paidDate);
+        if(period && (paidAt < period.start || paidAt >= period.end)) return;
+        total += buildAssistantCut(a, p);
+      });
+    });
+  });
+  return Math.round(total*100)/100;
+}
 function payrollRateLabel(assistant){
   return assistant.payType==="flat"
     ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+"/period (flat)"
@@ -6382,7 +6525,7 @@ function renderPayrollTool(){
   const shownAssistants = state.settings.assistants.filter(a=>{
     if(pf.assistantId!=="all") return a.id===pf.assistantId;
     if(a.active!==false) return true;
-    return payrollHoursForAssistant(a.id, period, pf.adminOnly) > 0;
+    return payrollHoursForAssistant(a.id, period, pf.adminOnly) > 0 || buildPayForAssistantInPeriod(a.id, period) > 0;
   });
   const periodLabel = PAYROLL_FILTER_PRESETS.find(([v])=>v===pf.preset)[1];
   const periodPaidKey = isPayrollPeriodPreset ? period.end.toISOString() : null;
@@ -6471,12 +6614,13 @@ function renderPayrollTool(){
         <tbody>
           ${shownAssistants.map(a=>{
             const hrs = payrollHoursForAssistant(a.id, period, pf.adminOnly);
+            const buildPay = buildPayForAssistantInPeriod(a.id, period);
             const active = activeEntryFor(a.id);
             return `<tr>
               <td>${a.name}${a.active===false?' <span class="small">(former)</span>':''}</td>
               <td>${hrs.toFixed(1)}</td>
               <td>${payrollRateLabel(a)}</td>
-              <td>$${payrollAmountForAssistant(a,hrs).toFixed(2)}</td>
+              <td>$${(payrollAmountForAssistant(a,hrs)+buildPay).toFixed(2)}${buildPay>0?`<div class="small">incl. $${buildPay.toFixed(2)} build pay</div>`:''}</td>
               <td>${active
                 ? `<span class="dot-live ${isStale(active)?'stale':''}"></span>clocked in ${entryDurationHours(active).toFixed(1)}h`
                 : `<span class="small">off the clock</span>`}</td>
@@ -6486,7 +6630,7 @@ function renderPayrollTool(){
             <td>Total</td>
             <td>${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly),0).toFixed(1)}</td>
             <td></td>
-            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly)),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly))+buildPayForAssistantInPeriod(a.id, period),0).toFixed(2)}</td>
             <td></td>
           </tr>
         </tbody>
@@ -6584,6 +6728,44 @@ function viewClientSoftwareBuild(clientId){
   state.selectedClientId = clientId;
   state.crmSubTab = "softwareBuild";
   render();
+}
+// Every build with an assistant assigned, company-wide. Admin sees full
+// financials for every build (same data as the client's Software Build
+// tab, just all in one place); a Team login sees only her own assigned
+// build(s) — her phase checklist and deadlines, no dollar amounts at all.
+// This is deliberately not the normal Task Board: she isn't clocking
+// hourly for this work, so it has no place there.
+function allAssignedBuilds(){
+  return allClientAddOns().filter(({addOn})=>!!addOn.buildAssistantId);
+}
+function renderBuildsTab(){
+  const isAdmin = state.role==="admin";
+  const builds = isAdmin ? allAssignedBuilds() : allAssignedBuilds().filter(({addOn})=>addOn.buildAssistantId===state.currentAssistant?.id);
+  return `
+    <h2>Builds</h2>
+    <div class="small" style="margin-bottom:14px;">${isAdmin
+      ? "Every flat-fee build assigned to an assistant, company-wide — financials live here and on each client's Software Build tab."
+      : "Your assigned build(s) — check off to-dos as you complete them. This is separate from the Task Board since you're not clocking hourly for this work."}</div>
+    ${builds.length===0 ? `<div class="card"><div class="small">${isAdmin?'No assigned builds yet — add one from a client\'s Software Build tab.':'Nothing assigned to you right now.'}</div></div>` :
+      builds.map(({client,addOn})=>{
+        const todos = addOn.buildTodos||[];
+        const doneCount = todos.filter(t=>t.done).length;
+        const totalCut = (addOn.payments||[]).reduce((s,p)=>s+buildAssistantCut(addOn,p),0);
+        const paidCut = (addOn.payments||[]).filter(p=>p.paid).reduce((s,p)=>s+buildAssistantCut(addOn,p),0);
+        return `
+        <div class="card">
+          <div class="flex-between">
+            <h3 style="margin:0;">${client.name} — ${addOn.label}</h3>
+            ${isAdmin ? `<button class="secondary" onclick="viewClientSoftwareBuild('${client.id}')">Open in client profile</button>` : ""}
+          </div>
+          <div class="small" style="margin-bottom:8px;">
+            ${isAdmin ? `${assistantName(addOn.buildAssistantId)} · ${addOn.buildAssistantPercent||0}% of $${(addOn.flatFee||0).toFixed(0)} build fee · earned so far: $${paidCut.toFixed(2)} of $${totalCut.toFixed(2)} total` : `${todos.length?doneCount+' of '+todos.length+' to-dos complete':'No to-dos set yet — ask Kaylan to add the checklist.'}`}
+            ${addOn.buildStartDate ? ` · Day 1 was ${parseYMD(addOn.buildStartDate).toLocaleDateString()}` : ` · Day 1 (deposit received) not set yet`}
+          </div>
+          ${todos.length ? renderBuildTodoList(client.id, addOn, isAdmin) : ""}
+        </div>`;
+      }).join("")}
+  `;
 }
 
 // --- Weekly client reports (admin only) ---
@@ -7951,6 +8133,22 @@ function renderClientPortal(){
         ${!isSigned ? `
         <div class="alert warn">Please review and sign your Service Agreement below to unlock the rest of your portal — requests, hours, task updates, and everything else become available once it's signed.</div>
         ` : ""}
+        ${isSigned ? (()=>{
+          const myBuild = (client.addOns||[]).find(a=>a.buildAssistantId && (a.buildTodos||[]).length);
+          if(!myBuild) return "";
+          const todos = myBuild.buildTodos;
+          const phases = [];
+          todos.forEach(t=>{ if(!phases.includes(t.phase)) phases.push(t.phase); });
+          const currentPhase = phases.find(p=>todos.some(t=>t.phase===p && !t.done)) || "Complete";
+          const doneCount = todos.filter(t=>t.done).length;
+          const pct = todos.length ? Math.round(doneCount/todos.length*100) : 0;
+          return `
+          <div class="card">
+            <h3>${escHtml(myBuild.label)} — Progress</h3>
+            <div class="small" style="margin-bottom:8px;">Current phase: <strong>${currentPhase==='Complete'?'Complete — ready to launch!':currentPhase}</strong> &middot; ${doneCount} of ${todos.length} steps complete</div>
+            <div class="progress-bar"><div style="width:${pct}%;"></div></div>
+          </div>`;
+        })() : ""}
         ${isSigned ? `
         <div class="card">
           <h3>Request help with something</h3>
