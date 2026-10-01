@@ -393,7 +393,7 @@ let state = {
   payrollFilter: { preset: "period", assistantId: "all", adminOnly: false },
   payrollReportPeriod: "period", // "period" (current) or "lastPeriod" — which payroll period the per-assistant report/email download covers
   clientHoursFilter: { preset: "week" },
-  kanbanFilter: { clientId: "all", category: "all", onlyMine: false, hideDone: true, sort: "priority", search: "" },
+  kanbanFilter: { clientId: "all", category: "all", market: "all", onlyMine: false, hideDone: true, sort: "priority", search: "" },
   clientMarketFilter: "all",
   // The client request form's fields used to be uncontrolled (no value=
   // binding), so a background render() — from any other client/assistant's
@@ -1269,7 +1269,7 @@ function clientReportHtml(report){
       ${isPeriod && itemKind!=='todo' ? `<div class="item-hours">${formatHoursMinutes(hoursForTask(t.id))} logged</div>` : ""}
     </div>`;
 
-  return `<!doctype html><html><head><meta charset="UTF-8"><title>${client.name} — ${isPeriod ? 'Period' : 'Weekly'} Recap</title>
+  return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${client.name} — ${isPeriod ? 'Period' : 'Weekly'} Recap</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
@@ -1277,11 +1277,18 @@ function clientReportHtml(report){
     *{box-sizing:border-box;}
     body{margin:0;background:#fff;font-family:'Jost',Arial,sans-serif;color:var(--text);}
     .wrap{max-width:640px;margin:0 auto;}
-    .header{background:var(--brown-dark);color:var(--cream);padding:26px 32px;display:flex;justify-content:space-between;align-items:flex-start;}
-    .header .brand-mc{font-family:'Playfair Display',serif;font-size:30px;font-weight:700;line-height:1;}
+    .header{background:var(--brown-dark);color:var(--cream);width:100%;border-collapse:collapse;}
+    .header td{padding:20px;vertical-align:top;}
+    .header td.right{text-align:right;}
+    .header .brand-mc{font-family:'Playfair Display',serif;font-size:28px;font-weight:700;line-height:1;}
     .header .brand-sub{font-size:11px;letter-spacing:2px;margin-top:6px;opacity:.85;}
-    .header .recap-label{font-size:11px;letter-spacing:2px;text-align:right;opacity:.85;}
-    .header .recap-date{font-family:'Playfair Display',serif;font-size:22px;font-weight:600;text-align:right;margin-top:4px;white-space:nowrap;}
+    .header .recap-label{font-size:11px;letter-spacing:2px;opacity:.85;}
+    .header .recap-date{font-family:'Playfair Display',serif;font-size:19px;font-weight:600;margin-top:4px;line-height:1.3;}
+    @media screen and (max-width:420px){
+      .header td{padding:16px 14px;}
+      .header .brand-mc{font-size:22px;}
+      .header .recap-date{font-size:15px;}
+    }
     .body{padding:30px 32px;}
     .eyebrow{font-size:11px;letter-spacing:2px;color:var(--rose-dark);font-weight:600;margin-bottom:8px;}
     .client-name{font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:var(--brown-dark);margin:0 0 12px 0;}
@@ -1319,10 +1326,10 @@ function clientReportHtml(report){
   </style></head>
   <body>
   <div class="wrap">
-    <div class="header">
-      <div><div class="brand-mc">MC</div><div class="brand-sub">MODERN CO.</div></div>
-      <div><div class="recap-label">${recapLabel}</div><div class="recap-date">${dateRange}</div></div>
-    </div>
+    <table class="header" role="presentation" cellpadding="0" cellspacing="0"><tr>
+      <td><div class="brand-mc">MC</div><div class="brand-sub">MODERN CO.</div></td>
+      <td class="right"><div class="recap-label">${recapLabel}</div><div class="recap-date">${dateRange}</div></td>
+    </tr></table>
     <div class="body">
       <div class="eyebrow">PREPARED FOR</div>
       <div class="client-name">${client.name}</div>
@@ -1693,7 +1700,7 @@ function payrollReportHtml(report){
       <div class="item-label">${c.name.toUpperCase()}</div>
       <div class="item-body">${formatHoursMinutes(c.hours)} worked</div>
     </div>`;
-  return `<!doctype html><html><head><meta charset="UTF-8"><title>${assistant.name} — Payroll Recap</title>
+  return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${assistant.name} — Payroll Recap</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=Jost:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
@@ -1701,11 +1708,18 @@ function payrollReportHtml(report){
     *{box-sizing:border-box;}
     body{margin:0;background:#fff;font-family:'Jost',Arial,sans-serif;color:var(--text);}
     .wrap{max-width:640px;margin:0 auto;}
-    .header{background:var(--brown-dark);color:var(--cream);padding:26px 32px;display:flex;justify-content:space-between;align-items:flex-start;}
-    .header .brand-mc{font-family:'Playfair Display',serif;font-size:30px;font-weight:700;line-height:1;}
+    .header{background:var(--brown-dark);color:var(--cream);width:100%;border-collapse:collapse;}
+    .header td{padding:20px;vertical-align:top;}
+    .header td.right{text-align:right;}
+    .header .brand-mc{font-family:'Playfair Display',serif;font-size:28px;font-weight:700;line-height:1;}
     .header .brand-sub{font-size:11px;letter-spacing:2px;margin-top:6px;opacity:.85;}
-    .header .recap-label{font-size:11px;letter-spacing:2px;text-align:right;opacity:.85;}
-    .header .recap-date{font-family:'Playfair Display',serif;font-size:22px;font-weight:600;text-align:right;margin-top:4px;white-space:nowrap;}
+    .header .recap-label{font-size:11px;letter-spacing:2px;opacity:.85;}
+    .header .recap-date{font-family:'Playfair Display',serif;font-size:19px;font-weight:600;margin-top:4px;line-height:1.3;}
+    @media screen and (max-width:420px){
+      .header td{padding:16px 14px;}
+      .header .brand-mc{font-size:22px;}
+      .header .recap-date{font-size:15px;}
+    }
     .body{padding:30px 32px;}
     .eyebrow{font-size:11px;letter-spacing:2px;color:var(--rose-dark);font-weight:600;margin-bottom:8px;}
     .client-name{font-family:'Playfair Display',serif;font-size:32px;font-weight:700;color:var(--brown-dark);margin:0 0 12px 0;}
@@ -1734,10 +1748,10 @@ function payrollReportHtml(report){
   </style></head>
   <body>
   <div class="wrap">
-    <div class="header">
-      <div><div class="brand-mc">MC</div><div class="brand-sub">MODERN CO.</div></div>
-      <div><div class="recap-label">PAYROLL RECAP</div><div class="recap-date">${dateRange}</div></div>
-    </div>
+    <table class="header" role="presentation" cellpadding="0" cellspacing="0"><tr>
+      <td><div class="brand-mc">MC</div><div class="brand-sub">MODERN CO.</div></td>
+      <td class="right"><div class="recap-label">PAYROLL RECAP</div><div class="recap-date">${dateRange}</div></td>
+    </tr></table>
     <div class="body">
       <div class="eyebrow">PREPARED FOR</div>
       <div class="client-name">${assistant.name}</div>
@@ -2177,6 +2191,53 @@ function emailsNeededList(){
   });
   return items.sort((a,b)=>a.days-b.days);
 }
+// Internal-only reminders for Tori/admin to actively check in on a client
+// — NOT emails to the client (that's emailsNeededList()/pilotCheckIn
+// above, which is unchanged). Pilot clients get an early nudge at day 7
+// of their one-time 30-day term. Every other active client gets a
+// recurring nudge at day 21 of their CURRENT 30-day billing period,
+// prompting a look at hours used and whether the assistant needs
+// anything — recurring, not one-time, since usage resets every period.
+const CLIENT_CHECKIN_DAY_PILOT_EARLY = 7;
+const CLIENT_CHECKIN_DAY_ONGOING = 21;
+function clientCheckInsNeeded(){
+  const now = new Date();
+  const items = [];
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active")).forEach(client=>{
+    const isPilot = !client.termType || client.termType==="pilot";
+    if(isPilot){
+      if(!client.termStartDate) return;
+      const due = new Date(parseYMD(client.termStartDate).getTime() + CLIENT_CHECKIN_DAY_PILOT_EARLY*24*3600000);
+      const days = daysUntil(due, now);
+      const done = client.pilotDay7CheckInDoneForTermStart === client.termStartDate;
+      if(!done && days<=0){
+        items.push({ client, type:"pilotDay7", label:"Day 7 pilot check-in", detail:"Review how the assistant's doing early in the pilot.", days });
+      }
+    } else {
+      const period = currentBillingPeriod(client);
+      if(!period) return;
+      const due = new Date(period.start.getTime() + CLIENT_CHECKIN_DAY_ONGOING*24*3600000);
+      const days = daysUntil(due, now);
+      const periodKey = period.start.toISOString().slice(0,10);
+      const done = client.day21CheckInDoneForPeriodStart === periodKey;
+      if(!done && days<=0){
+        items.push({ client, type:"ongoingDay21", label:"Day 21 check-in", detail:"Check hours used this period, whether to suggest more hours, and whether the assistant needs anything from you.", days });
+      }
+    }
+  });
+  return items.sort((a,b)=>a.days-b.days);
+}
+function dismissClientCheckIn(clientId, type){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(type==="pilotDay7"){
+    upsert("clients", clientId, { pilotDay7CheckInDoneForTermStart: client.termStartDate });
+  } else {
+    const period = currentBillingPeriod(client);
+    if(!period) return;
+    upsert("clients", clientId, { day21CheckInDoneForPeriodStart: period.start.toISOString().slice(0,10) });
+  }
+}
 function dismissEmailNeeded(clientId, type){
   const client = state.clients.find(c=>c.id===clientId);
   if(type==="period"){
@@ -2487,6 +2548,7 @@ function renderAdminDashboard(){
   const contractsReady = contractsReadyToDownload();
   const paymentsReady = paymentsReadyToProcess();
   const unackedAssignments = unacknowledgedAssignments();
+  const clientCheckIns = clientCheckInsNeeded();
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -2565,6 +2627,20 @@ function renderAdminDashboard(){
           <div>${client.name} <span class="small">(${TERM_LABELS[client.termType||'pilot']})</span></div>
           <span class="small">${end.toLocaleDateString()}</span>
         </div>`).join("")}` : ""}
+    </div>` : ""}
+
+    ${clientCheckIns.length ? `
+    <div class="card">
+      <h3>Client Check-Ins</h3>
+      <div class="small" style="margin-bottom:8px;">Internal reminders only — nothing is emailed to the client automatically. Review and dismiss once you've looked.</div>
+      ${clientCheckIns.map(({client,type,label,detail})=>`
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+          <div>
+            <strong>${client.name}</strong> — ${label}
+            <div class="small">${detail}</div>
+          </div>
+          <button class="secondary" onclick="event.stopPropagation();dismissClientCheckIn('${client.id}','${type}')">Reviewed</button>
+        </div>`).join("")}
     </div>` : ""}
 
     ${unackedAssignments.length ? `
@@ -5901,12 +5977,23 @@ function sortKanbanTasks(tasks, sort){
   });
   return sorted;
 }
+// Tasks have no market of their own — they inherit it from their client,
+// so Internal/Modern Co. tasks (no client market to match) are deliberately
+// excluded once a specific territory is picked, rather than guessed at.
+// Under "All markets" (the default) nothing is excluded by this check.
+function taskMatchesMarketFilter(t, market){
+  if(market==="all") return true;
+  if(t.clientId===INTERNAL_CLIENT_ID) return false;
+  const client = state.clients.find(c=>c.id===t.clientId);
+  return !!client && (client.market||"Lafayette")===market;
+}
 function renderKanban(){
   const f = state.kanbanFilter;
   const search = (f.search||"").trim().toLowerCase();
   const filtered = state.tasks.filter(t=>{
     if(f.clientId!=="all" && t.clientId!==f.clientId) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
+    if(!taskMatchesMarketFilter(t, f.market||"all")) return false;
     if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
     if(f.hideDone && t.status==="Done") return false;
     if(search){
@@ -5919,6 +6006,7 @@ function renderKanban(){
     if(t.status!=="Done") return false;
     if(f.clientId!=="all" && t.clientId!==f.clientId) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
+    if(!taskMatchesMarketFilter(t, f.market||"all")) return false;
     if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
     return true;
   }).length;
@@ -5950,6 +6038,13 @@ function renderKanban(){
           <option value="all" ${f.category==='all'?'selected':''}>All categories</option>
           <option value="Home" ${f.category==='Home'?'selected':''}>Home</option>
           <option value="Business" ${f.category==='Business'?'selected':''}>Business</option>
+        </select>
+      </div>
+      <div>
+        <label class="small">Territory</label>
+        <select onchange="setKanbanFilter('market',this.value)">
+          <option value="all" ${(f.market||'all')==='all'?'selected':''}>All territories</option>
+          ${MARKETS.map(m=>`<option value="${m}" ${f.market===m?'selected':''}>${m}</option>`).join("")}
         </select>
       </div>
       ${state.currentAssistant ? `
