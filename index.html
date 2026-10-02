@@ -202,7 +202,10 @@
   .cal-daynum{font-size:11px;color:#8a7a72;font-weight:600;}
   .cal-pill{font-size:10.5px;padding:2px 5px;border-radius:4px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .cal-pill-content{background:#e4ede0;color:var(--ok);}
+  .cal-pill-content[draggable="true"]{cursor:grab;}
+  .cal-pill-posted{background:#e8e2da;color:#8a7a72;}
   .cal-pill-task{background:var(--cream-dark);color:var(--rose-dark);}
+  .cal-cell.cal-drop-hover{outline:2px dashed var(--rose-dark);outline-offset:-2px;}
   .cal-add{position:absolute;top:2px;right:2px;background:none;border:none;color:#c7b8ae;font-size:13px;cursor:pointer;line-height:1;padding:2px 4px;}
   .cal-add:hover{color:var(--rose-dark);}
   @media (max-width:768px){
@@ -2957,6 +2960,39 @@ function scrollToContentEntry(id){
   el.style.outline = "2px solid var(--rose-dark)";
   setTimeout(()=>{ el.style.outline = ""; }, 1500);
 }
+// Flagged "Good for content" tasks, minus ones already posted/done or dismissed —
+// keeps the Content Creator's list from growing forever as tasks get wrapped up.
+function activeContentFlaggedTasks(){
+  return state.tasks.filter(t=>t.goodForContent && t.status!=="Done" && !t.contentFlagDismissed);
+}
+function dismissContentFlag(taskId){
+  if(!confirm("Remove this from your flagged-for-content list? The task itself is unaffected.")) return;
+  upsert("tasks", taskId, { contentFlagDismissed:true });
+  if(state.modal && state.modal.type==="contentTaskViewer" && state.modal.taskId===taskId) closeModal();
+}
+function toggleContentShowPosted(){
+  state.contentCalendarShowPosted = !state.contentCalendarShowPosted;
+  render();
+}
+let contentDragEntryId = null;
+function handleContentDragStart(e, entryId){
+  contentDragEntryId = entryId;
+  e.dataTransfer.effectAllowed = "move";
+}
+function handleContentDragOver(e){
+  e.preventDefault();
+  e.currentTarget.classList.add("cal-drop-hover");
+}
+function handleContentDragLeave(e){
+  e.currentTarget.classList.remove("cal-drop-hover");
+}
+function handleContentDrop(e, dateStr){
+  e.preventDefault();
+  e.currentTarget.classList.remove("cal-drop-hover");
+  if(!contentDragEntryId) return;
+  updateContentEntry(contentDragEntryId, "date", dateStr);
+  contentDragEntryId = null;
+}
 // Visual month-grid overview — the detailed list below (renderContentEntryRow)
 // is still where entries actually get added/edited; this is just for seeing
 // the shape of the month at a glance and jumping to a day's items.
@@ -2972,7 +3008,7 @@ function renderContentCalendarMonth(){
   (state.settings.contentPlan||[]).filter(e=>e.type!=="idea" && e.date).forEach(e=>{
     (byDate[e.date] = byDate[e.date]||[]).push({ kind:"content", entry:e });
   });
-  state.tasks.filter(t=>t.goodForContent && t.dueDate).forEach(t=>{
+  activeContentFlaggedTasks().filter(t=>t.dueDate).forEach(t=>{
     (byDate[t.dueDate] = byDate[t.dueDate]||[]).push({ kind:"task", task:t });
   });
 
@@ -2982,10 +3018,10 @@ function renderContentCalendarMonth(){
     const dateStr = year+"-"+String(month).padStart(2,"0")+"-"+String(day).padStart(2,"0");
     const items = byDate[dateStr] || [];
     cells.push(`
-      <div class="cal-cell ${dateStr===todayStr?'cal-today':''}">
+      <div class="cal-cell ${dateStr===todayStr?'cal-today':''}" ondragover="handleContentDragOver(event)" ondragleave="handleContentDragLeave(event)" ondrop="handleContentDrop(event,'${dateStr}')">
         <div class="cal-daynum">${day}</div>
         ${items.map(it=> it.kind==="content"
-          ? `<div class="cal-pill cal-pill-content" onclick="scrollToContentEntry('${it.entry.id}')">${(it.entry.title||'(untitled)')}${it.entry.platform?' · '+it.entry.platform:''}</div>`
+          ? `<div class="cal-pill cal-pill-content${it.entry.status==='Posted'?' cal-pill-posted':''}" draggable="true" ondragstart="handleContentDragStart(event,'${it.entry.id}')" onclick="scrollToContentEntry('${it.entry.id}')">${(it.entry.title||'(untitled)')}${it.entry.platform?' · '+it.entry.platform:''}</div>`
           : `<div class="cal-pill cal-pill-task" onclick="openContentTaskViewer('${it.task.id}')">🎥 ${(it.task.title||'(untitled)')}</div>`
         ).join("")}
         <button class="cal-add" onclick="addContentEntry('scheduled','${dateStr}')" title="Add scheduled content for this day">+</button>
@@ -3010,11 +3046,14 @@ function renderContentCalendarTab(){
   const isAdmin = state.role==="admin";
   const plan = state.settings.contentPlan || [];
   const ideas = plan.filter(e=>e.type==="idea");
-  const dated = plan.filter(e=>e.type!=="idea").slice().sort((a,b)=> (a.date||'') < (b.date||'') ? -1 : 1);
+  const datedAll = plan.filter(e=>e.type!=="idea").slice().sort((a,b)=> (a.date||'') < (b.date||'') ? -1 : 1);
+  const dated = datedAll.filter(e=>e.status!=="Posted");
+  const postedCount = datedAll.length - dated.length;
+  const showPosted = !!state.contentCalendarShowPosted;
   const socialLogins = state.settings.socialLogins || [];
   const insights = (state.settings.contentInsights||[]).slice().sort((a,b)=> (b.date||'') < (a.date||'') ? -1 : 1);
   const goals = state.settings.contentGoals || [];
-  const flaggedTasks = state.tasks.filter(t=>t.goodForContent).slice().sort((a,b)=> (a.dueDate||'9999') < (b.dueDate||'9999') ? -1 : 1);
+  const flaggedTasks = activeContentFlaggedTasks().slice().sort((a,b)=> (a.dueDate||'9999') < (b.dueDate||'9999') ? -1 : 1);
   return `
     <h2>Content Calendar</h2>
     <datalist id="content-platform-options">
@@ -3025,15 +3064,19 @@ function renderContentCalendarTab(){
       <div class="flex-between">
         <h3 style="margin:0;">Flagged for content <span class="small">(${flaggedTasks.length})</span></h3>
       </div>
-      <div class="small" style="margin-bottom:10px;">Tasks an assistant marked "Good for content" — click one to see the details, comment, and add it to your calendar.</div>
+      <div class="small" style="margin-bottom:10px;">Tasks an assistant marked "Good for content" — click one to see the details, comment, and add it to your calendar. Finished or dismissed tasks drop off this list automatically.</div>
       ${flaggedTasks.length ? flaggedTasks.map(t=>{
         const client = t.clientId===INTERNAL_CLIENT_ID ? null : state.clients.find(c=>c.id===t.clientId);
-        return `<div class="list-item" style="cursor:pointer;" onclick="openContentTaskViewer('${t.id}')">
-          <div>
+        return `<div class="list-item" style="align-items:flex-start;">
+          <div style="cursor:pointer;flex:1;" onclick="openContentTaskViewer('${t.id}')">
             <strong>${t.title||'(untitled)'}</strong>
             <div class="small">${client ? client.name : "Internal / Modern Co."} · ${t.dueDate ? parseYMD(t.dueDate).toLocaleDateString() : "No due date"} · ${(t.assignees||[]).map(assistantName).join(", ")||"Unassigned"}${t.contentPlanAdded ? ' · <span style="color:var(--ok);">✓ added</span>' : ''}</div>
+            ${t.goodForContentNote ? `<div class="small" style="margin-top:4px;font-style:italic;">"${t.goodForContentNote}"</div>` : ""}
           </div>
-          <span class="badge" style="background:${t.status==='Done'?'var(--ok)':'var(--warn)'};">${t.status||''}</span>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="badge" style="background:${t.status==='Done'?'var(--ok)':'var(--warn)'};">${t.status||''}</span>
+            <button class="secondary" onclick="event.stopPropagation();dismissContentFlag('${t.id}')" title="Not going to film this">Dismiss</button>
+          </div>
         </div>`;
       }).join("") : `<div class="small">No tasks flagged yet — assistants can mark a task "Good for content" from its edit screen on the Task Board.</div>`}
     </div>
@@ -3045,8 +3088,10 @@ function renderContentCalendarTab(){
           ${isAdmin ? `<button class="secondary" onclick="addContentEntry('opsNote')">+ Note for Content Creator</button>` : ""}
         </div>
       </div>
-      <div class="small" style="margin-bottom:10px;">Scheduled posts plus anything Kaylan flags about the team's week ahead — useful for picking a shoot day that won't collide with a busy stretch.</div>
+      <div class="small" style="margin-bottom:10px;">Scheduled posts plus anything Kaylan flags about the team's week ahead — useful for picking a shoot day that won't collide with a busy stretch. Drag a pill on the calendar above to a new day to reschedule it.</div>
       ${dated.length ? dated.map(renderContentEntryRow).join("") : `<div class="small">Nothing on the calendar yet.</div>`}
+      ${postedCount ? `<div class="small" style="margin-top:8px;">${postedCount} posted item${postedCount===1?"":"s"} hidden from this list (still on the calendar above). ${showPosted ? `<a href="#" onclick="toggleContentShowPosted();return false;">Hide them</a>` : `<a href="#" onclick="toggleContentShowPosted();return false;">Show them</a>`}</div>` : ""}
+      ${showPosted && postedCount ? datedAll.filter(e=>e.status==="Posted").map(renderContentEntryRow).join("") : ""}
     </div>
     <div class="card">
       <div class="flex-between">
@@ -8469,8 +8514,12 @@ function renderTaskEditorModal(task){
         <input type="checkbox" id="tf_priority" ${task.priority?'checked':''} onchange="state.modal.task.priority=this.checked"> Mark as priority — surfaces on the assignee's dashboard
       </label>
       <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;">
-        <input type="checkbox" id="tf_good_for_content" ${task.goodForContent?'checked':''} onchange="state.modal.task.goodForContent=this.checked"> Good for content — surfaces on the Content Creator's calendar as something to plan to record
+        <input type="checkbox" id="tf_good_for_content" ${task.goodForContent?'checked':''} onchange="state.modal.task.goodForContent=this.checked;document.getElementById('tf_content_note_wrap').style.display=this.checked?'block':'none';"> Good for content — surfaces on the Content Creator's calendar as something to plan to record
       </label>
+      <div id="tf_content_note_wrap" style="display:${task.goodForContent?'block':'none'};margin-top:6px;">
+        <label class="small">What would make this good content? <span style="font-weight:400;">(helps the Content Creator decide what to film)</span></label>
+        <textarea id="tf_content_note" oninput="state.modal.task.goodForContentNote=this.value">${task.goodForContentNote||''}</textarea>
+      </div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Client</label>
           <select id="tf_client">
@@ -8681,10 +8730,12 @@ function renderContentTaskViewerModal(taskId){
       </div>
       <div class="small" style="margin-top:6px;">${client ? client.name : "Internal / Modern Co."} · ${task.dueDate ? "Due " + parseYMD(task.dueDate).toLocaleDateString() : "No due date"} · ${(task.assignees||[]).map(assistantName).join(", ")||"Unassigned"} · ${task.status||''}</div>
       ${task.description ? `<p style="margin-top:10px;">${task.description}</p>` : `<p class="small" style="margin-top:10px;">No description added yet — ask in the comments below.</p>`}
-      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--cream-dark);">
+      ${task.goodForContentNote ? `<div class="card" style="background:var(--cream);margin-top:10px;"><div class="small" style="font-weight:600;margin-bottom:4px;">What makes this good content, from the assistant:</div><div>${task.goodForContentNote}</div></div>` : ""}
+      <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--cream-dark);display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         ${task.contentPlanAdded
           ? `<span class="small" style="color:var(--ok);">✓ Added to your content calendar — find and edit it under Content Ideas or the calendar above.</span>`
           : `<button onclick="addFlaggedTaskToContentPlan('${task.id}')">+ Add to my content calendar</button>`}
+        <button class="secondary" onclick="dismissContentFlag('${task.id}')">Not going to film this</button>
       </div>
       ${renderTaskDiscussion(task, "ctf_new_comment", `addContentTaskComment('${task.id}')`)}
     </div>
@@ -8705,7 +8756,7 @@ function addFlaggedTaskToContentPlan(taskId){
     date: task.dueDate || "",
     platform: "",
     status: task.dueDate ? "Idea" : "",
-    notes: "From a task flagged \"Good for content\"" + (client ? " for " + client.name : "") + (task.description ? ": " + task.description : "") + ".",
+    notes: "From a task flagged \"Good for content\"" + (client ? " for " + client.name : "") + (task.goodForContentNote ? ": " + task.goodForContentNote : (task.description ? ": " + task.description : "")) + ".",
     addedBy: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:""),
     sourceTaskId: task.id
   };
@@ -8805,6 +8856,7 @@ async function saveTask(taskId){
     dueDate: document.getElementById("tf_due").value,
     priority: document.getElementById("tf_priority").checked,
     goodForContent: document.getElementById("tf_good_for_content").checked,
+    goodForContentNote: document.getElementById("tf_content_note").value.trim(),
     taskNumber,
     assignees,
     assignmentAcks,
