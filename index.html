@@ -2628,20 +2628,6 @@ function renderAdminDashboard(){
       </div>
     </div>
 
-    ${(()=>{
-      const actionItemCount = renewingThisWeek.length + renewingNextWeek.length + clientCheckIns.length
-        + unackedAssignments.length + paymentsReady.length + contractsReady.length + emailsNeeded.length
-        + overdue.length + pastDue.length + reminders.length + pending.length + clientAlerts.length + atRiskClients.length;
-      return `
-    <div class="card" style="margin-top:14px;">
-      <div class="flex-between" style="cursor:pointer;" onclick="toggleDashboardDetails()">
-        <h3 style="margin:0;">Reminders &amp; Action Items${actionItemCount?` (${actionItemCount})`:''}</h3>
-        <span class="small">${state.dashboardDetailsOpen ? "Hide ▲" : "Show ▼"}</span>
-      </div>
-    </div>`;
-    })()}
-    ${!state.dashboardDetailsOpen ? "" : `
-
     ${(renewingThisWeek.length || renewingNextWeek.length) ? `
     <div class="card">
       <div class="flex-between"><h3>Renewing soon</h3><button class="secondary" onclick="setTab('renewals')">See all renewals &amp; membership info</button></div>
@@ -2749,6 +2735,53 @@ function renderAdminDashboard(){
     </div>
 
     <div class="card">
+      <h3>Upcoming &amp; overdue reminders</h3>
+      ${reminders.length===0 ? `<div class="small">Nothing due in the next 14 days.</div>` : `
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Client</th><th>Type</th><th>What</th><th>Date</th><th>Status</th></tr></thead>
+        <tbody>
+          ${reminders.map(r=>`
+            <tr style="cursor:pointer;" onclick="viewClientMembership('${r.client.id}')">
+              <td>${r.client.name}</td>
+              <td>${r.type}</td>
+              <td>${r.label}</td>
+              <td>${r.date.toLocaleDateString()}</td>
+              <td>${r.days<0 ? `<span style="color:var(--danger);">overdue ${Math.abs(r.days)}d</span>` : r.days===0 ? `<span style="color:var(--warn);">today</span>` : `in ${r.days}d`}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>`}
+    </div>
+
+    ${renderClientRequestsCard(pending, { title: "Client requests awaiting assistant review", showAssistant: true })}
+
+    <div class="card">
+      <h3>Hour-usage alerts</h3>
+      ${clientAlerts.length===0 ? `<div class="small">No clients near their package limit.</div>` :
+        clientAlerts.map(a=>`<div class="alert ${a.level}">${a.text}</div>`).join("")}
+    </div>
+
+    <div class="card">
+      <h3>At-risk clients</h3>
+      <div class="small" style="margin-bottom:8px;">No hours used this billing period and no task completed in the last 30 days — worth a check-in.</div>
+      ${atRiskClients.length===0 ? `<div class="small">No clients look at risk right now.</div>` :
+        atRiskClients.map(c=>`
+          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">
+            <div>
+              <div>${c.name}</div>
+              <div class="small">${atRiskClientDetail(c)}</div>
+            </div>
+            <span class="alert warn" style="margin:0;">at risk</span>
+          </div>`).join("")}
+    </div>
+
+    <div class="card">
+      <div class="flex-between" style="cursor:pointer;" onclick="toggleDashboardDetails()">
+        <h3 style="margin:0;">Open Tasks${(overdue.length+pastDue.length)?` (${overdue.length+pastDue.length})`:''}</h3>
+        <span class="small">${state.dashboardDetailsOpen ? "Hide ▲" : "Show ▼"}</span>
+      </div>
+    </div>
+    ${!state.dashboardDetailsOpen ? "" : `
+    <div class="card">
       <h3>Tasks open 7+ days</h3>
       ${overdue.length===0 ? `<div class="small">Nothing's been sitting open longer than a week.</div>` : `
       <div class="table-scroll"><table class="data-table">
@@ -2788,46 +2821,6 @@ function renderAdminDashboard(){
           }).join("")}
         </tbody>
       </table></div>`}
-    </div>
-
-    <div class="card">
-      <h3>Upcoming &amp; overdue reminders</h3>
-      ${reminders.length===0 ? `<div class="small">Nothing due in the next 14 days.</div>` : `
-      <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Client</th><th>Type</th><th>What</th><th>Date</th><th>Status</th></tr></thead>
-        <tbody>
-          ${reminders.map(r=>`
-            <tr style="cursor:pointer;" onclick="viewClientMembership('${r.client.id}')">
-              <td>${r.client.name}</td>
-              <td>${r.type}</td>
-              <td>${r.label}</td>
-              <td>${r.date.toLocaleDateString()}</td>
-              <td>${r.days<0 ? `<span style="color:var(--danger);">overdue ${Math.abs(r.days)}d</span>` : r.days===0 ? `<span style="color:var(--warn);">today</span>` : `in ${r.days}d`}</td>
-            </tr>`).join("")}
-        </tbody>
-      </table></div>`}
-    </div>
-
-    ${renderClientRequestsCard(pending, { title: "Client requests awaiting assistant review", showAssistant: true })}
-
-    <div class="card">
-      <h3>Hour-usage alerts</h3>
-      ${clientAlerts.length===0 ? `<div class="small">No clients near their package limit.</div>` :
-        clientAlerts.map(a=>`<div class="alert ${a.level}">${a.text}</div>`).join("")}
-    </div>
-
-    <div class="card">
-      <h3>At-risk clients</h3>
-      <div class="small" style="margin-bottom:8px;">No hours used this billing period and no task completed in the last 30 days — worth a check-in.</div>
-      ${atRiskClients.length===0 ? `<div class="small">No clients look at risk right now.</div>` :
-        atRiskClients.map(c=>`
-          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">
-            <div>
-              <div>${c.name}</div>
-              <div class="small">${atRiskClientDetail(c)}</div>
-            </div>
-            <span class="alert warn" style="margin:0;">at risk</span>
-          </div>`).join("")}
     </div>
     `}
   `;
