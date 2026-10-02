@@ -1952,6 +1952,20 @@ function isAtRiskClient(client){
   const recentCompleted = state.tasks.some(t=>t.clientId===client.id && t.status==="Done" && t.completedAt && new Date(t.completedAt).getTime() >= thirtyDaysAgo);
   return !recentCompleted;
 }
+// The specific "why" behind an at-risk flag — isAtRiskClient() is always
+// the same two conditions together, so this spells out the actual dates
+// instead of just restating the rule.
+function atRiskClientDetail(client){
+  const period = currentBillingPeriod(client);
+  const lastCompleted = state.tasks
+    .filter(t=>t.clientId===client.id && t.status==="Done" && t.completedAt)
+    .sort((a,b)=> new Date(b.completedAt) - new Date(a.completedAt))[0];
+  const periodText = period ? `0 hrs used this period (${period.start.toLocaleDateString()} – ${new Date(period.end.getTime()-1).toLocaleDateString()})` : "0 hrs used this period";
+  const lastTaskText = lastCompleted
+    ? `last completed task was ${new Date(lastCompleted.completedAt).toLocaleDateString()} ("${lastCompleted.title||'untitled'}")`
+    : "no completed task on record at all";
+  return `${periodText} · ${lastTaskText}`;
+}
 // Flags an active client whose contract term end date has already passed —
 // e.g. their 3-month term ended and they were supposed to sign a new term,
 // but nobody's gotten around to updating termType/termStartDate to reflect
@@ -2807,8 +2821,11 @@ function renderAdminDashboard(){
       <div class="small" style="margin-bottom:8px;">No hours used this billing period and no task completed in the last 30 days — worth a check-in.</div>
       ${atRiskClients.length===0 ? `<div class="small">No clients look at risk right now.</div>` :
         atRiskClients.map(c=>`
-          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
-            <div>${c.name}</div>
+          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">
+            <div>
+              <div>${c.name}</div>
+              <div class="small">${atRiskClientDetail(c)}</div>
+            </div>
             <span class="alert warn" style="margin:0;">at risk</span>
           </div>`).join("")}
     </div>
@@ -3981,7 +3998,7 @@ function renderClientListItem(c){
   const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
-      <strong>${c.name}</strong> ${atRisk ? '<span class="alert warn" style="margin:0;padding:2px 8px;">at risk</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
+      <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
       <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
         const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
       }).join(", ")}</div>
