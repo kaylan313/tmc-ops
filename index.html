@@ -2614,6 +2614,20 @@ function renderAdminDashboard(){
       </div>
     </div>
 
+    ${(()=>{
+      const actionItemCount = renewingThisWeek.length + renewingNextWeek.length + clientCheckIns.length
+        + unackedAssignments.length + paymentsReady.length + contractsReady.length + emailsNeeded.length
+        + overdue.length + pastDue.length + reminders.length + pending.length + clientAlerts.length + atRiskClients.length;
+      return `
+    <div class="card" style="margin-top:14px;">
+      <div class="flex-between" style="cursor:pointer;" onclick="toggleDashboardDetails()">
+        <h3 style="margin:0;">Reminders &amp; Action Items${actionItemCount?` (${actionItemCount})`:''}</h3>
+        <span class="small">${state.dashboardDetailsOpen ? "Hide ▲" : "Show ▼"}</span>
+      </div>
+    </div>`;
+    })()}
+    ${!state.dashboardDetailsOpen ? "" : `
+
     ${(renewingThisWeek.length || renewingNextWeek.length) ? `
     <div class="card">
       <div class="flex-between"><h3>Renewing soon</h3><button class="secondary" onclick="setTab('renewals')">See all renewals &amp; membership info</button></div>
@@ -2798,8 +2812,12 @@ function renderAdminDashboard(){
             <span class="alert warn" style="margin:0;">at risk</span>
           </div>`).join("")}
     </div>
-
+    `}
   `;
+}
+function toggleDashboardDetails(){
+  state.dashboardDetailsOpen = !state.dashboardDetailsOpen;
+  render();
 }
 
 // --- Renewals & membership info (admin only, moved off the dashboard so it
