@@ -1944,8 +1944,24 @@ function overdueTasks(){
 // At-risk: no billable hours this period AND no completed task in the last
 // 30 days. Either alone can be normal (a slow week); both together suggests
 // the client's quietly gone dormant.
+function hasCompletedOrientation(client){
+  if(client.profile && client.profile.orientationDate) return true;
+  const item = (client.onboardingChecklist||[]).find(i=>i.id==="home_orientation_done");
+  return !!(item && item.done);
+}
+// A client who hasn't signed yet and hasn't had orientation isn't "at
+// risk" in the dormant-client sense below — they just haven't actually
+// started. Tracked as its own thing (see notStartedClients in the
+// Dashboard) so the two don't get confused with each other.
+function isNotStartedClient(client){
+  if(client.clientStatus && client.clientStatus!=="active") return false;
+  const signed = !!(client.contractSigned || client.contractSignedExternally);
+  if(signed) return false;
+  return !hasCompletedOrientation(client);
+}
 function isAtRiskClient(client){
   if(client.clientStatus && client.clientStatus!=="active") return false; // already known-paused/cancelled, not a surprise risk
+  if(isNotStartedClient(client)) return false; // different situation, tracked separately
   const used = hoursUsed(client.id);
   if(used > 0) return false;
   const thirtyDaysAgo = Date.now() - 30*24*3600000;
@@ -2555,6 +2571,7 @@ function renderAdminDashboard(){
   const pending = state.tasks.filter(t=>t.status==="Pending approval");
   const clientAlerts = state.clients.map(tierAlert).filter(Boolean);
   const atRiskClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c));
+  const notStartedClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && isNotStartedClient(c));
   const termUpdateClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c));
   const internalStatus = internalHoursStatus(period);
   const reminders = upcomingReminders(14);
@@ -2761,8 +2778,27 @@ function renderAdminDashboard(){
     </div>
 
     <div class="card">
+      <h3>Not Started — Awaiting Signature/Orientation</h3>
+      <div class="small" style="margin-bottom:8px;">Hasn't signed the Service Agreement and hasn't had a home orientation yet — not actually at risk, just hasn't begun.</div>
+      ${notStartedClients.length===0 ? `<div class="small">No one waiting on signature/orientation right now.</div>` :
+        notStartedClients.map(c=>{
+          const signed = !!(c.contractSigned || c.contractSignedExternally);
+          const oriented = hasCompletedOrientation(c);
+          const reason = `${signed?'Signed':'Contract not signed'} · ${oriented?'Orientation done':'No home orientation yet'}`;
+          return `
+          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${reason.replace(/"/g,'&quot;')}">
+            <div>
+              <div>${c.name}</div>
+              <div class="small">${reason}</div>
+            </div>
+            <span class="alert warn" style="margin:0;">not started</span>
+          </div>`;
+        }).join("")}
+    </div>
+
+    <div class="card">
       <h3>At-risk clients</h3>
-      <div class="small" style="margin-bottom:8px;">No hours used this billing period and no task completed in the last 30 days — worth a check-in.</div>
+      <div class="small" style="margin-bottom:8px;">Already signed and started — no hours used this billing period and no task completed in the last 30 days — worth a check-in.</div>
       ${atRiskClients.length===0 ? `<div class="small">No clients look at risk right now.</div>` :
         atRiskClients.map(c=>`
           <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">
@@ -3988,10 +4024,11 @@ function toggleClientGroup(key){
 function renderClientListItem(c){
   const alert = tierAlert(c);
   const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
+  const notStarted = c.id!==INTERNAL_CLIENT_ID && isNotStartedClient(c);
   const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
-      <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
+      <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
       <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
         const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
       }).join(", ")}</div>
