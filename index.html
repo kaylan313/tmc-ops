@@ -8959,7 +8959,10 @@ function fromDatetimeLocalValue(val){
 }
 function openManualTimeEntry(){
   const now = toDatetimeLocalValue(new Date().toISOString());
-  state.modal = { type:"manualTimeEntry", rows: [{ id:newId("row"), clockIn: now, clockOut: now, note:"" }] };
+  const defaultAssistantId = state.role==='admin'
+    ? (state.settings.assistants.find(a=>a.active!==false)||{}).id
+    : state.currentAssistant.id;
+  state.modal = { type:"manualTimeEntry", rows: [{ id:newId("row"), clockIn: now, clockOut: now, note:"" }], assistantId: defaultAssistantId };
   render();
 }
 function addManualEntryRow(){
@@ -8983,8 +8986,8 @@ function renderManualTimeEntryModal(){
       ${state.role==='admin' ? `
       <div class="row">
         <div><label class="small">Assistant</label>
-          <select id="mte_assistant">
-            ${state.settings.assistants.filter(a=>a.active!==false).map(a=>`<option value="${a.id}">${a.name}</option>`).join("")}
+          <select id="mte_assistant" onchange="state.modal.assistantId=this.value">
+            ${state.settings.assistants.filter(a=>a.active!==false).map(a=>`<option value="${a.id}" ${state.modal.assistantId===a.id?'selected':''}>${a.name}</option>`).join("")}
           </select>
         </div>
       </div>` : ""}
@@ -9015,7 +9018,7 @@ function renderManualTimeEntryModal(){
 }
 function saveManualTimeEntry(){
   const task = resolveTaskFromSearch(document.getElementById("mte_task").value);
-  const assistantId = state.role==='admin' ? document.getElementById("mte_assistant").value : state.currentAssistant.id;
+  const assistantId = state.role==='admin' ? state.modal.assistantId : state.currentAssistant.id;
   if(!task){ alert("Pick a task from the list first — search by its # or title."); return; }
   const rows = state.modal.rows;
   for(const r of rows){
@@ -9037,7 +9040,7 @@ function saveManualTimeEntry(){
 function openTimeEntryEditor(entryId){
   const entry = state.timeEntries.find(e=>e.id===entryId);
   if(!entry) return;
-  state.modal = { type:"timeEntryEditor", entry };
+  state.modal = { type:"timeEntryEditor", entry, assistantId: entry.assistantId, flagged: !!entry.flagged };
   render();
 }
 function renderTimeEntryEditorModal(entry){
@@ -9049,8 +9052,8 @@ function renderTimeEntryEditorModal(entry){
       ${state.role==='admin' ? `
       <div class="row">
         <div><label class="small">Assistant</label>
-          <select id="tef_assistant">
-            ${state.settings.assistants.map(a=>`<option value="${a.id}" ${entry.assistantId===a.id?'selected':''}>${a.name}${a.active===false?' (former)':''}</option>`).join("")}
+          <select id="tef_assistant" onchange="state.modal.assistantId=this.value">
+            ${state.settings.assistants.map(a=>`<option value="${a.id}" ${state.modal.assistantId===a.id?'selected':''}>${a.name}${a.active===false?' (former)':''}</option>`).join("")}
           </select>
         </div>
       </div>` : ""}
@@ -9065,7 +9068,7 @@ function renderTimeEntryEditorModal(entry){
       ${state.role==='admin' ? `
       <div style="margin-top:10px;">
         <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;">
-          <input type="checkbox" id="tef_flagged" ${entry.flagged?'checked':''}> Flag for review
+          <input type="checkbox" id="tef_flagged" ${state.modal.flagged?'checked':''} onchange="state.modal.flagged=this.checked"> Flag for review
         </label>
       </div>
       <div style="margin-top:8px;">
@@ -9094,8 +9097,8 @@ function saveTimeEntryEdit(entryId){
     note: document.getElementById("tef_note").value.trim(),
   };
   if(state.role==='admin'){
-    payload.assistantId = document.getElementById("tef_assistant").value;
-    payload.flagged = document.getElementById("tef_flagged").checked;
+    payload.assistantId = state.modal.assistantId;
+    payload.flagged = state.modal.flagged;
     payload.flagNote = document.getElementById("tef_flagnote").value.trim();
   }
   upsert("timeEntries", entryId, payload);
