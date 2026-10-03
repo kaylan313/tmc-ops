@@ -1537,6 +1537,74 @@ function copyPilotCheckInMessage(clientId, btnEl){
     setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
   }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
 }
+// ---- 8d-2. Build/add-on payment-due email ----
+// One of these exists per payment milestone on a client's Software Build &
+// Add-Ons section (e.g. 50% deposit, 25% progress, 25% final) — Heidi uses
+// this to give the client a heads-up before/as each milestone comes due,
+// same idea as the renewal/pilot emails above but scoped to one payment.
+function buildAddOnPaymentEmail(client, addOn, payment){
+  const firstName = (client.name||"").split(" ")[0] || client.name;
+  const dueStr = payment.dueDate ? parseYMD(payment.dueDate).toLocaleDateString() : "soon";
+  const body = "Hi " + firstName + ",\n\n"
+    + "Just a quick note that your " + payment.label + " of $" + (payment.amount||0).toFixed(2) + " for " + addOn.label + " is due " + dueStr + ".\n\n"
+    + "We'll go ahead and process this against the payment method we have on file unless we hear otherwise from you — just reply here if you have any questions.\n\n"
+    + "Thanks so much!\n\n"
+    + "Warmly,\nThe Modern Concierge Team";
+  return { subject: addOn.label + " — " + payment.label + " Due — " + client.name, body };
+}
+// Tracked against the specific due date it was sent for, not a plain
+// boolean — if that payment's due date ever gets pushed back, the flag goes
+// stale and the reminder naturally reappears instead of staying silently
+// cleared forever (same pattern as the renewal/period-recap trackers above).
+function markAddOnPaymentEmailSent(clientId, addOnId, paymentId, dueDate){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=>{
+    if(a.id!==addOnId) return a;
+    const payments = (a.payments||[]).map(p=> p.id===paymentId ? { ...p, paymentEmailSentForDueDate: dueDate } : p);
+    return { ...a, payments };
+  });
+  upsert("clients", clientId, { addOns });
+}
+function emailAddOnPayment(clientId, addOnId, paymentId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!client.email){ alert(client.name + " doesn't have an email on file yet — add one on their Membership tab first."); return; }
+  const addOn = (client.addOns||[]).find(a=>a.id===addOnId);
+  const payment = addOn && (addOn.payments||[]).find(p=>p.id===paymentId);
+  if(!addOn || !payment) return;
+  const { subject, body } = buildAddOnPaymentEmail(client, addOn, payment);
+  window.location.href = "mailto:" + client.email + "?subject=" + encodeURIComponent(subject) + "&body=" + encodeURIComponent(body);
+  markAddOnPaymentEmailSent(clientId, addOnId, paymentId, payment.dueDate);
+}
+function copyAddOnPaymentMessage(clientId, addOnId, paymentId, btnEl){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOn = (client.addOns||[]).find(a=>a.id===addOnId);
+  const payment = addOn && (addOn.payments||[]).find(p=>p.id===paymentId);
+  if(!addOn || !payment) return;
+  const { body } = buildAddOnPaymentEmail(client, addOn, payment);
+  navigator.clipboard.writeText(body).then(()=>{
+    markAddOnPaymentEmailSent(clientId, addOnId, paymentId, payment.dueDate);
+    if(!btnEl) return;
+    const orig = btnEl.textContent;
+    btnEl.textContent = "Copied ✓";
+    setTimeout(()=>{ btnEl.textContent = orig; }, 1500);
+  }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
+}
+// All unpaid payment milestones across every add-on this client has, oldest
+// due date first — shown in the Email Templates tab regardless of how soon
+// they're due (unlike emailsNeededList's Dashboard nudge, which only
+// surfaces ones due soon) so Heidi can get ahead of one early if she wants.
+function clientAddOnPaymentRows(client){
+  const rows = [];
+  (client.addOns||[]).forEach(addOn=>{
+    (addOn.payments||[]).forEach(payment=>{
+      if(!payment.paid) rows.push({ addOn, payment });
+    });
+  });
+  return rows.sort((a,b)=> (a.payment.dueDate||'9999') < (b.payment.dueDate||'9999') ? -1 : 1);
+}
 // ---- 8e. CSV export ----
 function csvEscape(val){
   const s = String(val==null ? "" : val);
@@ -2221,6 +2289,18 @@ function emailsNeededList(){
         }
       }
     }
+    (client.addOns||[]).forEach(addOn=>{
+      (addOn.payments||[]).forEach(payment=>{
+        if(payment.paid || !payment.dueDate) return;
+        const due = parseYMD(payment.dueDate);
+        const daysToDue = daysUntil(due, now);
+        const sent = payment.paymentEmailSentForDueDate === payment.dueDate;
+        if(!sent && daysToDue<=3){
+          items.push({ client, type:"addOnPayment:"+addOn.id+":"+payment.id, label:"Send payment due email",
+            detail: addOn.label+" — "+payment.label+" — $"+(payment.amount||0).toFixed(0)+" "+(daysToDue<0?"overdue, was due ":"due ")+due.toLocaleDateString(), urgent: daysToDue<0, days: daysToDue });
+        }
+      });
+    });
   });
   return items.sort((a,b)=>a.days-b.days);
 }
@@ -2278,6 +2358,11 @@ function dismissEmailNeeded(clientId, type){
     if(period) markPeriodRecapSent(clientId, period);
   } else if(type==="pilotCheckIn"){
     markPilotCheckInSent(clientId, client.termStartDate);
+  } else if(type.startsWith("addOnPayment:")){
+    const [, addOnId, paymentId] = type.split(":");
+    const addOn = (client.addOns||[]).find(a=>a.id===addOnId);
+    const payment = addOn && (addOn.payments||[]).find(p=>p.id===paymentId);
+    if(payment) markAddOnPaymentEmailSent(clientId, addOnId, paymentId, payment.dueDate);
   } else {
     markRenewalEmailSent(clientId, client.termType);
   }
@@ -5488,8 +5573,33 @@ function renderClientEmailTemplates(client){
   const checkInDue = pilotCheckInDueDate(client);
   const checkInSent = !!(client.termStartDate && client.pilotCheckInSentForTermStart === client.termStartDate);
   const noEmail = !client.email;
+  const addOnPaymentRows = clientAddOnPaymentRows(client);
+  const todayStr = new Date().toISOString().slice(0,10);
   return `
     ${noEmail ? `<div class="alert warn">No client email on file — add one on the Membership tab before sending anything below.</div>` : ""}
+    ${addOnPaymentRows.length ? `
+    <div class="card">
+      <h3>Build / Add-On Payments Due</h3>
+      <div class="small" style="margin-bottom:8px;">From this client's Software Build &amp; Add-Ons section — send a heads-up as each payment milestone comes due.</div>
+      ${addOnPaymentRows.map(({addOn,payment})=>{
+        const overdue = payment.dueDate && payment.dueDate < todayStr;
+        const sent = payment.dueDate && payment.paymentEmailSentForDueDate === payment.dueDate;
+        return `
+        <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+          <div class="flex-between">
+            <div>
+              <strong>${addOn.label}</strong> — ${payment.label}
+              <div class="small" style="${overdue?'color:var(--danger);':''}">$${(payment.amount||0).toFixed(2)} · ${payment.dueDate ? (overdue?'overdue, was due ':'due ')+parseYMD(payment.dueDate).toLocaleDateString() : 'no due date set'}</div>
+            </div>
+            ${sent ? `<span class="small" style="color:var(--ok);">✓ Sent for this due date</span>` : ""}
+          </div>
+          <div>
+            <button ${noEmail?'disabled':''} onclick="emailAddOnPayment('${client.id}','${addOn.id}','${payment.id}')">Email client</button>
+            <button class="secondary" onclick="copyAddOnPaymentMessage('${client.id}','${addOn.id}','${payment.id}',this)">Copy message</button>
+          </div>
+        </div>`;
+      }).join("")}
+    </div>` : ""}
     <div class="card">
       <h3>Receipts</h3>
       <label style="display:flex;align-items:center;gap:8px;">
