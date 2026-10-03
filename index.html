@@ -2572,7 +2572,12 @@ function renderAdminDashboard(){
   const pastDue = tasksPastDueDate();
   const openTasks = state.tasks.filter(t=>t.status!=="Done" && taskBelongsToActiveClient(t));
   const pending = state.tasks.filter(t=>t.status==="Pending approval");
-  const clientAlerts = state.clients.map(tierAlert).filter(Boolean);
+  // Package-usage alerts only make sense for clients currently being billed —
+  // without this filter, Internal/Modern Co. (not a real client) and any
+  // paused/cancelled client with leftover package data inflated the "of N
+  // clients" denominator even though they're not part of what's being tracked.
+  const activeRealClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"));
+  const clientAlerts = activeRealClients.map(tierAlert).filter(Boolean);
   const atRiskClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c));
   const notStartedClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && isNotStartedClient(c));
   const termUpdateClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c));
@@ -2614,7 +2619,7 @@ function renderAdminDashboard(){
       <div class="stat-tile ${clientAlerts.some(a=>a.level==='danger')?'status-danger':clientAlerts.length?'status-warn':''}">
         <div class="stat-label">Clients near/over package</div>
         <div class="stat-value">${clientAlerts.length}</div>
-        <div class="stat-sub">of ${state.clients.length} clients</div>
+        <div class="stat-sub">of ${activeRealClients.length} active clients</div>
       </div>
       <div class="stat-tile ${internalStatus.level==='danger'?'status-danger':internalStatus.level==='warn'?'status-warn':''}" style="cursor:pointer;" onclick="setTab('payroll')">
         <div class="stat-label">Internal/admin hours</div>
