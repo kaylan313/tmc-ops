@@ -7620,12 +7620,12 @@ function renderAssistantRow(a){
         Leadership — gets "Newly Assigned" alerts on the admin Dashboard for Internal tasks assigned to them (since they mostly log in with the shared Admin passcode, not their own code)
       </label>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <input type="checkbox" ${a.isOpsLead?'checked':''} onchange="updateAssistantField('${a.id}','isOpsLead',this.checked)">
-        Operations Lead — gets an "Attention: ${a.name||'them'}" column at the top of the admin Dashboard: client health, task oversight, check-ins
+        <input type="checkbox" ${a.isOpsLead?'checked':''} onchange="setExclusiveAssistantFlag('${a.id}','isOpsLead',this.checked)">
+        Operations Lead — gets an "Attention: ${a.name||'them'}" column at the top of the admin Dashboard: client health, task oversight, check-ins (only one person at a time — checking this unchecks it for anyone else)
       </label>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <input type="checkbox" ${a.isDocsLead?'checked':''} onchange="updateAssistantField('${a.id}','isDocsLead',this.checked)">
-        Documentation &amp; Billing Lead — gets an "Attention: ${a.name||'them'}" column at the top of the admin Dashboard: contracts, payments, renewal/recap emails to send
+        <input type="checkbox" ${a.isDocsLead?'checked':''} onchange="setExclusiveAssistantFlag('${a.id}','isDocsLead',this.checked)">
+        Documentation &amp; Billing Lead — gets an "Attention: ${a.name||'them'}" column at the top of the admin Dashboard: contracts, payments, renewal/recap emails to send (only one person at a time — checking this unchecks it for anyone else)
       </label>
       ${onboarding.length ? `
         <div>
@@ -7653,6 +7653,20 @@ function updateAssistantField(id, field, value){
   // render() firing soon after (the 60s timer, another click), but fields
   // whose own value changes what's shown next to them (pay type) need this
   // to redraw immediately.
+  render();
+}
+// isOpsLead/isDocsLead each drive exactly one Dashboard column (see
+// renderOpsLeadColumn/renderDocsLeadColumn — both just .find() the first
+// assistant with the flag set) — if a second person ever got checked, their
+// box would silently do nothing with no error, since the first match always
+// wins. Enforced here instead: checking it on one assistant unchecks it on
+// everyone else first.
+function setExclusiveAssistantFlag(id, field, checked){
+  state.settings.assistants = state.settings.assistants.map(a=>{
+    if(a.id===id) return { ...a, [field]:checked };
+    return checked && a[field] ? { ...a, [field]:false } : a;
+  });
+  upsert("settings","access", { assistants: state.settings.assistants });
   render();
 }
 function updateAdminPasscode(pass){
