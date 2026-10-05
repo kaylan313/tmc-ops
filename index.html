@@ -2825,6 +2825,17 @@ function renderAdminDashboard(){
   const clientCheckIns = clientCheckInsNeeded();
   const opsLead = state.settings.assistants.find(a=>a.isOpsLead && a.active!==false);
   const docsLead = state.settings.assistants.find(a=>a.isDocsLead && a.active!==false);
+  // A client flagged "Managed independently" (Membership tab — e.g. a
+  // different market, handled entirely by their own assistant with no HQ
+  // oversight needed) is scoped OUT of Tori's column specifically, not out
+  // of the company-wide stat-row counts above — those still reflect every
+  // real client.
+  const opsExcludedIds = new Set(state.clients.filter(c=>c.excludeFromOpsOversight).map(c=>c.id));
+  const atRiskClientsForOps = atRiskClients.filter(c=>!opsExcludedIds.has(c.id));
+  const notStartedClientsForOps = notStartedClients.filter(c=>!opsExcludedIds.has(c.id));
+  const pendingForOps = pending.filter(t=>!opsExcludedIds.has(t.clientId));
+  const clientCheckInsForOps = clientCheckIns.filter(({client})=>!opsExcludedIds.has(client.id));
+  const renewalCheckInEmailsForOps = renewalCheckInEmails.filter(({client})=>!opsExcludedIds.has(client.id));
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -2889,7 +2900,7 @@ function renderAdminDashboard(){
     </div>
 
     <div class="row">
-      ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns, renewalCheckInEmails, pending, notStartedClients, atRiskClients, overdue, pastDue })}
+      ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns:clientCheckInsForOps, renewalCheckInEmails:renewalCheckInEmailsForOps, pending:pendingForOps, notStartedClients:notStartedClientsForOps, atRiskClients:atRiskClientsForOps, overdue, pastDue })}
       ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, contractsReady, emailsNeeded:docsEmailsNeeded, termUpdateClients })}
     </div>
 
@@ -5990,6 +6001,10 @@ function renderClientMembership(client){
       <div class="row" style="margin-top:10px;">
         <div><label class="small">${client.clientStatus==='paused'?'Paused since':'Cancelled date'}</label><input type="date" value="${client.cancelledDate?client.cancelledDate.slice(0,10):''}" onchange="updateClientField('${client.id}','cancelledDate',this.value)"></div>
       </div>` : ""}
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-top:10px;">
+        <input type="checkbox" ${client.excludeFromOpsOversight?'checked':''} onchange="updateClientField('${client.id}','excludeFromOpsOversight',this.checked)">
+        Managed independently — hide from the Operations Lead's Dashboard column (at-risk/not-started flags, check-in reminders, pending requests). For a client handled entirely by their own assistant with no HQ oversight needed, e.g. a different market.
+      </label>
       <div class="row" style="margin-top:10px;">
         <div><label class="small">Contract end date</label><div style="padding:8px 10px;">${termEndDate(client)?termEndDate(client).toLocaleDateString():'—'}</div></div>
         <div><label class="small">Cancellation notice due by</label><div style="padding:8px 10px;">${noticeDeadline(client)?noticeDeadline(client).toLocaleDateString():'—'}</div></div>
