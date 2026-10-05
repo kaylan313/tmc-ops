@@ -425,11 +425,12 @@ let state = {
   qbMonthSummary: null,
   qbMonthLastFetchAt: 0,
   qbMonthFetchInFlight: false,
-  // Payroll Margin's own fetch — a fully-closed payroll period, not the
-  // calendar month above (see fetchQuickBooksPayrollPeriodSummaryIfStale).
-  qbPayrollPeriodSummary: null,
-  qbPayrollPeriodLastFetchAt: 0,
-  qbPayrollPeriodFetchInFlight: false
+  // Payroll Margin's own fetch — the most recently CLOSED calendar month,
+  // separate from the current month-to-date fetch above (see
+  // fetchQuickBooksLastMonthSummaryIfStale).
+  qbLastMonthSummary: null,
+  qbLastMonthFetchAt: 0,
+  qbLastMonthFetchInFlight: false
 };
 
 // ---- 4. Firestore helpers ----
@@ -3784,6 +3785,13 @@ function monthToDateRange(refDate){
   const d = refDate || new Date();
   return { start: new Date(d.getFullYear(), d.getMonth(), 1), end: d };
 }
+// The most recently FULLY COMPLETED calendar month — end is exclusive
+// (midnight on the 1st of the current month), matching every other
+// period object in this file (currentBillingPeriod, currentPayrollPeriod).
+function previousCalendarMonthRange(refDate){
+  const d = refDate || new Date();
+  return { start: new Date(d.getFullYear(), d.getMonth()-1, 1), end: new Date(d.getFullYear(), d.getMonth(), 1) };
+}
 function fetchQuickBooksMonthSummaryIfStale(){
   if(!fns || state.qbMonthFetchInFlight) return;
   if(Date.now() - (state.qbMonthLastFetchAt||0) < 5*60*1000) return;
@@ -3811,33 +3819,34 @@ function payrollMarginPct(income, payroll){
   return (payroll/income)*100;
 }
 const PAYROLL_MARGIN_TARGET = 55;
-// Deliberately NOT calendar month-to-date — payroll only posts twice a
-// month (the 1st and 15th) and client billing is scattered across each
-// client's own renewal day, so checking "month so far" on, say, the 10th
-// catches one payroll run but very little revenue yet, making the margin
-// look terrible for no real reason (and the opposite right after the next
-// payroll run lands). previousPayrollPeriod() is always a FULLY CLOSED
-// 1st–14th or 15th–end window — both sides of the ratio are complete, so
-// this number is stable and comparable every time it's checked, not a
-// moving target depending what day of the month it happens to be.
-function fetchQuickBooksPayrollPeriodSummaryIfStale(){
-  if(!fns || state.qbPayrollPeriodFetchInFlight) return;
-  if(Date.now() - (state.qbPayrollPeriodLastFetchAt||0) < 5*60*1000) return;
-  state.qbPayrollPeriodFetchInFlight = true;
-  const period = previousPayrollPeriod();
+// Deliberately NOT a half-month payroll period — clients renew on all
+// kinds of different days, not aligned to the 1st/15th payroll cutoffs, so
+// a half-month window catches a lopsided, inconsistent slice of whoever
+// happens to renew in that particular two weeks (and nearly all of
+// someone else's package price if their one renewal date falls just
+// outside it). A FULL calendar month is long enough that every client's
+// renewal falls inside it exactly once, which is what makes the revenue
+// side of this ratio meaningful. previousCalendarMonthRange() is always a
+// fully closed month — both sides of the ratio are complete, not a moving
+// target depending what day it's checked.
+function fetchQuickBooksLastMonthSummaryIfStale(){
+  if(!fns || state.qbLastMonthFetchInFlight) return;
+  if(Date.now() - (state.qbLastMonthFetchAt||0) < 5*60*1000) return;
+  state.qbLastMonthFetchInFlight = true;
+  const period = previousCalendarMonthRange();
   fns.httpsCallable("getQuickBooksSummary")({
     startDate: period.start.toISOString().slice(0,10),
     endDate: new Date(period.end.getTime()-1).toISOString().slice(0,10)
   })
     .then(({data})=>{
-      state.qbPayrollPeriodSummary = data.connected ? { ...data, period } : null;
-      state.qbPayrollPeriodLastFetchAt = Date.now();
-      state.qbPayrollPeriodFetchInFlight = false;
+      state.qbLastMonthSummary = data.connected ? { ...data, period } : null;
+      state.qbLastMonthFetchAt = Date.now();
+      state.qbLastMonthFetchInFlight = false;
       render();
     })
     .catch(err=>{
-      console.warn("QuickBooks payroll-period summary fetch failed:", err);
-      state.qbPayrollPeriodFetchInFlight = false;
+      console.warn("QuickBooks last-month summary fetch failed:", err);
+      state.qbLastMonthFetchInFlight = false;
     });
 }
 // Goals: freeform, user-picked — any of the metrics already computed above
@@ -3845,25 +3854,31 @@ function fetchQuickBooksPayrollPeriodSummaryIfStale(){
 // standalone Scorecard rows but are exactly what a goal gets set against.
 const SCORECARD_GOAL_METRICS = [
   ...SCORECARD_METRIC_DEFS,
-  { key:"qbPayrollMarginPct", label:"Payroll Margin % (last pay period)", group:"Operations", fmt:v=>v.toFixed(1)+"%", lowerIsBetter:true }
+  { key:"qbPayrollMarginPct", label:"Payroll Margin % (last month)", group:"Operations", fmt:v=>v.toFixed(1)+"%", lowerIsBetter:true }
 ];
 // Actual value for a goal — QB-sourced money/payroll metrics use the
 // MONTH-TO-DATE summary (qbMonthSummary), everything else (active clients,
 // MRR, overdue tasks, etc.) uses the same live snapshot the weekly table
 // above shows, since those are "right now" counts, not a weekly/monthly flow.
-// Sales and payroll for the most recently CLOSED payroll period, computed
-// straight from the app's own records — same formulas the Payroll tab's own
-// "Estimated margin" stat already uses (expectedRevenuePerPayrollPeriod
-// includes overage; payrollAmountForAssistant is actual hours clocked ×
-// rate). More accurate than QuickBooks' own Income/Payroll for this
-// specific ratio, since the app knows every client's package/overage and
-// every assistant's clocked hours exactly, while QuickBooks only reflects
+// Sales and payroll for the most recently CLOSED calendar month, computed
+// straight from the app's own records. Revenue uses monthlyEquivalentPrice
+// (the client's package price converted to a flat monthly figure, same
+// helper the Scorecard's own MRR number already uses) plus overage, NOT
+// expectedRevenuePerPayrollPeriod's half-month proration — clients renew
+// on all kinds of different days, not aligned to payroll cutoffs, so a
+// half-month window caught a lopsided slice of whoever's renewal happened
+// to fall in it. A full month is long enough that every client's renewal
+// lands inside it exactly once. Payroll is actual hours clocked across
+// that same full month × each assistant's real rate. Both are more
+// accurate than QuickBooks' own Income/Payroll for this specific ratio,
+// since the app knows every client's package/overage and every
+// assistant's clocked hours exactly, while QuickBooks only reflects
 // whatever's been invoiced/run there (which lags and can miss overage
 // billed separately).
-function appPayrollMarginForLastPeriod(){
-  const period = previousPayrollPeriod();
+function appPayrollMarginForLastMonth(){
+  const period = previousCalendarMonthRange();
   const activeClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"));
-  const revenue = activeClients.reduce((s,c)=>s+expectedRevenuePerPayrollPeriod(c),0);
+  const revenue = activeClients.reduce((s,c)=>s+monthlyEquivalentPrice(c)+overageFor(c).amount,0);
   const payroll = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
   return { period, revenue, payroll, marginPct: payrollMarginPct(revenue, payroll) };
 }
@@ -3873,7 +3888,7 @@ function scorecardGoalActualValue(metricKey){
   if(metricKey==="qbGrossProfit") return ms ? ms.grossProfit : null;
   if(metricKey==="qbExpenses") return ms ? ms.expenses : null;
   if(metricKey==="qbPayroll") return ms ? ms.payroll : null;
-  if(metricKey==="qbPayrollMarginPct") return appPayrollMarginForLastPeriod().marginPct;
+  if(metricKey==="qbPayrollMarginPct") return appPayrollMarginForLastMonth().marginPct;
   return computeScorecardMetrics()[metricKey];
 }
 function addScorecardGoal(){
@@ -3918,7 +3933,7 @@ function renderScorecardTab(){
   ensureCurrentScorecardSnapshot();
   fetchQuickBooksSummaryIfStale();
   fetchQuickBooksMonthSummaryIfStale();
-  fetchQuickBooksPayrollPeriodSummaryIfStale();
+  fetchQuickBooksLastMonthSummaryIfStale();
   const history = (state.settings.scorecardHistory||[]).slice().sort((a,b)=> b.weekStart < a.weekStart ? -1 : 1).slice(0,12);
   const groups = ["Growth","Operations"];
   return `
@@ -3959,8 +3974,8 @@ function renderScorecardTab(){
     </div>`).join("")}
     ${(()=>{
       const ms = state.qbMonthSummary;
-      const ps = state.qbPayrollPeriodSummary;
-      const { period, revenue:appRevenue, payroll:appPayroll, marginPct:margin } = appPayrollMarginForLastPeriod();
+      const ps = state.qbLastMonthSummary;
+      const { period, revenue:appRevenue, payroll:appPayroll, marginPct:margin } = appPayrollMarginForLastMonth();
       const overTarget = margin!=null && margin>=PAYROLL_MARGIN_TARGET;
       const monthLabel = new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
       const periodLabel = formatPeriodRange(period);
@@ -3974,7 +3989,7 @@ function renderScorecardTab(){
       return `
     <div class="card">
       <h3 style="margin:0;">This Month — ${monthLabel}</h3>
-      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open. Payroll Margin below uses the app's own sales/payroll numbers instead (more accurate — see why below), scoped to a full pay period so it's stable no matter what day you check it.</div>
+      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open. Payroll Margin below uses the app's own sales/payroll numbers instead (more accurate — see why below), scoped to the most recently completed full month so it's stable no matter what day you check it.</div>
       <div class="stat-row">
         <div class="stat-tile">
           <div class="stat-label">Income</div>
@@ -3992,18 +4007,18 @@ function renderScorecardTab(){
       ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this month's real numbers.</div>` : ""}
     </div>
     <div class="card">
-      <h3 style="margin:0;">Payroll Margin — Last Pay Period</h3>
-      <div class="small" style="margin:4px 0 10px;">${periodLabel} — Sales and Payroll are computed straight from this app (every client's package + overage hours, every assistant's actual clocked hours × rate), not from QuickBooks. QuickBooks is shown alongside each for a sanity check, and its Expenses line fills in the costs the app has no way to know about (rent, insurance, software, etc.).</div>
+      <h3 style="margin:0;">Payroll Margin — Last Month</h3>
+      <div class="small" style="margin:4px 0 10px;">${periodLabel} — Sales and Payroll are computed straight from this app (every client's monthly package price + overage, every assistant's actual clocked hours × rate — a full month rather than a pay period, since clients renew on all kinds of different days that don't line up with the 1st/15th payroll cutoffs). QuickBooks is shown alongside each for a sanity check, and its Expenses line fills in the costs the app has no way to know about (rent, insurance, software, etc.).</div>
       <div class="stat-row">
         <div class="stat-tile">
           <div class="stat-label">Sales (from app, incl. overage)</div>
           <div class="stat-value">$${Math.round(appRevenue).toLocaleString()}</div>
-          <div class="stat-sub">QuickBooks shows ${ps?'$'+Math.round(ps.income).toLocaleString():'—'} for this period</div>
+          <div class="stat-sub">QuickBooks shows ${ps?'$'+Math.round(ps.income).toLocaleString():'—'} for this month</div>
         </div>
         <div class="stat-tile">
           <div class="stat-label">Payroll (from app, hours &times; rate)</div>
           <div class="stat-value">$${Math.round(appPayroll).toLocaleString()}</div>
-          <div class="stat-sub">QuickBooks shows ${ps?'$'+Math.round(ps.payroll).toLocaleString():'—'} for this period</div>
+          <div class="stat-sub">QuickBooks shows ${ps?'$'+Math.round(ps.payroll).toLocaleString():'—'} for this month</div>
         </div>
         <div class="stat-tile ${overTarget?'status-danger':margin!=null && margin>=PAYROLL_MARGIN_TARGET-5?'status-warn':''}">
           <div class="stat-label">Payroll Margin</div>
@@ -4015,7 +4030,7 @@ function renderScorecardTab(){
         <div class="stat-tile">
           <div class="stat-label">Other expenses (QuickBooks, not tracked in-app)</div>
           <div class="stat-value">${otherExpenses!=null?'$'+Math.round(otherExpenses).toLocaleString():'—'}</div>
-          <div class="stat-sub">QuickBooks Expenses for this period, minus payroll (already counted above)</div>
+          <div class="stat-sub">QuickBooks Expenses for this month, minus payroll (already counted above)</div>
         </div>
         <div class="stat-tile ${netProfit!=null && netProfit<0?'status-danger':''}">
           <div class="stat-label">Net profit</div>
