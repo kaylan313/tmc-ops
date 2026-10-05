@@ -8460,28 +8460,6 @@ function renderClientPortal(){
           <a href="https://calendar.app.google/QU71nWmK6963tLfq7" target="_blank" rel="noopener"><button class="secondary">Schedule a Check-In</button></a>
         </div>
         ` : ""}
-        ${!client.contractSigned && !client.contractSignedExternally ? `
-        <div class="card">
-          <h3>Membership Setup</h3>
-          <div class="small" style="margin-bottom:8px;">For staff use during orientation: pick the package the client is choosing and their contract start date before signing below. This section disappears once the agreement is signed.</div>
-          <div class="row">
-            <div><label class="small">Package</label>
-              <select onchange="selectPackageTier('${client.id}',this.value)">
-                <option value="">— Select a package —</option>
-                ${PACKAGE_TIERS.filter(t=>!t.key.startsWith('legacy_')).map(t=>`<option value="${t.key}" ${client.packageHours===t.hours&&client.packagePrice===t.price?'selected':''}>${t.label} — $${t.price} (${t.hours}hrs)</option>`).join("")}
-              </select>
-            </div>
-            <div><label class="small">Term type</label>
-              <select onchange="updateClientField('${client.id}','termType',this.value)">
-                <option value="pilot" ${(!client.termType||client.termType==='pilot')?'selected':''}>One Month Pilot</option>
-                <option value="3month" ${client.termType==='3month'?'selected':''}>Three Month Term</option>
-                <option value="12month_new" ${client.termType==='12month_new'?'selected':''}>Twelve Month Term (New)</option>
-              </select>
-            </div>
-            <div><label class="small">Contract start date</label><input type="date" value="${client.termStartDate?client.termStartDate.slice(0,10):''}" onchange="updateTermStartDate('${client.id}',this.value)"></div>
-          </div>
-        </div>
-        ` : ""}
         <div class="card">
           <h3>Service Agreement</h3>
           ${renderContractSectionBody(client)}
