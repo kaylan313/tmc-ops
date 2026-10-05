@@ -7145,10 +7145,6 @@ function deleteTaskFromReports(taskId){
 }
 
 // --- Onboarding ---
-const ONBOARDING_CHECKLIST = [
-  "Sign offer letter","Set up email & tools access","Review client assignment",
-  "Shadow a clock-in/clock-out cycle","Read client CRM guide","Complete first task"
-];
 // Verbatim (converted from the Drive doc) — keep both in sync when the policy book changes.
 const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIERGE</h2>
 <h3>Team Policy Book | Effective: April 2026 | Confidential — Internal Use Only</h3>
@@ -7505,16 +7501,25 @@ function renderOnboarding(){
         : "Your upload folder hasn't been set up yet — ask Kaylan or Heidi to add your Google Drive folder link, then check back here."}</div>
       ${state.currentAssistant.driveUploadFolderUrl ? `<button onclick="window.open('${state.currentAssistant.driveUploadFolderUrl}','_blank')">Open my upload folder</button>` : ""}
     </div>` : ""}
+    ${state.role==="team" && state.currentAssistant ? (()=>{
+      // Look up fresh rather than using state.currentAssistant directly —
+      // toggleOnboardingItem() replaces this assistant's object (spread
+      // copy) inside state.settings.assistants rather than mutating it in
+      // place, so the reference captured at login would otherwise go stale
+      // the moment the first box is checked and stop reflecting changes.
+      const me = state.settings.assistants.find(a=>a.id===state.currentAssistant.id);
+      const items = (me && me.onboarding) || [];
+      return `
     <div class="card">
-      <h3>New team member checklist</h3>
-      ${ONBOARDING_CHECKLIST.map((item,i)=>`
+      <h3>Your onboarding checklist</h3>
+      ${items.length ? items.map(it=>`
         <div class="checklist-item">
-          <input type="checkbox" id="ob_${i}">
-          <label for="ob_${i}">${item}</label>
+          <input type="checkbox" id="ob_self_${it.id}" ${it.done?'checked':''} onchange="toggleOnboardingItem('${me.id}','${it.id}')">
+          <label for="ob_self_${it.id}">${it.text}</label>
         </div>
-      `).join("")}
-      <div class="small" style="margin-top:8px;">Checklist state is local to this device for now — hook this up to Firestore per-assistant if you want it to persist across devices.</div>
-    </div>
+      `).join("") : `<div class="small">Nothing on your checklist yet — ask Kaylan to add one on the Team tab.</div>`}
+    </div>`;
+    })() : ""}
   `;
 }
 
