@@ -132,6 +132,7 @@
   .modal{
     background:#fff;border-radius:12px;padding:24px;width:460px;max-width:92vw;max-height:86vh;overflow-y:auto;
   }
+  .modal-section-label{font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:var(--rose-dark);font-weight:600;margin:18px 0 8px;padding-top:14px;border-top:1px solid var(--cream-dark);}
   .timer-pill{
     background:var(--rose);color:#fff;padding:8px 14px;border-radius:20px;font-size:13px;display:flex;align-items:center;gap:8px;
   }
@@ -8764,7 +8765,8 @@ function renderTaskEditorModal(task){
         <label class="small">What would make this good content? <span style="font-weight:400;">(helps the Content Creator decide what to film)</span></label>
         <textarea id="tf_content_note" oninput="state.modal.task.goodForContentNote=this.value">${task.goodForContentNote||''}</textarea>
       </div>
-      <div class="row" style="margin-top:8px;">
+      <div class="modal-section-label">Assignment &amp; Status</div>
+      <div class="row">
         <div><label class="small">Client</label>
           <select id="tf_client" onchange="state.modal.task.clientId=this.value">
             <option value="${INTERNAL_CLIENT_ID}" ${task.clientId===INTERNAL_CLIENT_ID?'selected':''}>Internal / Modern Co.</option>
@@ -8787,7 +8789,7 @@ function renderTaskEditorModal(task){
       </div>
       <div class="small" style="margin-top:2px;">Reports pull "completed this period" straight off this date — if a task was actually finished earlier and just had its status corrected today, set the real date here so it doesn't show up on a report it doesn't belong on.</div>
       ${renderTaskTimeEntriesSection(task)}
-      <div style="margin-top:8px;">
+      <div style="margin-top:10px;">
         <label class="small">Assignees</label>
         ${assignableAssistants(task.assignees).map(a=>`
           <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:13px;">
@@ -8795,7 +8797,8 @@ function renderTaskEditorModal(task){
           </label>
         `).join("")}
       </div>
-      <div style="margin-top:10px;">
+      <div class="modal-section-label">Notes</div>
+      <div>
         <label class="small">Client-facing summary (optional — shown on weekly client reports instead of the internal title)</label>
         <textarea id="tf_description" placeholder="e.g. Handled guest messaging across platforms." oninput="state.modal.task.description=this.value">${task.description||''}</textarea>
       </div>
@@ -8803,7 +8806,8 @@ function renderTaskEditorModal(task){
         <label class="small">Private notes — never shown to the client, not on any report</label>
         <textarea id="tf_private_notes" placeholder="Internal context, vendor details, anything the client shouldn't see." oninput="state.modal.task.privateNotes=this.value">${task.privateNotes||''}</textarea>
       </div>
-      <div style="margin-top:10px;">
+      <div class="modal-section-label">Checklist &amp; Files</div>
+      <div>
         <label class="small">Subtasks</label>
         <div id="tf_subtasks">
           ${(task.subtasks||[]).map((s,i)=>`
