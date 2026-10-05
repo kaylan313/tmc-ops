@@ -2699,6 +2699,14 @@ function renderOpsLeadColumn(assistant, d){
         <button class="secondary" onclick="event.stopPropagation();dismissClientCheckIn('${client.id}','${type}')">Reviewed</button>
       </div>`).join("")}
   `);
+  if(d.renewalCheckInEmails.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Check in about renewing</div>
+    ${d.renewalCheckInEmails.map(({client,type,label,detail,urgent})=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientEmailTemplates('${client.id}')">
+        <div><span class="alert ${urgent?'danger':'warn'}" style="margin:0;padding:2px 8px;">${label}</span> <strong>${client.name}</strong><span class="small"> · ${detail}</span></div>
+        <button class="secondary" style="padding:2px 8px;" onclick="event.stopPropagation();dismissEmailNeeded('${client.id}','${type}');render();" title="Mark as sent without sending from here">Dismiss</button>
+      </div>`).join("")}
+  `);
   if(d.pending.length) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Client requests awaiting assistant review</div>
     ${d.pending.map(t=>{
@@ -2808,6 +2816,11 @@ function renderAdminDashboard(){
   const renewingThisWeek = clientsRenewingInWindow(currentCalendarWeek());
   const renewingNextWeek = clientsRenewingInWindow(nextCalendarWeek());
   const emailsNeeded = emailsNeededList();
+  // "Is this client renewing/continuing?" is Tori's conversation to start
+  // (she talks to the client first) — Heidi only sends the paperwork/billing
+  // emails that follow once that's settled, never the check-in itself.
+  const renewalCheckInEmails = emailsNeeded.filter(e=>e.type==="pilotCheckIn" || e.type==="renewal");
+  const docsEmailsNeeded = emailsNeeded.filter(e=>e.type==="period" || e.type.startsWith("addOnPayment:"));
   const contractsReady = contractsReadyToDownload();
   const paymentsReady = paymentsReadyToProcess();
   const unackedAssignments = unacknowledgedAssignments();
@@ -2878,8 +2891,8 @@ function renderAdminDashboard(){
     </div>
 
     <div class="row">
-      ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns, pending, notStartedClients, atRiskClients, overdue, pastDue })}
-      ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, contractsReady, emailsNeeded, termUpdateClients })}
+      ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns, renewalCheckInEmails, pending, notStartedClients, atRiskClients, overdue, pastDue })}
+      ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, contractsReady, emailsNeeded:docsEmailsNeeded, termUpdateClients })}
     </div>
 
     ${(renewingThisWeek.length || renewingNextWeek.length) ? `
