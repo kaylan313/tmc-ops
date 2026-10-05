@@ -7646,22 +7646,27 @@ function renderAssistantRow(a){
         </div>
       </div>
       <div><label class="small">Document upload folder — their private Google Drive folder link, for License &amp; W9 uploads (Onboarding tab shows them a button that opens this)</label><input id="asst_drivefolder_${a.id}" value="${a.driveUploadFolderUrl||''}" placeholder="https://drive.google.com/drive/folders/..." onchange="updateAssistantField('${a.id}','driveUploadFolderUrl',this.value.trim())"></div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <input type="checkbox" ${a.isContentCreator?'checked':''} onchange="updateAssistantField('${a.id}','isContentCreator',this.checked)">
-        Content Creator — logs in to a restricted view showing only the Content Calendar
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <input type="checkbox" ${a.isLeadership?'checked':''} onchange="updateAssistantField('${a.id}','isLeadership',this.checked)">
-        Leadership — gets "Newly Assigned" alerts on the admin Dashboard for Internal tasks assigned to them (since they mostly log in with the shared Admin passcode, not their own code)
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <input type="checkbox" ${a.isOpsLead?'checked':''} onchange="setExclusiveAssistantFlag('${a.id}','isOpsLead',this.checked)">
-        Operations Lead — gets an "Attention: ${a.name||'them'}" column at the top of the admin Dashboard: client health, task oversight, check-ins (only one person at a time — checking this unchecks it for anyone else)
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <input type="checkbox" ${a.isDocsLead?'checked':''} onchange="setExclusiveAssistantFlag('${a.id}','isDocsLead',this.checked)">
-        Documentation &amp; Billing Lead — gets an "Attention: ${a.name||'them'}" column at the top of the admin Dashboard: contracts, payments, renewal/recap emails to send (only one person at a time — checking this unchecks it for anyone else)
-      </label>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Roles</label>
+        <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Logs in to a restricted view showing only the Content Calendar">
+            <input type="checkbox" ${a.isContentCreator?'checked':''} onchange="updateAssistantField('${a.id}','isContentCreator',this.checked)">
+            Content Creator
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Gets &quot;Newly Assigned&quot; alerts on the admin Dashboard for Internal tasks assigned to them (since they mostly log in with the shared Admin passcode, not their own code)">
+            <input type="checkbox" ${a.isLeadership?'checked':''} onchange="updateAssistantField('${a.id}','isLeadership',this.checked)">
+            Leadership
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Gets an &quot;Attention: ${a.name||'them'}&quot; column at the top of the admin Dashboard: client health, task oversight, check-ins. Only one person at a time — checking this unchecks it for anyone else.">
+            <input type="checkbox" ${a.isOpsLead?'checked':''} onchange="setExclusiveAssistantFlag('${a.id}','isOpsLead',this.checked)">
+            Operations Lead
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Gets an &quot;Attention: ${a.name||'them'}&quot; column at the top of the admin Dashboard: contracts, payments, renewal/recap emails to send. Only one person at a time — checking this unchecks it for anyone else.">
+            <input type="checkbox" ${a.isDocsLead?'checked':''} onchange="setExclusiveAssistantFlag('${a.id}','isDocsLead',this.checked)">
+            Documentation &amp; Billing Lead
+          </label>
+        </div>
+      </div>
       ${onboarding.length ? `
         <div>
           <div class="small">Onboarding: ${doneCount}/${onboarding.length} complete</div>
