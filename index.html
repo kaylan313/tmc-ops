@@ -3851,16 +3851,29 @@ const SCORECARD_GOAL_METRICS = [
 // MONTH-TO-DATE summary (qbMonthSummary), everything else (active clients,
 // MRR, overdue tasks, etc.) uses the same live snapshot the weekly table
 // above shows, since those are "right now" counts, not a weekly/monthly flow.
+// Sales and payroll for the most recently CLOSED payroll period, computed
+// straight from the app's own records — same formulas the Payroll tab's own
+// "Estimated margin" stat already uses (expectedRevenuePerPayrollPeriod
+// includes overage; payrollAmountForAssistant is actual hours clocked ×
+// rate). More accurate than QuickBooks' own Income/Payroll for this
+// specific ratio, since the app knows every client's package/overage and
+// every assistant's clocked hours exactly, while QuickBooks only reflects
+// whatever's been invoiced/run there (which lags and can miss overage
+// billed separately).
+function appPayrollMarginForLastPeriod(){
+  const period = previousPayrollPeriod();
+  const activeClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"));
+  const revenue = activeClients.reduce((s,c)=>s+expectedRevenuePerPayrollPeriod(c),0);
+  const payroll = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
+  return { period, revenue, payroll, marginPct: payrollMarginPct(revenue, payroll) };
+}
 function scorecardGoalActualValue(metricKey){
   const ms = state.qbMonthSummary;
   if(metricKey==="qbIncome") return ms ? ms.income : null;
   if(metricKey==="qbGrossProfit") return ms ? ms.grossProfit : null;
   if(metricKey==="qbExpenses") return ms ? ms.expenses : null;
   if(metricKey==="qbPayroll") return ms ? ms.payroll : null;
-  if(metricKey==="qbPayrollMarginPct"){
-    const ps = state.qbPayrollPeriodSummary;
-    return ps ? payrollMarginPct(ps.income, ps.payroll) : null;
-  }
+  if(metricKey==="qbPayrollMarginPct") return appPayrollMarginForLastPeriod().marginPct;
   return computeScorecardMetrics()[metricKey];
 }
 function addScorecardGoal(){
@@ -3947,15 +3960,21 @@ function renderScorecardTab(){
     ${(()=>{
       const ms = state.qbMonthSummary;
       const ps = state.qbPayrollPeriodSummary;
-      const margin = ps ? payrollMarginPct(ps.income, ps.payroll) : null;
+      const { period, revenue:appRevenue, payroll:appPayroll, marginPct:margin } = appPayrollMarginForLastPeriod();
       const overTarget = margin!=null && margin>=PAYROLL_MARGIN_TARGET;
       const monthLabel = new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
-      const periodLabel = ps ? formatPeriodRange(ps.period) : (() => { const p = previousPayrollPeriod(); return formatPeriodRange(p); })();
+      const periodLabel = formatPeriodRange(period);
+      // "Other expenses" — rent, insurance, software, anything with no
+      // equivalent in the app's own data — QuickBooks is the only place
+      // that knows these, so this is the one QB number that actually
+      // belongs in the margin picture rather than just a sanity-check.
+      const otherExpenses = ps ? Math.max(0, ps.expenses - appPayroll) : null;
+      const netProfit = otherExpenses!=null ? appRevenue - appPayroll - otherExpenses : null;
       const goals = (state.settings.scorecardGoals||[]).filter(g=>g.monthKey===currentMonthKey());
       return `
     <div class="card">
       <h3 style="margin:0;">This Month — ${monthLabel}</h3>
-      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open. Payroll's own margin check is below, scoped to a full pay period instead — your payroll runs on the 1st/15th and client billing is scattered across each client's own renewal day, so "month so far" swings wildly depending what day you check it.</div>
+      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open. Payroll Margin below uses the app's own sales/payroll numbers instead (more accurate — see why below), scoped to a full pay period so it's stable no matter what day you check it.</div>
       <div class="stat-row">
         <div class="stat-tile">
           <div class="stat-label">Income</div>
@@ -3974,15 +3993,17 @@ function renderScorecardTab(){
     </div>
     <div class="card">
       <h3 style="margin:0;">Payroll Margin — Last Pay Period</h3>
-      <div class="small" style="margin:4px 0 10px;">${periodLabel} — a fully closed payroll period (not partial), so this number is stable no matter what day you look at it.</div>
+      <div class="small" style="margin:4px 0 10px;">${periodLabel} — Sales and Payroll are computed straight from this app (every client's package + overage hours, every assistant's actual clocked hours × rate), not from QuickBooks. QuickBooks is shown alongside each for a sanity check, and its Expenses line fills in the costs the app has no way to know about (rent, insurance, software, etc.).</div>
       <div class="stat-row">
         <div class="stat-tile">
-          <div class="stat-label">Income (this period)</div>
-          <div class="stat-value">${ps?'$'+Math.round(ps.income).toLocaleString():'—'}</div>
+          <div class="stat-label">Sales (from app, incl. overage)</div>
+          <div class="stat-value">$${Math.round(appRevenue).toLocaleString()}</div>
+          <div class="stat-sub">QuickBooks shows ${ps?'$'+Math.round(ps.income).toLocaleString():'—'} for this period</div>
         </div>
         <div class="stat-tile">
-          <div class="stat-label">Payroll (this period)</div>
-          <div class="stat-value">${ps?'$'+Math.round(ps.payroll).toLocaleString():'—'}</div>
+          <div class="stat-label">Payroll (from app, hours &times; rate)</div>
+          <div class="stat-value">$${Math.round(appPayroll).toLocaleString()}</div>
+          <div class="stat-sub">QuickBooks shows ${ps?'$'+Math.round(ps.payroll).toLocaleString():'—'} for this period</div>
         </div>
         <div class="stat-tile ${overTarget?'status-danger':margin!=null && margin>=PAYROLL_MARGIN_TARGET-5?'status-warn':''}">
           <div class="stat-label">Payroll Margin</div>
@@ -3990,7 +4011,19 @@ function renderScorecardTab(){
           <div class="stat-sub">target: stay under ${PAYROLL_MARGIN_TARGET}%${overTarget?' — over target':''}</div>
         </div>
       </div>
-      ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this period's real numbers.</div>` : ""}
+      <div class="stat-row" style="margin-top:10px;">
+        <div class="stat-tile">
+          <div class="stat-label">Other expenses (QuickBooks, not tracked in-app)</div>
+          <div class="stat-value">${otherExpenses!=null?'$'+Math.round(otherExpenses).toLocaleString():'—'}</div>
+          <div class="stat-sub">QuickBooks Expenses for this period, minus payroll (already counted above)</div>
+        </div>
+        <div class="stat-tile ${netProfit!=null && netProfit<0?'status-danger':''}">
+          <div class="stat-label">Net profit</div>
+          <div class="stat-value">${netProfit!=null?'$'+Math.round(netProfit).toLocaleString():'—'}</div>
+          <div class="stat-sub">sales &minus; payroll &minus; other expenses</div>
+        </div>
+      </div>
+      ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this period's Expenses and the QuickBooks comparison numbers.</div>` : ""}
     </div>
     <div class="card">
       <div class="flex-between">
