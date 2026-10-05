@@ -4314,7 +4314,11 @@ function renderClientCRM(clientId){
   // don't need to see what a client pays, and shouldn't be the ones editing
   // billing/contract terms anyway. Hours used/remaining (what they DO need)
   // is still visible on the Tasks tab's hours card, no $ attached.
-  const subtabs = [["profile","Profile"],["tasks","Tasks"]];
+  // Contract & Payment stays visible to both roles (Payment Setup always
+  // was, even though Service Agreement itself has its own admin-only gate
+  // inside renderClientProfile's "contract" body) — matches the original
+  // single Profile tab's behavior before this split.
+  const subtabs = [["profileDetails","Details"],["profileNotes","Notes & Dates"],["tasks","Tasks"],["profileContract","Contract & Payment"]];
   if(state.role==="admin") subtabs.push(["membership","Membership"],["softwareBuild","Software Build"]);
   subtabs.push(["emailTemplates","Email Templates"]);
   return `
@@ -4333,7 +4337,9 @@ function renderClientCRM(clientId){
     <div class="tabs">
       ${subtabs.map(([key,label])=>`<button class="${state.crmSubTab===key?'active':''}" onclick="state.crmSubTab='${key}';render();">${label}</button>`).join("")}
     </div>
-    ${state.crmSubTab==="profile" ? renderClientProfile(client) : ""}
+    ${state.crmSubTab==="profileDetails" ? renderClientProfile(client).details : ""}
+    ${state.crmSubTab==="profileNotes" ? renderClientProfile(client).notes : ""}
+    ${state.crmSubTab==="profileContract" ? renderClientProfile(client).contract : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
     ${state.crmSubTab==="membership" && state.role==="admin" ? renderClientMembership(client) : ""}
     ${state.crmSubTab==="softwareBuild" && state.role==="admin" ? renderClientAddOnsSection(client) : ""}
@@ -5076,7 +5082,7 @@ function renderClientProfile(client){
       <button class="secondary" onclick="addImportantInfo('${client.id}')">Add</button>
     </div>
     <label class="small" style="display:block;margin-top:16px;">Website logins</label>
-    <div class="small" style="margin-bottom:8px;">Stored as plain text on this client's record — see note below about locking this down before it's real production data.</div>
+    <div class="small" style="margin-bottom:8px;">Stored as plain text on this client's record — visible to anyone with access to this client's profile.</div>
     ${(client.logins||[]).map((l,i)=>`
       <div class="list-item">
         <div>
@@ -5127,20 +5133,34 @@ function renderClientProfile(client){
     }).join("") || `<div class="small">No notes yet.</div>`}
   `;
 
-  return `
-    ${renderClientOnboardingChecklist(client)}
-    ${renderProfileSection("visit", "1. Client & Visit Details", visitBody)}
-    ${showHome ? renderProfileSection("home", "2. Home Onboarding", homeBody) : ""}
-    ${showBusiness ? renderProfileSection("business", "3. Business Onboarding", businessBody) : ""}
-    ${renderProfileSection("dates", "4. Birthdays & Special Dates", datesBody)}
-    ${renderProfileSection("vendors", "5. Vendors & Recurring Services", vendorsBody)}
-    ${renderProfileSection("homeInspection", "6. Home Inspection Calendar", homeInspectionBody)}
-    ${renderProfileSection("info", "7. Important Info & Logins", infoBody)}
-    ${renderProfileSection("notes", "8. Client Notes", notesBody)}
-    ${renderProfileSection("referrals", "9. Referrals", referralsBody)}
-    ${state.role==="admin" ? renderProfileSection("contract", "10. Service Agreement", renderContractSectionBody(client)) : ""}
-    ${renderProfileSection("payment", "11. Payment Setup", renderPaymentSectionBody(client))}
-  `;
+  return {
+    // "Details" — the operational household/business picture: who they are,
+    // their space, their recurring services. The natural first stop, so the
+    // onboarding checklist (overall intake progress) lives here too.
+    details: `
+      ${renderClientOnboardingChecklist(client)}
+      ${renderProfileSection("visit", "1. Client & Visit Details", visitBody)}
+      ${showHome ? renderProfileSection("home", "2. Home Onboarding", homeBody) : ""}
+      ${showBusiness ? renderProfileSection("business", "3. Business Onboarding", businessBody) : ""}
+      ${renderProfileSection("vendors", "4. Vendors & Recurring Services", vendorsBody)}
+      ${renderProfileSection("homeInspection", "5. Home Inspection Calendar", homeInspectionBody)}
+    `,
+    // "Notes & Dates" — the reference/relationship cluster: things you'd
+    // look up or jot down about this client, not things you fill in once
+    // during onboarding and rarely touch again.
+    notes: `
+      ${renderProfileSection("dates", "1. Birthdays & Special Dates", datesBody)}
+      ${renderProfileSection("info", "2. Important Info & Logins", infoBody)}
+      ${renderProfileSection("notes", "3. Client Notes", notesBody)}
+      ${renderProfileSection("referrals", "4. Referrals", referralsBody)}
+    `,
+    // "Contract & Payment" — legal/billing, kept separate from household
+    // trivia above; already admin-only for the contract half.
+    contract: `
+      ${state.role==="admin" ? renderProfileSection("contract", "1. Service Agreement", renderContractSectionBody(client)) : ""}
+      ${renderProfileSection("payment", "2. Payment Setup", renderPaymentSectionBody(client))}
+    `
+  };
 }
 // --- Service Agreement + signature (fills the same blanks a human would
 // hand-write during orientation — client name, start date, which term is
@@ -9171,7 +9191,7 @@ function saveClient(existingId){
   if(!existingId){
     state.activeTab = "clients";
     state.selectedClientId = id;
-    state.crmSubTab = "profile";
+    state.crmSubTab = "profileDetails";
     state.profileOpenSections = new Set(["visit"]);
   }
   render();
