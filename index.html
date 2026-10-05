@@ -424,7 +424,12 @@ let state = {
   // they're two different date ranges hitting the same Cloud Function.
   qbMonthSummary: null,
   qbMonthLastFetchAt: 0,
-  qbMonthFetchInFlight: false
+  qbMonthFetchInFlight: false,
+  // Payroll Margin's own fetch — a fully-closed payroll period, not the
+  // calendar month above (see fetchQuickBooksPayrollPeriodSummaryIfStale).
+  qbPayrollPeriodSummary: null,
+  qbPayrollPeriodLastFetchAt: 0,
+  qbPayrollPeriodFetchInFlight: false
 };
 
 // ---- 4. Firestore helpers ----
@@ -3806,12 +3811,41 @@ function payrollMarginPct(income, payroll){
   return (payroll/income)*100;
 }
 const PAYROLL_MARGIN_TARGET = 55;
+// Deliberately NOT calendar month-to-date — payroll only posts twice a
+// month (the 1st and 15th) and client billing is scattered across each
+// client's own renewal day, so checking "month so far" on, say, the 10th
+// catches one payroll run but very little revenue yet, making the margin
+// look terrible for no real reason (and the opposite right after the next
+// payroll run lands). previousPayrollPeriod() is always a FULLY CLOSED
+// 1st–14th or 15th–end window — both sides of the ratio are complete, so
+// this number is stable and comparable every time it's checked, not a
+// moving target depending what day of the month it happens to be.
+function fetchQuickBooksPayrollPeriodSummaryIfStale(){
+  if(!fns || state.qbPayrollPeriodFetchInFlight) return;
+  if(Date.now() - (state.qbPayrollPeriodLastFetchAt||0) < 5*60*1000) return;
+  state.qbPayrollPeriodFetchInFlight = true;
+  const period = previousPayrollPeriod();
+  fns.httpsCallable("getQuickBooksSummary")({
+    startDate: period.start.toISOString().slice(0,10),
+    endDate: new Date(period.end.getTime()-1).toISOString().slice(0,10)
+  })
+    .then(({data})=>{
+      state.qbPayrollPeriodSummary = data.connected ? { ...data, period } : null;
+      state.qbPayrollPeriodLastFetchAt = Date.now();
+      state.qbPayrollPeriodFetchInFlight = false;
+      render();
+    })
+    .catch(err=>{
+      console.warn("QuickBooks payroll-period summary fetch failed:", err);
+      state.qbPayrollPeriodFetchInFlight = false;
+    });
+}
 // Goals: freeform, user-picked — any of the metrics already computed above
 // (reusing their label/fmt) plus the two synthetic ones below that aren't
 // standalone Scorecard rows but are exactly what a goal gets set against.
 const SCORECARD_GOAL_METRICS = [
   ...SCORECARD_METRIC_DEFS,
-  { key:"qbPayrollMarginPct", label:"Payroll Margin % (of income)", group:"Operations", fmt:v=>v.toFixed(1)+"%", lowerIsBetter:true }
+  { key:"qbPayrollMarginPct", label:"Payroll Margin % (last pay period)", group:"Operations", fmt:v=>v.toFixed(1)+"%", lowerIsBetter:true }
 ];
 // Actual value for a goal — QB-sourced money/payroll metrics use the
 // MONTH-TO-DATE summary (qbMonthSummary), everything else (active clients,
@@ -3823,7 +3857,10 @@ function scorecardGoalActualValue(metricKey){
   if(metricKey==="qbGrossProfit") return ms ? ms.grossProfit : null;
   if(metricKey==="qbExpenses") return ms ? ms.expenses : null;
   if(metricKey==="qbPayroll") return ms ? ms.payroll : null;
-  if(metricKey==="qbPayrollMarginPct") return ms ? payrollMarginPct(ms.income, ms.payroll) : null;
+  if(metricKey==="qbPayrollMarginPct"){
+    const ps = state.qbPayrollPeriodSummary;
+    return ps ? payrollMarginPct(ps.income, ps.payroll) : null;
+  }
   return computeScorecardMetrics()[metricKey];
 }
 function addScorecardGoal(){
@@ -3868,6 +3905,7 @@ function renderScorecardTab(){
   ensureCurrentScorecardSnapshot();
   fetchQuickBooksSummaryIfStale();
   fetchQuickBooksMonthSummaryIfStale();
+  fetchQuickBooksPayrollPeriodSummaryIfStale();
   const history = (state.settings.scorecardHistory||[]).slice().sort((a,b)=> b.weekStart < a.weekStart ? -1 : 1).slice(0,12);
   const groups = ["Growth","Operations"];
   return `
@@ -3908,14 +3946,16 @@ function renderScorecardTab(){
     </div>`).join("")}
     ${(()=>{
       const ms = state.qbMonthSummary;
-      const margin = ms ? payrollMarginPct(ms.income, ms.payroll) : null;
+      const ps = state.qbPayrollPeriodSummary;
+      const margin = ps ? payrollMarginPct(ps.income, ps.payroll) : null;
       const overTarget = margin!=null && margin>=PAYROLL_MARGIN_TARGET;
       const monthLabel = new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
+      const periodLabel = ps ? formatPeriodRange(ps.period) : (() => { const p = previousPayrollPeriod(); return formatPeriodRange(p); })();
       const goals = (state.settings.scorecardGoals||[]).filter(g=>g.monthKey===currentMonthKey());
       return `
     <div class="card">
       <h3 style="margin:0;">This Month — ${monthLabel}</h3>
-      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open.</div>
+      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open. Payroll's own margin check is below, scoped to a full pay period instead — your payroll runs on the 1st/15th and client billing is scattered across each client's own renewal day, so "month so far" swings wildly depending what day you check it.</div>
       <div class="stat-row">
         <div class="stat-tile">
           <div class="stat-label">Income</div>
@@ -3929,9 +3969,20 @@ function renderScorecardTab(){
           <div class="stat-label">Expenses</div>
           <div class="stat-value">${ms?'$'+Math.round(ms.expenses).toLocaleString():'—'}</div>
         </div>
+      </div>
+      ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this month's real numbers.</div>` : ""}
+    </div>
+    <div class="card">
+      <h3 style="margin:0;">Payroll Margin — Last Pay Period</h3>
+      <div class="small" style="margin:4px 0 10px;">${periodLabel} — a fully closed payroll period (not partial), so this number is stable no matter what day you look at it.</div>
+      <div class="stat-row">
         <div class="stat-tile">
-          <div class="stat-label">Payroll</div>
-          <div class="stat-value">${ms?'$'+Math.round(ms.payroll).toLocaleString():'—'}</div>
+          <div class="stat-label">Income (this period)</div>
+          <div class="stat-value">${ps?'$'+Math.round(ps.income).toLocaleString():'—'}</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Payroll (this period)</div>
+          <div class="stat-value">${ps?'$'+Math.round(ps.payroll).toLocaleString():'—'}</div>
         </div>
         <div class="stat-tile ${overTarget?'status-danger':margin!=null && margin>=PAYROLL_MARGIN_TARGET-5?'status-warn':''}">
           <div class="stat-label">Payroll Margin</div>
@@ -3939,7 +3990,7 @@ function renderScorecardTab(){
           <div class="stat-sub">target: stay under ${PAYROLL_MARGIN_TARGET}%${overTarget?' — over target':''}</div>
         </div>
       </div>
-      ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this month's real numbers.</div>` : ""}
+      ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this period's real numbers.</div>` : ""}
     </div>
     <div class="card">
       <div class="flex-between">
