@@ -3875,12 +3875,36 @@ const SCORECARD_GOAL_METRICS = [
 // assistant's clocked hours exactly, while QuickBooks only reflects
 // whatever's been invoiced/run there (which lags and can miss overage
 // billed separately).
+// One-time Software Build/AI Automation/SOP/Home Reset payments live in a
+// completely separate structure (client.addOns[].payments[]) from the
+// recurring membership price monthlyEquivalentPrice reads — real revenue
+// QuickBooks counts as Income that the membership-only sum above has no
+// way to see. Matched by paidDate falling in range, across EVERY client
+// (not just currently-active ones) since a one-time project payment still
+// counts even if that client has since gone inactive or was never a
+// recurring membership client to begin with (e.g. a Home Reset-only client).
+function addOnRevenueInRange(range){
+  let total = 0;
+  state.clients.forEach(client=>{
+    (client.addOns||[]).forEach(addOn=>{
+      (addOn.payments||[]).forEach(p=>{
+        if(!p.paid || !p.paidDate) return;
+        const paidAt = new Date(p.paidDate);
+        if(paidAt < range.start || paidAt >= range.end) return;
+        total += p.amount||0;
+      });
+    });
+  });
+  return total;
+}
 function appPayrollMarginForLastMonth(){
   const period = previousCalendarMonthRange();
   const activeClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"));
-  const revenue = activeClients.reduce((s,c)=>s+monthlyEquivalentPrice(c)+overageFor(c).amount,0);
+  const membershipRevenue = activeClients.reduce((s,c)=>s+monthlyEquivalentPrice(c)+overageFor(c).amount,0);
+  const addOnRevenue = addOnRevenueInRange(period);
+  const revenue = membershipRevenue + addOnRevenue;
   const payroll = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
-  return { period, revenue, payroll, marginPct: payrollMarginPct(revenue, payroll) };
+  return { period, revenue, membershipRevenue, addOnRevenue, payroll, marginPct: payrollMarginPct(revenue, payroll) };
 }
 function scorecardGoalActualValue(metricKey){
   const ms = state.qbMonthSummary;
@@ -3975,7 +3999,7 @@ function renderScorecardTab(){
     ${(()=>{
       const ms = state.qbMonthSummary;
       const ps = state.qbLastMonthSummary;
-      const { period, revenue:appRevenue, payroll:appPayroll, marginPct:margin } = appPayrollMarginForLastMonth();
+      const { period, revenue:appRevenue, membershipRevenue, addOnRevenue, payroll:appPayroll, marginPct:margin } = appPayrollMarginForLastMonth();
       const overTarget = margin!=null && margin>=PAYROLL_MARGIN_TARGET;
       const monthLabel = new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
       const periodLabel = formatPeriodRange(period);
@@ -4008,12 +4032,12 @@ function renderScorecardTab(){
     </div>
     <div class="card">
       <h3 style="margin:0;">Payroll Margin — Last Month</h3>
-      <div class="small" style="margin:4px 0 10px;">${periodLabel} — Sales and Payroll are computed straight from this app (every client's monthly package price + overage, every assistant's actual clocked hours × rate — a full month rather than a pay period, since clients renew on all kinds of different days that don't line up with the 1st/15th payroll cutoffs). QuickBooks is shown alongside each for a sanity check, and its Expenses line fills in the costs the app has no way to know about (rent, insurance, software, etc.).</div>
+      <div class="small" style="margin:4px 0 10px;">${periodLabel} — Sales and Payroll are computed straight from this app (every client's monthly package price + overage + paid add-on/build invoices, every assistant's actual clocked hours × rate — a full month rather than a pay period, since clients renew on all kinds of different days that don't line up with the 1st/15th payroll cutoffs). QuickBooks is shown alongside each for a sanity check, and its Expenses line fills in the costs the app has no way to know about (rent, insurance, software, etc.).</div>
       <div class="stat-row">
         <div class="stat-tile">
           <div class="stat-label">Sales (from app, incl. overage)</div>
           <div class="stat-value">$${Math.round(appRevenue).toLocaleString()}</div>
-          <div class="stat-sub">QuickBooks shows ${ps?'$'+Math.round(ps.income).toLocaleString():'—'} for this month</div>
+          <div class="stat-sub">$${Math.round(membershipRevenue).toLocaleString()} membership + $${Math.round(addOnRevenue).toLocaleString()} add-on/build · QuickBooks shows ${ps?'$'+Math.round(ps.income).toLocaleString():'—'}</div>
         </div>
         <div class="stat-tile">
           <div class="stat-label">Payroll (from app, hours &times; rate)</div>
