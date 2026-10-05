@@ -171,6 +171,8 @@
     .row > *{min-width:0;width:100%;}
     .stat-tile{min-width:140px;}
     .modal{padding:18px;}
+    .cal-grid{grid-auto-rows:72px;}
+    .cal-cell{font-size:10px;}
   }
   .orgchart-wrap{overflow-x:auto;padding-bottom:8px;}
   .orgchart-row{margin-bottom:8px;}
@@ -211,10 +213,6 @@
   .cal-cell.cal-drop-hover{outline:2px dashed var(--rose-dark);outline-offset:-2px;}
   .cal-add{position:absolute;top:2px;right:2px;background:none;border:none;color:#c7b8ae;font-size:13px;cursor:pointer;line-height:1;padding:2px 4px;}
   .cal-add:hover{color:var(--rose-dark);}
-  @media (max-width:768px){
-    .cal-grid{grid-auto-rows:72px;}
-    .cal-cell{font-size:10px;}
-  }
 </style>
 </head>
 <body>
@@ -981,6 +979,19 @@ function toLocalDateInputValue(iso){
 }
 const CYCLE_LABELS = { biweekly:"Every 14 days", monthly:"Every 30 days", quarterly:"Every 90 days", annual:"Annual" };
 function cycleLabel(cycleType){ return CYCLE_LABELS[cycleType||"monthly"] || cycleType; }
+// Four different "period"/"week" concepts exist in this file, easy to mix
+// up since the names all sound alike — quick glossary:
+//   currentBillingPeriod(client) — THIS client's own rolling cycle, anchored
+//     to their renewalDate (billing/usage/overage math).
+//   currentPayrollPeriod() — company-wide semi-monthly window (1st–14th /
+//     15th–end), used for payroll, independent of any one client.
+//   currentReportWeek() — the most recently COMPLETED Sat–Fri week, used
+//     for the weekly client recap (which always covers a week that's over).
+//   currentCalendarWeek()/nextCalendarWeek() — the Sat–Fri week that
+//     CONTAINS today, used for Dashboard "renewing this/next week" (added
+//     after currentReportWeek's "last completed week" framing caused a real
+//     bug there — a renewal earlier in the actual current week was getting
+//     mislabeled or missed).
 function currentBillingPeriod(client, refDate){
   if(!client.renewalDate) return null;
   const anchor = parseYMD(client.renewalDate);
@@ -2189,12 +2200,6 @@ function upcomingNoticeDeadlines(windowDays){
     })
     .filter(x=>windowDays===null || x.days===null || x.days<=windowDays)
     .sort((a,b)=>(a.days===null?Infinity:a.days)-(b.days===null?Infinity:b.days));
-}
-// "This week"/"next week" reuse the same Sat–Fri window the weekly client
-// reports already use, rather than inventing a second definition of "week".
-function nextReportWeek(){
-  const week = currentReportWeek();
-  return { start: week.end, end: new Date(week.end.getTime() + 7*86400000) };
 }
 // currentReportWeek() deliberately anchors to the most recently COMPLETED
 // Sat-Fri week, since weekly client reports cover a week that's already
@@ -6558,7 +6563,7 @@ function renderKanbanCard(t){
 
 // --- Time tracking view ---
 const TIME_FILTER_PRESETS = [
-  ["today","Today"], ["last30","Last 30 days"], ["period","This pay period"],
+  ["today","Today"], ["week","This week"], ["last30","Last 30 days"], ["period","This pay period"],
   ["custom","Custom range"], ["all","All time"]
 ];
 const TIME_SORT_OPTIONS = [
@@ -6584,6 +6589,7 @@ function timeFilterPeriod(){
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     return { start, end: new Date(start.getTime()+86400000) };
   }
+  if(f.preset==="week") return currentCalendarWeek(now);
   if(f.preset==="last30"){
     const end = now;
     return { start: new Date(end.getTime()-30*86400000), end };
