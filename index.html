@@ -6432,7 +6432,12 @@ const KANBAN_SORT_OPTIONS = [
 ];
 function sortKanbanTasks(tasks, sort){
   const sorted = tasks.slice();
-  const created = t => t.createdAt ? new Date(t.createdAt).getTime() : 0;
+  // Real tasks never actually get a createdAt field (saveTask() doesn't set
+  // one) — checking only t.createdAt made every task compare as the same
+  // "0", so Oldest/Newest silently did nothing. taskCreatedDate() already
+  // exists for exactly this (falls back to the timestamp embedded in the
+  // task's own id by newId()), just wasn't being used here.
+  const created = t => (taskCreatedDate(t) || new Date(0)).getTime();
   if(sort==="oldest") sorted.sort((a,b)=> created(a) - created(b));
   else if(sort==="newest") sorted.sort((a,b)=> created(b) - created(a));
   else sorted.sort((a,b)=>{
