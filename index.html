@@ -7184,17 +7184,17 @@ function deleteTaskFromReports(taskId){
 const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIERGE</h2>
 <h3>Team Policy Book | Effective: April 2026 | Confidential — Internal Use Only</h3>
 <p><em>"Be the assistant you would want if you were the client."</em></p>
-<h3>Welcome</h3>
+<h3 id="pb-welcome">Welcome</h3>
 <p>Welcome to The Modern Concierge. You are joining a team that holds itself to a higher standard — not because we have to, but because our clients deserve it and our reputation depends on it.</p>
 <p>This policy book is your guide to how we operate, communicate, and represent this brand every single day. Read it thoroughly. Refer back to it often. If something isn't covered here, ask Kaylan — never assume.</p>
 <p>Our clients pay a premium because they expect premium. Your job is to make sure they never question whether it's worth it.</p>
-<h3>Part 1 — Our Mission & Standard</h3>
+<h3 id="pb-part-1">Part 1 — Our Mission & Standard</h3>
 <h4>The Mission</h4>
 <p>Our job is to remove stress, save time, and anticipate needs for our clients. Every task should be handled in a way that feels efficient, thoughtful, and professional. Clients should feel like they have someone who is capable, organized, and already thinking three steps ahead.</p>
 <h4>The Standard</h4>
 <p>At The Modern Concierge, we are not order-takers. We are proactive, professional, and present. Every client should feel like they have a dedicated assistant who is one step ahead of them — not waiting to be told what to do.</p>
 <p><strong>The Golden Rule:</strong> Before sending any message, ask yourself: "Does this make the client's life easier?" If yes, you're doing it right.</p>
-<h3>Part 2 — The Request System</h3>
+<h3 id="pb-part-2">Part 2 — The Request System</h3>
 <p>Every client request should follow this five-step process.</p>
 <p><strong>Step 1 — Understand the Request</strong></p>
 <p>Before doing anything, make sure you clearly understand what the client needs. Ask yourself:</p>
@@ -7216,7 +7216,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <p><strong>Step 5 — Follow Up</strong></p>
 <p>Great service means making sure everything actually happened successfully. Follow up when necessary.</p>
 <p><em>"Just checking that everything went smoothly with the cleaning service today!"</em></p>
-<h3>Part 3 — Weekly Client Rhythm</h3>
+<h3 id="pb-part-3">Part 3 — Weekly Client Rhythm</h3>
 <p>Every client on your roster requires a weekly touchpoint. This is non-negotiable.</p>
 <p><strong>Monday — Weekly Check-In</strong></p>
 <p>Send every active client a brief, warm check-in before 10:00 AM.</p>
@@ -7241,7 +7241,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <li>At 75% — let the client know: "You're getting close to your hours for this period — just a heads up!"</li>
 <li>At 90% or over — tell them immediately. Do not wait for Friday.</li>
 </ul>
-<h3>Part 4 — How to Handle a New Task</h3>
+<h3 id="pb-part-4">Part 4 — How to Handle a New Task</h3>
 <p><strong>Step 1 — Log the Task in TMC Ops (Immediately)</strong></p>
 <ul>
 <li>Open the client in the TMC Ops app (Clients → select the client → Tasks tab)</li>
@@ -7293,7 +7293,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <li>Send the client a quick completion message</li>
 </ul>
 <p><em>"Done! ✅ [Brief description of what was completed and any relevant outcome]. Let me know if you need anything adjusted or have questions!"</em></p>
-<h3>Part 5 — Proactive Service</h3>
+<h3 id="pb-part-5">Part 5 — Proactive Service</h3>
 <p>This is what separates a good assistant from a great one. Don't wait for clients to tell you everything — look for opportunities to add value.</p>
 <p><strong>What Proactive Looks Like</strong></p>
 <ul>
@@ -7312,7 +7312,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <li>Events → vendors, timing, confirmations</li>
 <li>Home services → scheduling and follow-ups</li>
 </ul>
-<h3>Part 6 — Client Communication Standards</h3>
+<h3 id="pb-part-6">Part 6 — Client Communication Standards</h3>
 <p><strong>Tone — Adapt to Each Client</strong></p>
 <table style="width:100%;border-collapse:collapse;margin:10px 0;">
 <tr><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Client Type</th><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">How to Communicate</th></tr>
@@ -7342,7 +7342,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <li>❌ Never make a financial commitment on behalf of a client without pre-approval</li>
 <li>❌ Never go silent on a task — always communicate delays proactively</li>
 </ul>
-<h3>Part 7 — Hours Tracking & Accountability</h3>
+<h3 id="pb-part-7">Part 7 — Hours Tracking & Accountability</h3>
 <p><strong>Membership Client Hour Tracking</strong></p>
 <p>These clients pay for a set number of hours per month, regardless of package size (20/40/60/80 hrs). Every minute worked must be logged accurately in TMC Ops so the system's tracking stays accurate. TMC Ops automatically flags each client's usage at 50%, 75%, 90%, and 100% — you don't have to calculate this yourself, just watch for the alert and act on it:</p>
 <ul>
@@ -7358,7 +7358,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <p>Home Reset (flat-rate) clients pay a fixed price rather than an hourly package. Log your time on these clients' tasks as normal in TMC Ops for Kaylan's payroll records, but do not share hour counts with these clients — their billing isn't hours-based.</p>
 <p><strong>End of Pay Period</strong></p>
 <p>Every payroll period ends on the 14th and the last day of the month. All of your time entries must be entered in TMC Ops, correct, and clocked out — no still-running clocks, no missing entries — before the period end date. This is non-negotiable. Payroll is run off exactly what's in the system as of that cutoff, and entries added after the fact will not be included in that payroll run.</p>
-<h3>Part 8 — TMC Ops Workflow</h3>
+<h3 id="pb-part-8">Part 8 — TMC Ops Workflow</h3>
 <p><strong>Task Statuses — Use These Correctly</strong></p>
 <ul>
 <li>To do — task logged, not started</li>
@@ -7385,7 +7385,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Friday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Send Weekly Report to ALL clients by 5:00 PM</td></tr>
 <tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Daily</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Check messages, clock in on tasks, update TMC Ops</td></tr>
 </table>
-<h3>Part 9 — Handling Mistakes & Issues</h3>
+<h3 id="pb-part-9">Part 9 — Handling Mistakes & Issues</h3>
 <p>If something goes wrong:</p>
 <ul>
 <li>Fix the issue first if possible</li>
@@ -7400,7 +7400,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <li>Tell Kaylan</li>
 </ul>
 <p>If you're unsure about something — ask Kaylan, not the client.</p>
-<h3>Part 10 — Social Media & Personal Brand Policy</h3>
+<h3 id="pb-part-10">Part 10 — Social Media & Personal Brand Policy</h3>
 <p><strong>Overview</strong></p>
 <p>We understand that our team members have active personal social media lives, and we do not intend to control your personal presence. However, because you represent The Modern Concierge — a brand that professionals and executives trust with their personal lives — your online presence reflects on us whether you intend it to or not.</p>
 <p>This policy applies to all platforms including but not limited to: TikTok, Instagram, Facebook, Snapchat, X (Twitter), Threads, LinkedIn, and YouTube.</p>
@@ -7441,7 +7441,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <li>All brand-related content must be reviewed for messaging, tone, and accuracy</li>
 <li>Do not use the TMC logo, name, or any client-related details in content without approval</li>
 </ul>
-<h3>Part 11 — Company Apparel Policy</h3>
+<h3 id="pb-part-11">Part 11 — Company Apparel Policy</h3>
 <p><strong>Work Shirts & Branded Clothing</strong></p>
 <p>The Modern Concierge work shirts and any other branded company apparel are professional uniforms, not casual wear. They represent our brand and our clients' trust in us.</p>
 <p><strong>Wearing Company Apparel Is NOT Permitted:</strong></p>
@@ -7473,7 +7473,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <p>The photo that shows up when a client saves you as a contact, or when you call or text them, should be a <strong>professional photo</strong> — a proper headshot, not a selfie, group photo, or casual snapshot. This is often a client's very first visual impression of you, so it should look the part.</p>
 <p><strong>Email Signature</strong></p>
 <p>You'll be sent a Modern Co email signature to apply to your Modern Co email account. Use it exactly as provided — don't modify the branding, layout, or wording.</p>
-<h3>Part 12 — Professionalism & Conduct</h3>
+<h3 id="pb-part-12">Part 12 — Professionalism & Conduct</h3>
 <p><strong>You Represent The Modern Concierge in Every Interaction</strong></p>
 <ul>
 <li>Your communication reflects the brand — warm, clean, and professional</li>
@@ -7495,7 +7495,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <p>Violating client confidentiality is grounds for immediate termination of your engagement.</p>
 <p><strong>Financial Commitments</strong></p>
 <p>You are never authorized to make a financial commitment on behalf of a client without explicit prior approval. This includes booking, purchasing, or agreeing to any service that involves the client's money.</p>
-<h3>Closing Note</h3>
+<h3 id="pb-closing">Closing Note</h3>
 <p>Working at The Modern Concierge is a privilege. Our clients trust us with their time, their homes, their businesses, and their lives — and that is not something we take lightly.</p>
 <p>Hold yourself to the standard you would expect if you were the client. Show up with intention every single day. Be proactive, be professional, and be someone your clients can count on without question.</p>
 <p>We are not just assistants. We are the reason our clients can breathe easier.</p>
@@ -8297,10 +8297,33 @@ function renderMarketPlaybookModal(){
     </div>
   `;
 }
+const POLICY_BOOK_TOC = [
+  ["pb-welcome","Welcome"],["pb-part-1","Part 1 — Our Mission & Standard"],
+  ["pb-part-2","Part 2 — The Request System"],["pb-part-3","Part 3 — Weekly Client Rhythm"],
+  ["pb-part-4","Part 4 — How to Handle a New Task"],["pb-part-5","Part 5 — Proactive Service"],
+  ["pb-part-6","Part 6 — Client Communication Standards"],["pb-part-7","Part 7 — Hours Tracking & Accountability"],
+  ["pb-part-8","Part 8 — TMC Ops Workflow"],["pb-part-9","Part 9 — Handling Mistakes & Issues"],
+  ["pb-part-10","Part 10 — Social Media & Personal Brand Policy"],["pb-part-11","Part 11 — Company Apparel Policy"],
+  ["pb-part-12","Part 12 — Professionalism & Conduct"],["pb-closing","Closing Note"]
+];
+// Scrolls within the modal's own scroll pane rather than following a plain
+// #hash link — this is a single-page app with no router, so letting the
+// browser's default anchor navigation touch the URL would just leave a
+// stray #pb-part-N sitting in the address bar for no reason.
+function scrollToPolicySection(id){
+  const container = document.querySelector('.agreement-text');
+  const el = document.getElementById(id);
+  if(!container || !el) return;
+  container.scrollTop = el.offsetTop - container.offsetTop;
+}
 function renderPolicyBookModal(){
   return `
     <div class="modal" style="width:640px;">
       <h3>Team Policy Book</h3>
+      <div class="small" style="margin-bottom:8px;font-weight:600;">Jump to:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+        ${POLICY_BOOK_TOC.map(([id,label])=>`<a href="#" onclick="scrollToPolicySection('${id}');return false;" style="font-size:12px;background:var(--cream);border:1px solid #d8cabf;border-radius:14px;padding:4px 10px;text-decoration:none;">${label}</a>`).join("")}
+      </div>
       <div class="agreement-text" style="max-height:520px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px 18px;font-size:13px;background:var(--cream);">
         ${TEAM_POLICY_BOOK_HTML}
       </div>
