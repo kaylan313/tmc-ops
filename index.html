@@ -5233,39 +5233,44 @@ function renderContractSectionBody(client){
       </div>
       <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Authorized Payment Method — fills in the Credit Card / ACH Authorization pages of the agreement above</label>
+        ${(()=>{ const pd = paymentMethodDraft[client.id] || {}; const method = pd.method || 'card'; return `
         <div class="row" style="margin-top:6px;">
           <div><label class="small">Method</label>
-            <select id="cc_method_${client.id}" onchange="document.getElementById('cc_card_${client.id}').style.display=this.value==='card'?'':'none';document.getElementById('cc_ach_${client.id}').style.display=this.value==='ach'?'':'none';">
-              <option value="card">Credit/Debit Card</option>
-              <option value="ach">ACH Bank Transfer</option>
+            <select id="cc_method_${client.id}" onchange="updatePaymentDraft('${client.id}','method',this.value);document.getElementById('cc_card_${client.id}').style.display=this.value==='card'?'':'none';document.getElementById('cc_ach_${client.id}').style.display=this.value==='ach'?'':'none';">
+              <option value="card" ${method==='card'?'selected':''}>Credit/Debit Card</option>
+              <option value="ach" ${method==='ach'?'selected':''}>ACH Bank Transfer</option>
             </select>
           </div>
         </div>
-        <div id="cc_card_${client.id}" style="margin-top:8px;">
+        <div id="cc_card_${client.id}" style="margin-top:8px;display:${method==='card'?'':'none'};">
           <div class="row">
-            <div><label class="small">Card type</label><input id="cc_cardType_${client.id}" placeholder="Visa, Mastercard, Discover, Amex" autocomplete="off"></div>
-            <div><label class="small">Name on card</label><input id="cc_nameOnCard_${client.id}" value="${client.name||''}" autocomplete="off"></div>
+            <div><label class="small">Card type</label><input id="cc_cardType_${client.id}" value="${pd.cardType||''}" oninput="updatePaymentDraft('${client.id}','cardType',this.value)" placeholder="Visa, Mastercard, Discover, Amex" autocomplete="off"></div>
+            <div><label class="small">Name on card</label><input id="cc_nameOnCard_${client.id}" value="${pd.nameOnCard!==undefined?pd.nameOnCard:(client.name||'')}" oninput="updatePaymentDraft('${client.id}','nameOnCard',this.value)" autocomplete="off"></div>
           </div>
           <div class="row" style="margin-top:8px;">
-            <div><label class="small">Card number</label><input id="cc_cardNumber_${client.id}" inputmode="numeric" autocomplete="off" placeholder="Card number"></div>
-            <div><label class="small">Expiration (MM/YY)</label><input id="cc_exp_${client.id}" placeholder="MM/YY" autocomplete="off" style="max-width:100px;"></div>
-            <div><label class="small">CVV</label><input id="cc_cvv_${client.id}" inputmode="numeric" autocomplete="off" style="max-width:80px;"></div>
-            <div><label class="small">Billing zip</label><input id="cc_zip_${client.id}" autocomplete="off" style="max-width:100px;"></div>
+            <div><label class="small">Card number</label><input id="cc_cardNumber_${client.id}" value="${pd.cardNumber||''}" oninput="updatePaymentDraft('${client.id}','cardNumber',this.value)" inputmode="numeric" autocomplete="off" placeholder="Card number"></div>
+            <div><label class="small">Expiration (MM/YY)</label><input id="cc_exp_${client.id}" value="${pd.exp||''}" oninput="updatePaymentDraft('${client.id}','exp',this.value)" placeholder="MM/YY" autocomplete="off" style="max-width:100px;"></div>
+            <div><label class="small">CVV</label><input id="cc_cvv_${client.id}" value="${pd.cvv||''}" oninput="updatePaymentDraft('${client.id}','cvv',this.value)" inputmode="numeric" autocomplete="off" style="max-width:80px;"></div>
+            <div><label class="small">Billing zip</label><input id="cc_zip_${client.id}" value="${pd.zip||''}" oninput="updatePaymentDraft('${client.id}','zip',this.value)" autocomplete="off" style="max-width:100px;"></div>
           </div>
         </div>
-        <div id="cc_ach_${client.id}" style="margin-top:8px;display:none;">
+        <div id="cc_ach_${client.id}" style="margin-top:8px;display:${method==='ach'?'':'none'};">
           <div class="row">
-            <div><label class="small">Account holder name</label><input id="cc_achName_${client.id}" value="${client.name||''}" autocomplete="off"></div>
-            <div><label class="small">Bank name</label><input id="cc_bankName_${client.id}" autocomplete="off"></div>
+            <div><label class="small">Account holder name</label><input id="cc_achName_${client.id}" value="${pd.achName!==undefined?pd.achName:(client.name||'')}" oninput="updatePaymentDraft('${client.id}','achName',this.value)" autocomplete="off"></div>
+            <div><label class="small">Bank name</label><input id="cc_bankName_${client.id}" value="${pd.bankName||''}" oninput="updatePaymentDraft('${client.id}','bankName',this.value)" autocomplete="off"></div>
             <div><label class="small">Account type</label>
-              <select id="cc_acctType_${client.id}"><option value="Checking">Checking</option><option value="Savings">Savings</option></select>
+              <select id="cc_acctType_${client.id}" onchange="updatePaymentDraft('${client.id}','acctType',this.value)">
+                <option value="Checking" ${(pd.acctType||'Checking')==='Checking'?'selected':''}>Checking</option>
+                <option value="Savings" ${pd.acctType==='Savings'?'selected':''}>Savings</option>
+              </select>
             </div>
           </div>
           <div class="row" style="margin-top:8px;">
-            <div><label class="small">Routing number</label><input id="cc_routing_${client.id}" inputmode="numeric" autocomplete="off"></div>
-            <div><label class="small">Account number</label><input id="cc_acctNumber_${client.id}" inputmode="numeric" autocomplete="off"></div>
+            <div><label class="small">Routing number</label><input id="cc_routing_${client.id}" value="${pd.routing||''}" oninput="updatePaymentDraft('${client.id}','routing',this.value)" inputmode="numeric" autocomplete="off"></div>
+            <div><label class="small">Account number</label><input id="cc_acctNumber_${client.id}" value="${pd.acctNumber||''}" oninput="updatePaymentDraft('${client.id}','acctNumber',this.value)" inputmode="numeric" autocomplete="off"></div>
           </div>
         </div>
+        `; })()}
         <div class="small" style="margin-top:6px;color:var(--warn);">This is written directly into the signed agreement below and is permanently removed from the app the moment ${isStaff ? "it's" : "Heidi has"} downloaded and filed it — it's never stored anywhere else in the system.</div>
       </div>
       <div class="row" style="margin-top:10px;">
@@ -5299,6 +5304,22 @@ function markContractSignedExternally(clientId){
 function unmarkContractSignedExternally(clientId){
   if(!confirm("Undo this? The agreement will show as unsigned again and the client will be prompted to sign in the app.")) return;
   upsert("clients", clientId, { contractSignedExternally: false, contractExternalNote: null });
+}
+// Deliberately a plain local variable, NOT part of `state` — payment info
+// typed here is never itself persisted as its own field anywhere (only
+// embedded into the generated contractHtml at the moment of signing, see
+// saveClientAgreement below), and it should stay that way. Without this,
+// though, these inputs were fully uncontrolled (no value= binding at all),
+// so unlike every other form field in the app they weren't even protected
+// by render()'s single-focused-element preservation — tab to the next
+// field and a background re-render (60s timer, any other team member's
+// Firestore write) would silently blank whatever was already typed, mid
+// card-number entry. Keyed by clientId the same way csSigCanvas/csHasDrawn
+// below already track the signature pad's own local-only state.
+let paymentMethodDraft = {};
+function updatePaymentDraft(clientId, field, value){
+  if(!paymentMethodDraft[clientId]) paymentMethodDraft[clientId] = {};
+  paymentMethodDraft[clientId][field] = value;
 }
 let csSigCanvas=null, csSigCtx=null, csDrawing=false, csHasDrawn=false;
 function initClientSigPad(clientId){
@@ -5351,22 +5372,23 @@ function saveClientAgreement(clientId){
   const name = document.getElementById('sigName_'+clientId).value.trim();
   const date = document.getElementById('sigDate_'+clientId).value;
   if(!name || !date){ alert("Client full name and date are required."); return; }
-  const method = document.getElementById('cc_method_'+clientId).value;
+  const pd = paymentMethodDraft[clientId] || {};
+  const method = pd.method || 'card';
   const paymentInfo = method==='card' ? {
     method: 'card',
-    cardType: document.getElementById('cc_cardType_'+clientId).value.trim(),
-    nameOnCard: document.getElementById('cc_nameOnCard_'+clientId).value.trim(),
-    cardNumber: document.getElementById('cc_cardNumber_'+clientId).value.trim(),
-    exp: document.getElementById('cc_exp_'+clientId).value.trim(),
-    cvv: document.getElementById('cc_cvv_'+clientId).value.trim(),
-    zip: document.getElementById('cc_zip_'+clientId).value.trim()
+    cardType: (pd.cardType||'').trim(),
+    nameOnCard: (pd.nameOnCard!==undefined?pd.nameOnCard:(client.name||'')).trim(),
+    cardNumber: (pd.cardNumber||'').trim(),
+    exp: (pd.exp||'').trim(),
+    cvv: (pd.cvv||'').trim(),
+    zip: (pd.zip||'').trim()
   } : {
     method: 'ach',
-    achName: document.getElementById('cc_achName_'+clientId).value.trim(),
-    bankName: document.getElementById('cc_bankName_'+clientId).value.trim(),
-    acctType: document.getElementById('cc_acctType_'+clientId).value,
-    routing: document.getElementById('cc_routing_'+clientId).value.trim(),
-    acctNumber: document.getElementById('cc_acctNumber_'+clientId).value.trim()
+    achName: (pd.achName!==undefined?pd.achName:(client.name||'')).trim(),
+    bankName: (pd.bankName||'').trim(),
+    acctType: pd.acctType || 'Checking',
+    routing: (pd.routing||'').trim(),
+    acctNumber: (pd.acctNumber||'').trim()
   };
   const paymentNumberEntered = method==='card' ? paymentInfo.cardNumber : paymentInfo.acctNumber;
   if(!paymentNumberEntered){ alert("Please enter the client's " + (method==='card' ? "card number" : "bank account number") + " before signing."); return; }
@@ -5379,10 +5401,14 @@ function saveClientAgreement(clientId){
     contractSignatureDataUrl: signatureDataUrl,
     contractHtml
   });
+  // Never held any longer than it has to — it's already embedded in
+  // contractHtml above, nothing else needs it once signing is done.
+  delete paymentMethodDraft[clientId];
 }
 function resetClientAgreement(clientId){
   if(!confirm("Clear this signature so the client can re-sign? This can't be undone.")) return;
   upsert("clients", clientId, { contractSigned:false, contractSignedName:null, contractSignedDate:null, contractSignatureDataUrl:null, contractHtml:null });
+  delete paymentMethodDraft[clientId];
 }
 // Downloadable standalone copy of the signed agreement — open it and use the
 // browser's Print > Save as PDF if what's needed is a PDF for QuickBooks.
@@ -8603,6 +8629,18 @@ async function allocateTaskNumber(){
 // which is exactly the window where two people's drafts used to collide.
 // It's assigned once, atomically, in saveTask() at the moment it's
 // actually persisted.
+// Mutates the in-progress draft directly (same convention as the other
+// oninput/onchange handlers in this modal — no render() call needed, the
+// checkbox's own `checked` already reflects the click, and task.assignees
+// here IS state.modal.task.assignees, same object) rather than only being
+// read from the DOM at save time — otherwise a background re-render while
+// this modal is open (60s timer, any other team member's Firestore write)
+// would regenerate `checked` from the task's ORIGINAL assignees and
+// silently discard whatever the user had just checked/unchecked.
+function toggleTaskAssigneeDraft(id, checked){
+  const list = state.modal.task.assignees || [];
+  state.modal.task.assignees = checked ? [...list, id] : list.filter(x=>x!==id);
+}
 function openTaskEditor(taskId, defaultClientId){
   const task = taskId ? state.tasks.find(t=>t.id===taskId) : {
     id: newId("task"), title:"", clientId: defaultClientId || INTERNAL_CLIENT_ID,
@@ -8662,19 +8700,19 @@ function renderTaskEditorModal(task){
       </div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Client</label>
-          <select id="tf_client">
+          <select id="tf_client" onchange="state.modal.task.clientId=this.value">
             <option value="${INTERNAL_CLIENT_ID}" ${task.clientId===INTERNAL_CLIENT_ID?'selected':''}>Internal / Modern Co.</option>
             ${state.clients.map(c=>`<option value="${c.id}" ${task.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
           </select>
         </div>
         <div><label class="small">Category</label>
-          <select id="tf_category">
+          <select id="tf_category" onchange="state.modal.task.category=this.value">
             <option ${task.category==='Home'?'selected':''}>Home</option>
             <option ${task.category==='Business'?'selected':''}>Business</option>
           </select>
         </div>
         <div><label class="small">Status</label>
-          <select id="tf_status">
+          <select id="tf_status" onchange="state.modal.task.status=this.value">
             ${STATUSES.map(s=>`<option ${task.status===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
@@ -8687,7 +8725,7 @@ function renderTaskEditorModal(task){
         <label class="small">Assignees</label>
         ${assignableAssistants(task.assignees).map(a=>`
           <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:13px;">
-            <input type="checkbox" value="${a.id}" ${ (task.assignees||[]).includes(a.id) ? 'checked' : ''} class="tf_assignee"> ${a.name}${a.active===false?' (former)':''}
+            <input type="checkbox" value="${a.id}" ${ (task.assignees||[]).includes(a.id) ? 'checked' : ''} class="tf_assignee" onchange="toggleTaskAssigneeDraft('${a.id}',this.checked)"> ${a.name}${a.active===false?' (former)':''}
           </label>
         `).join("")}
       </div>
@@ -8945,8 +8983,14 @@ function suggestClientFromTitle(title){
 }
 async function saveTask(taskId){
   const task = state.modal.task;
-  const assignees = Array.from(document.querySelectorAll(".tf_assignee:checked")).map(el=>el.value);
-  const newStatus = document.getElementById("tf_status").value;
+  const assignees = task.assignees || [];
+  const newStatus = task.status;
+  // The task's status/clientId/category now live-update in state.modal.task
+  // as soon as they're changed (see the selects' onchange above), so by the
+  // time saveTask runs, task.status is already the NEW status, not what's
+  // currently saved in Firestore — look that up separately wherever the
+  // actual previous value matters (the Done-transition check right below).
+  const existingTask = state.tasks.find(t=>t.id===taskId);
   // Stamp completedAt the moment a task lands on Done, and clear it if it's
   // reopened — the weekly client report needs to know WHEN a task finished,
   // not just that it's currently sitting in Done. A manually-set completed
@@ -8957,7 +9001,7 @@ async function saveTask(taskId){
   let completedAt = task.completedAt || null;
   if(newStatus === "Done"){
     if(completedField) completedAt = new Date(completedField + "T12:00:00").toISOString();
-    else if(task.status !== "Done") completedAt = new Date().toISOString();
+    else if(!existingTask || existingTask.status !== "Done") completedAt = new Date().toISOString();
   } else {
     completedAt = null;
   }
@@ -8981,15 +9025,14 @@ async function saveTask(taskId){
   // doesn't suddenly flag it as a brand-new assignment. A genuinely new
   // task, or a newly-added assignee on an existing tracked task, starts
   // unacked — that's the real "you have something new" signal.
-  const existingTask = state.tasks.find(t=>t.id===taskId);
   const prevAcks = existingTask ? existingTask.assignmentAcks : undefined;
   const assignmentAcks = (existingTask && prevAcks===undefined)
     ? assignees.map(id=>({ assistantId:id, ackedAt:new Date().toISOString() }))
     : (prevAcks||[]).filter(ack=>assignees.includes(ack.assistantId));
   const payload = {
     title: document.getElementById("tf_title").value.trim(),
-    clientId: document.getElementById("tf_client").value,
-    category: document.getElementById("tf_category").value,
+    clientId: task.clientId,
+    category: task.category,
     status: newStatus,
     description: document.getElementById("tf_description").value.trim(),
     privateNotes: document.getElementById("tf_private_notes").value.trim(),
