@@ -2650,6 +2650,123 @@ function contractsReadyToDownload(){
     !c.driveContractUrl
   );
 }
+// The two personalized Dashboard columns below — set who holds each role via
+// the isOpsLead/isDocsLead checkboxes on the Team tab (not hardcoded to
+// "Heidi"/"Tori" by name, so this keeps working if either role ever changes
+// hands). Each pulls from the SAME underlying alert data the general
+// Dashboard cards already compute — this isn't a separate data source, just
+// a per-person filtered view of it, surfaced higher up so whoever holds the
+// role doesn't have to scroll/hunt for what's theirs among everyone else's.
+function renderOpsLeadColumn(assistant, d){
+  if(!assistant){
+    return `<div class="card"><h3>Attention: Operations Lead</h3><div class="small">No one's set as Operations Lead yet — check the box on the Team tab for whoever owns client health &amp; task oversight (e.g. Tori) to enable this.</div></div>`;
+  }
+  const myAssignments = d.unackedAssignments.filter(({assistant:a})=>a.id===assistant.id);
+  const sections = [];
+  if(myAssignments.length) sections.push(`
+    <div class="small" style="font-weight:600;margin-bottom:4px;">Newly assigned to you</div>
+    ${myAssignments.map(({task,assistant:a})=>`
+      <div class="list-item">
+        <div><strong>${task.title||'(untitled task)'}</strong><div class="small">${task.dueDate?'due '+parseYMD(task.dueDate).toLocaleDateString():'no due date'}</div></div>
+        <button class="secondary" onclick="ackTaskAssignment('${task.id}','${a.id}')">Got it</button>
+      </div>`).join("")}
+  `);
+  if(d.clientCheckIns.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Client check-ins due</div>
+    ${d.clientCheckIns.map(({client,type,label,detail})=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+        <div><strong>${client.name}</strong> — ${label}<div class="small">${detail}</div></div>
+        <button class="secondary" onclick="event.stopPropagation();dismissClientCheckIn('${client.id}','${type}')">Reviewed</button>
+      </div>`).join("")}
+  `);
+  if(d.pending.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Client requests awaiting assistant review</div>
+    ${d.pending.map(t=>{
+      const client = state.clients.find(c=>c.id===t.clientId);
+      return `<div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${t.id}',null)">
+        <div><strong>${t.title}</strong><span class="small"> · ${client?client.name:'Internal'} · ${(t.assignees||[]).map(assistantName).join(', ')||'unassigned'}</span></div>
+      </div>`;
+    }).join("")}
+  `);
+  if(d.notStartedClients.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Not started — awaiting signature/orientation</div>
+    ${d.notStartedClients.map(c=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
+        <div>${c.name}</div><span class="alert warn" style="margin:0;">not started</span>
+      </div>`).join("")}
+  `);
+  if(d.atRiskClients.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">At-risk clients</div>
+    ${d.atRiskClients.map(c=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">
+        <div><div>${c.name}</div><div class="small">${atRiskClientDetail(c)}</div></div>
+        <span class="alert warn" style="margin:0;">at risk</span>
+      </div>`).join("")}
+  `);
+  if(d.overdue.length || d.pastDue.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Employee tasks needing attention</div>
+    <div class="small">${d.overdue.length} open 7+ days, ${d.pastDue.length} past their due date — see Open Tasks below for the full list.</div>
+  `);
+  return `
+    <div class="card">
+      <h3 style="margin:0;">Attention: ${assistant.name}</h3>
+      <div class="small" style="margin-bottom:6px;">Operations — client health, task oversight, check-ins</div>
+      ${sections.length ? sections.join("") : `<div class="small">All caught up ✓</div>`}
+    </div>
+  `;
+}
+function renderDocsLeadColumn(assistant, d){
+  if(!assistant){
+    return `<div class="card"><h3>Attention: Documentation &amp; Billing Lead</h3><div class="small">No one's set as Documentation &amp; Billing Lead yet — check the box on the Team tab for whoever owns contracts/payments/renewal emails (e.g. Heidi) to enable this.</div></div>`;
+  }
+  const myAssignments = d.unackedAssignments.filter(({assistant:a})=>a.id===assistant.id);
+  const sections = [];
+  if(myAssignments.length) sections.push(`
+    <div class="small" style="font-weight:600;margin-bottom:4px;">Newly assigned to you</div>
+    ${myAssignments.map(({task,assistant:a})=>`
+      <div class="list-item">
+        <div><strong>${task.title||'(untitled task)'}</strong><div class="small">${task.dueDate?'due '+parseYMD(task.dueDate).toLocaleDateString():'no due date'}</div></div>
+        <button class="secondary" onclick="ackTaskAssignment('${task.id}','${a.id}')">Got it</button>
+      </div>`).join("")}
+  `);
+  if(d.paymentsReady.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Payments ready to process</div>
+    ${d.paymentsReady.map(({client,addOn,payment})=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
+        <div><strong>${client.name}</strong> — ${addOn.label}: ${payment.label}<div class="small">flagged ${payment.readyMarkedAt?parseYMD(payment.readyMarkedAt).toLocaleDateString():'—'}</div></div>
+        <strong>$${(payment.amount||0).toFixed(0)}</strong>
+      </div>`).join("")}
+  `);
+  if(d.contractsReady.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Contracts ready to download</div>
+    ${d.contractsReady.map(c=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
+        <div><strong>${c.name}</strong><span class="small"> · signed by ${c.contractSignedName||'—'} on ${c.contractSignedDate?parseYMD(c.contractSignedDate).toLocaleDateString():'—'}</span></div>
+      </div>`).join("")}
+  `);
+  if(d.emailsNeeded.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Emails to send</div>
+    ${d.emailsNeeded.map(({client,type,label,detail,urgent})=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientEmailTemplates('${client.id}')">
+        <div><span class="alert ${urgent?'danger':'warn'}" style="margin:0;padding:2px 8px;">${label}</span> <strong>${client.name}</strong><span class="small"> · ${detail}</span></div>
+        <button class="secondary" style="padding:2px 8px;" onclick="event.stopPropagation();dismissEmailNeeded('${client.id}','${type}');render();" title="Mark as sent without sending from here">Dismiss</button>
+      </div>`).join("")}
+  `);
+  if(d.termUpdateClients.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Terms needing update</div>
+    ${d.termUpdateClients.map(c=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
+        <div>${c.name}</div><span class="alert danger" style="margin:0;">term ended</span>
+      </div>`).join("")}
+  `);
+  return `
+    <div class="card">
+      <h3 style="margin:0;">Attention: ${assistant.name}</h3>
+      <div class="small" style="margin-bottom:6px;">Documentation &amp; Billing — contracts, payments, renewal/recap emails</div>
+      ${sections.length ? sections.join("") : `<div class="small">All caught up ✓</div>`}
+    </div>
+  `;
+}
 function renderAdminDashboard(){
   const period = currentPayrollPeriod();
   const totalPayrollHours = hoursInPeriod(state.timeEntries, period);
@@ -2675,6 +2792,8 @@ function renderAdminDashboard(){
   const paymentsReady = paymentsReadyToProcess();
   const unackedAssignments = unacknowledgedAssignments();
   const clientCheckIns = clientCheckInsNeeded();
+  const opsLead = state.settings.assistants.find(a=>a.isOpsLead && a.active!==false);
+  const docsLead = state.settings.assistants.find(a=>a.isDocsLead && a.active!==false);
 
   const assistantRows = state.settings.assistants.map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
@@ -2738,6 +2857,11 @@ function renderAdminDashboard(){
       </div>
     </div>
 
+    <div class="row">
+      ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns, pending, notStartedClients, atRiskClients, overdue, pastDue })}
+      ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, contractsReady, emailsNeeded, termUpdateClients })}
+    </div>
+
     ${(renewingThisWeek.length || renewingNextWeek.length) ? `
     <div class="card">
       <div class="flex-between"><h3>Renewing soon</h3><button class="secondary" onclick="setTab('renewals')">See all renewals &amp; membership info</button></div>
@@ -2753,78 +2877,6 @@ function renderAdminDashboard(){
           <div>${client.name} <span class="small">(${TERM_LABELS[client.termType||'pilot']})</span></div>
           <span class="small">${end.toLocaleDateString()}</span>
         </div>`).join("")}` : ""}
-    </div>` : ""}
-
-    ${clientCheckIns.length ? `
-    <div class="card">
-      <h3>Client Check-Ins</h3>
-      <div class="small" style="margin-bottom:8px;">Internal reminders only — nothing is emailed to the client automatically. Review and dismiss once you've looked.</div>
-      ${clientCheckIns.map(({client,type,label,detail})=>`
-        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
-          <div>
-            <strong>${client.name}</strong> — ${label}
-            <div class="small">${detail}</div>
-          </div>
-          <button class="secondary" onclick="event.stopPropagation();dismissClientCheckIn('${client.id}','${type}')">Reviewed</button>
-        </div>`).join("")}
-    </div>` : ""}
-
-    ${unackedAssignments.length ? `
-    <div class="card">
-      <h3>Newly Assigned — Not Yet Acknowledged</h3>
-      <div class="small" style="margin-bottom:8px;">Internal tasks assigned to leadership — since Heidi/Tori usually log in with the shared Admin passcode, this is how they see what's just been assigned to them. Click your own name once you've seen it.</div>
-      ${unackedAssignments.map(({task,assistant})=>{
-        return `
-        <div class="list-item">
-          <div>
-            <strong>${assistant.name}</strong> — ${task.title||'(untitled task)'}
-            <div class="small">${task.dueDate?'due '+parseYMD(task.dueDate).toLocaleDateString():'no due date'}</div>
-          </div>
-          <button class="secondary" onclick="ackTaskAssignment('${task.id}','${assistant.id}')">I'm ${assistant.name} — got it</button>
-        </div>`;
-      }).join("")}
-    </div>` : ""}
-
-    ${paymentsReady.length ? `
-    <div class="card">
-      <h3>Payments Ready to Process</h3>
-      <div class="small" style="margin-bottom:8px;">Flagged from a client's Add-Ons section — go charge these, then check them off as Paid there.</div>
-      ${paymentsReady.map(({client,addOn,payment})=>`
-        <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
-          <div>
-            <strong>${client.name}</strong> — ${addOn.label}: ${payment.label}
-            <div class="small">flagged ${payment.readyMarkedAt?parseYMD(payment.readyMarkedAt).toLocaleDateString():'—'}</div>
-          </div>
-          <strong>$${(payment.amount||0).toFixed(0)}</strong>
-        </div>`).join("")}
-    </div>` : ""}
-
-    ${contractsReady.length ? `
-    <div class="card">
-      <h3>Contracts ready to download</h3>
-      <div class="small" style="margin-bottom:8px;">Signed at orientation — download and file in QuickBooks + the shared drive, then clear it from the client's Membership tab.</div>
-      ${contractsReady.map(c=>`
-        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
-          <div>
-            <span class="alert ok" style="margin:0;padding:2px 8px;">Signed</span>
-            <strong style="margin-left:6px;">${c.name}</strong>
-            <span class="small"> · signed by ${c.contractSignedName||'—'} on ${c.contractSignedDate?parseYMD(c.contractSignedDate).toLocaleDateString():'—'}</span>
-          </div>
-        </div>`).join("")}
-    </div>` : ""}
-
-    ${emailsNeeded.length ? `
-    <div class="card">
-      <h3>Emails to send</h3>
-      ${emailsNeeded.map(({client,type,label,detail,urgent})=>`
-        <div class="list-item" style="cursor:pointer;" onclick="viewClientEmailTemplates('${client.id}')">
-          <div>
-            <span class="alert ${urgent?'danger':'warn'}" style="margin:0;padding:2px 8px;">${label}</span>
-            <strong style="margin-left:6px;">${client.name}</strong>
-            <span class="small"> · ${detail}</span>
-          </div>
-          <button class="secondary" style="padding:2px 8px;" onclick="event.stopPropagation();dismissEmailNeeded('${client.id}','${type}');render();" title="Mark as sent without sending from here">Dismiss</button>
-        </div>`).join("")}
     </div>` : ""}
 
     <div class="card">
@@ -2862,45 +2914,10 @@ function renderAdminDashboard(){
       </table></div>`}
     </div>
 
-    ${renderClientRequestsCard(pending, { title: "Client requests awaiting assistant review", showAssistant: true })}
-
     <div class="card">
       <h3>Hour-usage alerts</h3>
       ${clientAlerts.length===0 ? `<div class="small">No clients near their package limit.</div>` :
         clientAlerts.map(a=>`<div class="alert ${a.level}">${a.text}</div>`).join("")}
-    </div>
-
-    <div class="card">
-      <h3>Not Started — Awaiting Signature/Orientation</h3>
-      <div class="small" style="margin-bottom:8px;">Hasn't signed the Service Agreement and hasn't had a home orientation yet — not actually at risk, just hasn't begun.</div>
-      ${notStartedClients.length===0 ? `<div class="small">No one waiting on signature/orientation right now.</div>` :
-        notStartedClients.map(c=>{
-          const signed = !!(c.contractSigned || c.contractSignedExternally);
-          const oriented = hasCompletedOrientation(c);
-          const reason = `${signed?'Signed':'Contract not signed'} · ${oriented?'Orientation done':'No home orientation yet'}`;
-          return `
-          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${reason.replace(/"/g,'&quot;')}">
-            <div>
-              <div>${c.name}</div>
-              <div class="small">${reason}</div>
-            </div>
-            <span class="alert warn" style="margin:0;">not started</span>
-          </div>`;
-        }).join("")}
-    </div>
-
-    <div class="card">
-      <h3>At-risk clients</h3>
-      <div class="small" style="margin-bottom:8px;">Already signed and started — no hours used this billing period and no task completed in the last 30 days — worth a check-in.</div>
-      ${atRiskClients.length===0 ? `<div class="small">No clients look at risk right now.</div>` :
-        atRiskClients.map(c=>`
-          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">
-            <div>
-              <div>${c.name}</div>
-              <div class="small">${atRiskClientDetail(c)}</div>
-            </div>
-            <span class="alert warn" style="margin:0;">at risk</span>
-          </div>`).join("")}
     </div>
 
     <div class="card">
@@ -7562,6 +7579,14 @@ function renderAssistantRow(a){
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
         <input type="checkbox" ${a.isLeadership?'checked':''} onchange="updateAssistantField('${a.id}','isLeadership',this.checked)">
         Leadership — gets "Newly Assigned" alerts on the admin Dashboard for Internal tasks assigned to them (since they mostly log in with the shared Admin passcode, not their own code)
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <input type="checkbox" ${a.isOpsLead?'checked':''} onchange="updateAssistantField('${a.id}','isOpsLead',this.checked)">
+        Operations Lead — gets an "Attention: ${a.name||'them'}" column at the top of the admin Dashboard: client health, task oversight, check-ins
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+        <input type="checkbox" ${a.isDocsLead?'checked':''} onchange="updateAssistantField('${a.id}','isDocsLead',this.checked)">
+        Documentation &amp; Billing Lead — gets an "Attention: ${a.name||'them'}" column at the top of the admin Dashboard: contracts, payments, renewal/recap emails to send
       </label>
       ${onboarding.length ? `
         <div>
