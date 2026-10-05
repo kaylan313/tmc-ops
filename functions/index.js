@@ -254,8 +254,8 @@ exports.validateLogin = onCall(async (request) => {
 // restriction — see its own doc comment for why.
 
 /**
- * QuickBooks Online integration — read-only. Pulls actual revenue
- * (Payments received) and expenses (Purchases + BillPayments) into the
+ * QuickBooks Online integration — read-only. Pulls the actual
+ * Profit & Loss (income, COGS/gross profit, expenses, payroll) into the
  * Scorecard tab, in place of the estimate computed from package prices.
  *
  * Three pieces:
@@ -273,13 +273,11 @@ exports.validateLogin = onCall(async (request) => {
  *    token half.
  *  - getQuickBooksSummary: called by the Scorecard tab on load. Returns
  *    {connected:false} if nothing's been connected yet, or the actual
- *    revenue/expense totals for the requested date range.
- *
- * Why Payments/Purchases instead of the Reports API's ProfitAndLoss
- * endpoint: P&L is accrual-basis and returns a deeply nested row/summary
- * structure that has to be walked to find the numbers you actually want.
- * Payments and Purchases are simple, flat, and cash-basis — "money that
- * actually moved" — which is what a weekly Scorecard number should mean.
+ *    P&L totals for the requested date range, pulled via the Reports
+ *    API's ProfitAndLoss endpoint (Accrual basis, matching what Heidi's
+ *    own printed P&L uses) and walked with qbReportFind below — see that
+ *    function's doc comment for why the row tree needs walking rather
+ *    than reading a few fixed keys.
  */
 function qbApiBase() {
   return QB_ENVIRONMENT.value() === "production"
@@ -506,12 +504,22 @@ exports.getQuickBooksSummary = onCall(async (request) => {
     const rows = (report.Rows && report.Rows.Row) || [];
     const income = qbReportFind(rows, "Income") || 0;
     const expenses = qbReportFind(rows, "Expenses") || 0;
+    // Only present in a period with actual COGS activity (client service
+    // costs, subcontractor expenses) — absent entirely in a period with
+    // none, same shape-varies-by-period caveat as qbReportFind's own doc
+    // comment above. grossProfit is Income minus this, matching exactly
+    // what QuickBooks' own P&L prints as its "Gross Profit" line — the
+    // Scorecard's old income-only figure didn't account for COGS at all,
+    // which is why it didn't reconcile with a printed P&L once COGS showed
+    // up on one.
+    const cogs = qbReportFind(rows, "Cost of Goods Sold") || 0;
+    const grossProfit = income - cogs;
     // "Payroll expenses" (inside Expenses — may or may not have a nested
     // Wages sub-account depending on the period) plus the standalone
     // "payroll" line under Other Expenses, when present — per Kaylan's own
     // account structure, both count as payroll.
     const payroll = (qbReportFind(rows, "Payroll expenses") || 0) + (qbReportFind(rows, "payroll") || 0);
-    return { connected: true, income, expenses, payroll, startDate, endDate };
+    return { connected: true, income, expenses, cogs, grossProfit, payroll, startDate, endDate };
   } catch (err) {
     console.error("getQuickBooksSummary failed:", err);
     if (isQuickBooksAuthError(err)) {
