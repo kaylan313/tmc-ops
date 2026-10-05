@@ -354,9 +354,7 @@ const OVERAGE_RATE = 50; // $/hr beyond the package
 const ADDON_CATALOG = [
   { key:"sop_standard", category:"SOP", label:"Standard SOP", flatFee:450, maintenance:0, note:"Single process, single system" },
   { key:"sop_complex", category:"SOP", label:"Complex SOP", flatFee:750, maintenance:0, note:"Multi-step, cross-system, incl. research/interviews" },
-  { key:"build_small", category:"Software Build", label:"Small Build", flatFee:3500, maintenance:150, note:"Single-purpose tool (dashboard, tracker, booking system)" },
-  { key:"build_medium", category:"Software Build", label:"Medium Build", flatFee:7500, maintenance:250, note:"Multi-feature system, several integrations" },
-  { key:"build_large", category:"Software Build", label:"Large Build", flatFee:null, noteDefault:15000, maintenance:450, note:"Full consolidation platform — from $15,000, custom quoted" },
+  { key:"build_custom", category:"Software Build", label:"Custom Build", flatFee:0, maintenance:0, note:"Every build is different — enter the quoted flat fee and any monthly maintenance after selecting." },
   { key:"ai_quick", category:"AI Integration", label:"Quick Automation", flatFee:650, maintenance:100, note:"Single automated workflow" },
   { key:"ai_workflow", category:"AI Integration", label:"AI Workflow Build", flatFee:2200, maintenance:200, note:"Multi-step automation, AI decision-making, 3–5 systems" },
   { key:"ai_custom", category:"AI Integration", label:"Custom AI System", flatFee:null, noteDefault:4500, maintenance:350, note:"Full AI agent/integration across multiple platforms — from $4,500, custom quoted" },
