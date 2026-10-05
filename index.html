@@ -7773,7 +7773,7 @@ function moveOrgChartRow(rowId, dir){
   saveOrgChartRows(rows);
 }
 function addOrgChartSeat(rowId){
-  const seat = { id:newId("ocseat"), title:"Role", name:"Name", dept:"ops", tag:"none", resp:[], flag:"" };
+  const seat = { id:newId("ocseat"), title:"Role", name:"Name", assistantId:null, dept:"ops", tag:"none", resp:[], flag:"" };
   const rows = getOrgChartRows().map(r=>r.id===rowId ? { ...r, seats:[...r.seats, seat] } : r);
   saveOrgChartRows(rows);
   openOrgChartSeatEditor(rowId, seat.id);
@@ -7789,15 +7789,21 @@ function openOrgChartSeatEditor(rowId, seatId){
   state.modal = { type:"orgChartSeat", rowId, seat };
   render();
 }
+function setOrgChartSeatAssistant(value){
+  state.modal.seat.assistantId = value || null;
+  render();
+}
 function saveOrgChartSeatModal(rowId, seatId){
-  const title = document.getElementById("ocm_title").value.trim();
-  const name = document.getElementById("ocm_name").value.trim();
-  const dept = document.getElementById("ocm_dept").value;
-  const tag = document.getElementById("ocm_tag").value;
-  const resp = document.getElementById("ocm_resp").value.split("\n").map(s=>s.trim()).filter(Boolean);
-  const flag = document.getElementById("ocm_flag").value.trim();
+  const seat = state.modal.seat;
+  const title = (seat.title||"").trim();
+  const name = (seat.name||"").trim();
+  const assistantId = seat.assistantId || null;
+  const dept = seat.dept || "ops";
+  const tag = seat.tag || "none";
+  const resp = (seat.resp||[]);
+  const flag = (seat.flag||"").trim();
   const rows = getOrgChartRows().map(r=>r.id!==rowId ? r : {
-    ...r, seats: r.seats.map(s=>s.id!==seatId ? s : { ...s, title, name, dept, tag, resp, flag })
+    ...r, seats: r.seats.map(s=>s.id!==seatId ? s : { ...s, title, name, assistantId, dept, tag, resp, flag })
   });
   saveOrgChartRows(rows);
   closeModal();
@@ -7858,6 +7864,20 @@ function renderOrgChart(){
     </div>
   `;
 }
+// A seat linked to a real assistant (seat.assistantId) always shows that
+// assistant's CURRENT name here, live off state.settings.assistants — not
+// the stale copy in seat.name — so a name change or a departure (Team tab
+// "Remove employee") shows up on the chart automatically instead of the
+// two silently drifting apart. Unlinked seats (owner, exec roles not in
+// the assistants roster, or a seat nobody's re-linked since this feature
+// shipped) keep using their own freeform seat.name exactly as before.
+function orgChartSeatDisplayName(seat){
+  if(seat.assistantId){
+    const a = state.settings.assistants.find(x=>x.id===seat.assistantId);
+    if(a) return a.name + (a.active===false ? " (former)" : "");
+  }
+  return seat.name||'(unnamed)';
+}
 function renderOrgChartSeat(rowId, seat){
   const tagHtml = seat.tag==='new' ? `<span class="oc-tag new">New</span>` : seat.tag==='leaving' ? `<span class="oc-tag leaving">Leaving</span>` : "";
   const respHtml = (seat.resp||[]).map(line=>{
@@ -7871,7 +7891,7 @@ function renderOrgChartSeat(rowId, seat){
       ondrop="ocDrop(event,'${rowId}','${seat.id}')">
       <div class="oc-head">
         <div class="oc-title">${seat.title||''}${tagHtml}</div>
-        <div class="oc-name ${seat.tag==='leaving'?'leaving':''}">${seat.name||'(unnamed)'}</div>
+        <div class="oc-name ${seat.tag==='leaving'?'leaving':''}">${orgChartSeatDisplayName(seat)}</div>
       </div>
       ${respHtml || seat.flag ? `
       <div class="oc-body">
@@ -7885,16 +7905,23 @@ function renderOrgChartSeat(rowId, seat){
   `;
 }
 function renderOrgChartSeatModal(rowId, seat){
+  const linked = !!seat.assistantId;
   return `
     <div class="modal">
       <h3>Edit seat</h3>
       <div class="row">
-        <div><label class="small">Role / title</label><input id="ocm_title" value="${seat.title||''}"></div>
-        <div><label class="small">Name</label><input id="ocm_name" value="${seat.name||''}"></div>
+        <div><label class="small">Role / title</label><input id="ocm_title" value="${seat.title||''}" oninput="state.modal.seat.title=this.value"></div>
+        <div><label class="small">Name</label>
+          <select id="ocm_assistant" onchange="setOrgChartSeatAssistant(this.value)">
+            <option value="">— Not an assistant (owner, exec, custom name) —</option>
+            ${state.settings.assistants.map(a=>`<option value="${a.id}" ${seat.assistantId===a.id?'selected':''}>${a.name}${a.active===false?' (former)':''}</option>`).join("")}
+          </select>
+          ${!linked ? `<input id="ocm_name" value="${seat.name||''}" oninput="state.modal.seat.name=this.value" placeholder="Name" style="margin-top:6px;">` : `<div class="small" style="margin-top:6px;">Linked to this assistant's record — their name here always stays current, even if it changes or they leave.</div>`}
+        </div>
       </div>
       <div class="row">
         <div><label class="small">Department (accent color)</label>
-          <select id="ocm_dept">
+          <select id="ocm_dept" onchange="state.modal.seat.dept=this.value">
             <option value="exec" ${seat.dept==='exec'?'selected':''}>Executive</option>
             <option value="ops" ${seat.dept==='ops'?'selected':''}>Operations</option>
             <option value="mkt" ${seat.dept==='mkt'?'selected':''}>Marketing & Sales</option>
@@ -7902,7 +7929,7 @@ function renderOrgChartSeatModal(rowId, seat){
           </select>
         </div>
         <div><label class="small">Tag</label>
-          <select id="ocm_tag">
+          <select id="ocm_tag" onchange="state.modal.seat.tag=this.value">
             <option value="none" ${(!seat.tag||seat.tag==='none')?'selected':''}>None</option>
             <option value="new" ${seat.tag==='new'?'selected':''}>New</option>
             <option value="leaving" ${seat.tag==='leaving'?'selected':''}>Leaving</option>
@@ -7910,10 +7937,10 @@ function renderOrgChartSeatModal(rowId, seat){
         </div>
       </div>
       <div><label class="small">Clients / responsibilities (one per line — "Name — detail" bolds the name)</label>
-        <textarea id="ocm_resp" rows="4" style="width:100%;">${(seat.resp||[]).join("\n")}</textarea>
+        <textarea id="ocm_resp" rows="4" style="width:100%;" oninput="state.modal.seat.resp=this.value.split('\\n').map(s=>s.trim()).filter(Boolean)">${(seat.resp||[]).join("\n")}</textarea>
       </div>
       <div style="margin-top:10px;"><label class="small">Note (shown in italics under the seat)</label>
-        <textarea id="ocm_flag" rows="2" style="width:100%;">${seat.flag||''}</textarea>
+        <textarea id="ocm_flag" rows="2" style="width:100%;" oninput="state.modal.seat.flag=this.value">${seat.flag||''}</textarea>
       </div>
       <div style="margin-top:14px;display:flex;justify-content:space-between;gap:8px;">
         <button class="danger" onclick="removeOrgChartSeat('${rowId}','${seat.id}');closeModal();">Delete seat</button>
