@@ -76,6 +76,8 @@
   }
   .sidebar button.active,.sidebar button:hover{background:rgba(255,255,255,0.12);}
   .sidebar .who{font-size:12px;opacity:.7;padding:8px 12px 14px;border-bottom:1px solid rgba(255,255,255,0.12);margin-bottom:6px;}
+  .nav-group-label{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;opacity:.55;padding:12px 12px 2px;}
+  .nav-group-label:first-child{padding-top:2px;}
   .main{flex:1;padding:26px 32px;overflow-y:auto;}
   .card{
     background:#fff;border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);margin-bottom:16px;
@@ -2506,12 +2508,21 @@ function promptLogin(kind){
 
 function renderAppShell(){
   const isContentCreator = state.role==="team" && state.currentAssistant && state.currentAssistant.isContentCreator;
-  const tabs = isContentCreator
-    ? [["content","Content Calendar"]]
+  // Admin's own list grouped into sections — 17 same-level items in one flat
+  // list was hard to scan for anything beyond the first few. Team/Content
+  // Creator lists stay short enough (5-7 items) that grouping them wouldn't
+  // add anything, so they stay as one unlabeled group (no header renders).
+  const tabGroups = isContentCreator
+    ? [{ label:null, tabs:[["content","Content Calendar"]] }]
     : state.role==="admin"
-    ? [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["leads","Lead Organizer"],["vendors","Vendors"],["cardPurchases","Card Purchases"],["scorecard","Scorecard"],["content","Content Calendar"],["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]]
-    : [["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["onboarding","Onboarding"],
-       ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : [])];
+    ? [
+        { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"]] },
+        { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
+        { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
+        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]] }
+      ]
+    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["onboarding","Onboarding"],
+       ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : [])] }];
 
   app.innerHTML = `
     <div class="app-shell">
@@ -2525,7 +2536,10 @@ function renderAppShell(){
           <div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div>
         </div>
         <div class="nav-links">
-          ${tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("")}
+          ${tabGroups.map(g=>`
+            ${g.label ? `<div class="nav-group-label">${g.label}</div>` : ""}
+            ${g.tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("")}
+          `).join("")}
         </div>
       </div>
       <div class="main" id="main">
