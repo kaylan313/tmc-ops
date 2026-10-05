@@ -418,7 +418,13 @@ let state = {
   qbReauthRequired: false,
   qbSummary: null,
   qbLastFetchAt: 0,
-  qbFetchInFlight: false
+  qbFetchInFlight: false,
+  // Separate month-to-date fetch for the Scorecard's "This Month" card —
+  // independent throttle/in-flight state from the weekly fetch above since
+  // they're two different date ranges hitting the same Cloud Function.
+  qbMonthSummary: null,
+  qbMonthLastFetchAt: 0,
+  qbMonthFetchInFlight: false
 };
 
 // ---- 4. Firestore helpers ----
@@ -3666,18 +3672,18 @@ const SCORECARD_METRIC_DEFS = [
   { key:"activeDenver", label:"Active — Denver", group:"Growth" },
   { key:"mrr", label:"Current MRR", group:"Growth", fmt:v=>"$"+v.toLocaleString() },
   { key:"newLeadsThisWeek", label:"New Leads This Week", group:"Growth" },
-  { key:"pausedClients", label:"Paused Clients", group:"Growth" },
-  { key:"cancelledThisWeek", label:"Cancelled This Week", group:"Growth" },
+  { key:"pausedClients", label:"Paused Clients", group:"Growth", lowerIsBetter:true },
+  { key:"cancelledThisWeek", label:"Cancelled This Week", group:"Growth", lowerIsBetter:true },
   { key:"teamHoursThisPeriod", label:"Team Hours (this pay period)", group:"Operations" },
-  { key:"payrollCostThisPeriod", label:"Payroll Cost (this pay period)", group:"Operations", fmt:v=>"$"+v.toLocaleString() },
-  { key:"overdueTasks", label:"Overdue Tasks (7+ days)", group:"Operations" },
-  { key:"atRiskClients", label:"At-Risk Clients", group:"Operations" },
+  { key:"payrollCostThisPeriod", label:"Payroll Cost (this pay period)", group:"Operations", fmt:v=>"$"+v.toLocaleString(), lowerIsBetter:true },
+  { key:"overdueTasks", label:"Overdue Tasks (7+ days)", group:"Operations", lowerIsBetter:true },
+  { key:"atRiskClients", label:"At-Risk Clients", group:"Operations", lowerIsBetter:true },
   { key:"nearOverPackage", label:"Clients Near/Over Package", group:"Operations" },
-  { key:"internalHoursUsed", label:"Internal/Admin Hours Used", group:"Operations" },
+  { key:"internalHoursUsed", label:"Internal/Admin Hours Used", group:"Operations", lowerIsBetter:true },
   { key:"qbIncome", label:"Income (QuickBooks)", group:"Growth", fmt:v=>"$"+v.toLocaleString() },
   { key:"qbGrossProfit", label:"Gross Profit (QuickBooks)", group:"Growth", fmt:v=>"$"+v.toLocaleString() },
-  { key:"qbExpenses", label:"Expenses (QuickBooks)", group:"Operations", fmt:v=>"$"+v.toLocaleString() },
-  { key:"qbPayroll", label:"Payroll (QuickBooks)", group:"Operations", fmt:v=>"$"+v.toLocaleString() }
+  { key:"qbExpenses", label:"Expenses (QuickBooks)", group:"Operations", fmt:v=>"$"+v.toLocaleString(), lowerIsBetter:true },
+  { key:"qbPayroll", label:"Payroll (QuickBooks)", group:"Operations", fmt:v=>"$"+v.toLocaleString(), lowerIsBetter:true }
 ];
 // Silent — no button, no confirmation. Called every time the Scorecard tab
 // renders; a no-op if this week's row is already the newest one, otherwise
@@ -3760,9 +3766,108 @@ function fetchQuickBooksSummaryIfStale(){
       state.qbFetchInFlight = false;
     });
 }
+// Month-to-date is its own separate QuickBooks fetch, not derived from the
+// weekly scorecardHistory snapshots above — summing frozen weekly rows
+// would silently under-count any week nobody happened to have the
+// Scorecard open for. Pulling fresh month-to-date numbers directly is
+// simpler and doesn't depend on that history being complete.
+function currentMonthKey(refDate){
+  const d = refDate || new Date();
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
+}
+function monthToDateRange(refDate){
+  const d = refDate || new Date();
+  return { start: new Date(d.getFullYear(), d.getMonth(), 1), end: d };
+}
+function fetchQuickBooksMonthSummaryIfStale(){
+  if(!fns || state.qbMonthFetchInFlight) return;
+  if(Date.now() - (state.qbMonthLastFetchAt||0) < 5*60*1000) return;
+  state.qbMonthFetchInFlight = true;
+  const { start } = monthToDateRange();
+  const today = new Date().toISOString().slice(0,10);
+  fns.httpsCallable("getQuickBooksSummary")({ startDate: start.toISOString().slice(0,10), endDate: today })
+    .then(({data})=>{
+      state.qbMonthSummary = data.connected ? data : null;
+      state.qbMonthLastFetchAt = Date.now();
+      state.qbMonthFetchInFlight = false;
+      render();
+    })
+    .catch(err=>{
+      console.warn("QuickBooks month summary fetch failed:", err);
+      state.qbMonthFetchInFlight = false;
+    });
+}
+// Payroll as a % of income — the standard "labor cost ratio" a service
+// business watches so payroll doesn't quietly eat too much of revenue.
+// Null (not a 0% bar) when there's nothing to divide by yet, so an empty
+// month doesn't briefly flash as a misleadingly perfect "0% margin."
+function payrollMarginPct(income, payroll){
+  if(!income) return null;
+  return (payroll/income)*100;
+}
+const PAYROLL_MARGIN_TARGET = 55;
+// Goals: freeform, user-picked — any of the metrics already computed above
+// (reusing their label/fmt) plus the two synthetic ones below that aren't
+// standalone Scorecard rows but are exactly what a goal gets set against.
+const SCORECARD_GOAL_METRICS = [
+  ...SCORECARD_METRIC_DEFS,
+  { key:"qbPayrollMarginPct", label:"Payroll Margin % (of income)", group:"Operations", fmt:v=>v.toFixed(1)+"%", lowerIsBetter:true }
+];
+// Actual value for a goal — QB-sourced money/payroll metrics use the
+// MONTH-TO-DATE summary (qbMonthSummary), everything else (active clients,
+// MRR, overdue tasks, etc.) uses the same live snapshot the weekly table
+// above shows, since those are "right now" counts, not a weekly/monthly flow.
+function scorecardGoalActualValue(metricKey){
+  const ms = state.qbMonthSummary;
+  if(metricKey==="qbIncome") return ms ? ms.income : null;
+  if(metricKey==="qbGrossProfit") return ms ? ms.grossProfit : null;
+  if(metricKey==="qbExpenses") return ms ? ms.expenses : null;
+  if(metricKey==="qbPayroll") return ms ? ms.payroll : null;
+  if(metricKey==="qbPayrollMarginPct") return ms ? payrollMarginPct(ms.income, ms.payroll) : null;
+  return computeScorecardMetrics()[metricKey];
+}
+function addScorecardGoal(){
+  const goals = state.settings.scorecardGoals || [];
+  const goal = { id:newId("sgoal"), monthKey:currentMonthKey(), metricKey:SCORECARD_GOAL_METRICS[0].key, target:0 };
+  state.settings.scorecardGoals = [...goals, goal];
+  upsert("settings","access", { scorecardGoals: state.settings.scorecardGoals });
+}
+function updateScorecardGoalField(id, field, value){
+  state.settings.scorecardGoals = (state.settings.scorecardGoals||[]).map(g=>g.id===id?{...g,[field]:value}:g);
+  upsert("settings","access", { scorecardGoals: state.settings.scorecardGoals });
+  render();
+}
+function removeScorecardGoal(id){
+  if(!confirm("Remove this goal?")) return;
+  state.settings.scorecardGoals = (state.settings.scorecardGoals||[]).filter(g=>g.id!==id);
+  upsert("settings","access", { scorecardGoals: state.settings.scorecardGoals });
+}
+function renderScorecardGoalRow(goal){
+  const def = SCORECARD_GOAL_METRICS.find(m=>m.key===goal.metricKey) || SCORECARD_GOAL_METRICS[0];
+  const actual = scorecardGoalActualValue(goal.metricKey);
+  const target = goal.target || 0;
+  const hit = actual==null ? null : def.lowerIsBetter ? actual<=target : actual>=target;
+  const pct = (actual!=null && target) ? Math.min(100, Math.round((def.lowerIsBetter ? target/Math.max(actual,0.0001) : actual/target)*100)) : 0;
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+      <div class="row">
+        <div><label class="small">Goal metric</label>
+          <select onchange="updateScorecardGoalField('${goal.id}','metricKey',this.value)">
+            ${SCORECARD_GOAL_METRICS.map(m=>`<option value="${m.key}" ${goal.metricKey===m.key?'selected':''}>${m.label}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Target${def.lowerIsBetter?' (stay at or under)':' (reach or exceed)'}</label><input id="sgoal_target_${goal.id}" type="number" step="0.1" value="${target}" onchange="updateScorecardGoalField('${goal.id}','target',parseFloat(this.value)||0)" style="max-width:120px;"></div>
+        <div><label class="small">Actual this month</label><div style="padding-top:6px;font-weight:600;${hit===false?'color:var(--danger);':hit===true?'color:var(--ok);':''}">${actual==null?'—':(def.fmt?def.fmt(actual):actual)}</div></div>
+      </div>
+      <div class="progress-bar"><div style="width:${pct}%;background:${hit===false?'var(--danger)':'var(--ok)'};"></div></div>
+      <div><button class="secondary" onclick="removeScorecardGoal('${goal.id}')">Remove</button></div>
+    </div>
+  `;
+}
 function renderScorecardTab(){
   ensureCurrentScorecardSnapshot();
   fetchQuickBooksSummaryIfStale();
+  fetchQuickBooksMonthSummaryIfStale();
   const history = (state.settings.scorecardHistory||[]).slice().sort((a,b)=> b.weekStart < a.weekStart ? -1 : 1).slice(0,12);
   const groups = ["Growth","Operations"];
   return `
@@ -3801,6 +3906,50 @@ function renderScorecardTab(){
         </tbody>
       </table></div>
     </div>`).join("")}
+    ${(()=>{
+      const ms = state.qbMonthSummary;
+      const margin = ms ? payrollMarginPct(ms.income, ms.payroll) : null;
+      const overTarget = margin!=null && margin>=PAYROLL_MARGIN_TARGET;
+      const monthLabel = new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
+      const goals = (state.settings.scorecardGoals||[]).filter(g=>g.monthKey===currentMonthKey());
+      return `
+    <div class="card">
+      <h3 style="margin:0;">This Month — ${monthLabel}</h3>
+      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open.</div>
+      <div class="stat-row">
+        <div class="stat-tile">
+          <div class="stat-label">Income</div>
+          <div class="stat-value">${ms?'$'+Math.round(ms.income).toLocaleString():'—'}</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Gross Profit</div>
+          <div class="stat-value">${ms?'$'+Math.round(ms.grossProfit).toLocaleString():'—'}</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Expenses</div>
+          <div class="stat-value">${ms?'$'+Math.round(ms.expenses).toLocaleString():'—'}</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Payroll</div>
+          <div class="stat-value">${ms?'$'+Math.round(ms.payroll).toLocaleString():'—'}</div>
+        </div>
+        <div class="stat-tile ${overTarget?'status-danger':margin!=null && margin>=PAYROLL_MARGIN_TARGET-5?'status-warn':''}">
+          <div class="stat-label">Payroll Margin</div>
+          <div class="stat-value">${margin!=null?margin.toFixed(1)+'%':'—'}</div>
+          <div class="stat-sub">target: stay under ${PAYROLL_MARGIN_TARGET}%${overTarget?' — over target':''}</div>
+        </div>
+      </div>
+      ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this month's real numbers.</div>` : ""}
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Goals — ${monthLabel}</h3>
+        <button class="secondary" onclick="addScorecardGoal()">+ Add goal</button>
+      </div>
+      <div class="small" style="margin:4px 0 10px;">Pick any metric and set a target for this month — "actual" updates live as the numbers above do.</div>
+      ${goals.length ? goals.map(renderScorecardGoalRow).join("") : `<div class="small">No goals set for this month yet.</div>`}
+    </div>`;
+    })()}
   `;
 }
 // --- Lead Organizer (admin only) ---
