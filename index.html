@@ -5036,15 +5036,28 @@ function renderClientProfile(client){
 
   const vendorsBody = `
     <div class="small" style="margin-bottom:8px;">Recurring service providers — lawn care, house cleaning/maid, trash pickup, pool service, etc.</div>
-    <div class="small" style="margin-bottom:8px;color:#8a7a72;">Format: Service, Company, Contact, Schedule — e.g. "Lawn Care, Green Lawns LLC, (337) 555-0100, Every Monday @ 9am"</div>
-    ${(client.vendors||[]).map((v,i)=>`
-      <div style="display:flex;gap:6px;margin-bottom:6px;flex-wrap:wrap;align-items:center;">
-        <input id="vendor_service_${i}_${client.id}" value="${v.service||''}" placeholder="Service" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'service',this.value)">
-        <input id="vendor_company_${i}_${client.id}" value="${v.company!=null?v.company:(v.name||'')}" placeholder="Company" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'company',this.value)">
-        <input id="vendor_contact_${i}_${client.id}" value="${v.contact!=null?v.contact:(v.phone||'')}" placeholder="Contact (name, phone, or email)" style="max-width:180px;" onchange="updateVendorField('${client.id}',${i},'contact',this.value)">
-        <input id="vendor_schedule_${i}_${client.id}" value="${v.schedule||''}" placeholder="Schedule — e.g. Every Monday @ 9am" style="min-width:200px;" onchange="updateVendorField('${client.id}',${i},'schedule',this.value)">
-        <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
-      </div>`).join("") || `<div class="small">No vendors on file.</div>`}
+    <div class="small" style="margin-bottom:8px;color:#8a7a72;">Format: Service, Company, Contact, Schedule — e.g. "Lawn Care, Green Lawns LLC, (337) 555-0100, Every Monday @ 9am". Optionally link one to the company-wide Vendor Directory to see its rating and commission info at a glance.</div>
+    ${(client.vendors||[]).map((v,i)=>{
+      const linked = v.directoryVendorId ? (state.vendors||[]).find(dv=>dv.id===v.directoryVendorId) : null;
+      return `
+      <div style="margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--cream-dark);">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <input id="vendor_service_${i}_${client.id}" value="${v.service||''}" placeholder="Service" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'service',this.value)">
+          <input id="vendor_company_${i}_${client.id}" value="${v.company!=null?v.company:(v.name||'')}" placeholder="Company" style="max-width:150px;" onchange="updateVendorField('${client.id}',${i},'company',this.value)">
+          <input id="vendor_contact_${i}_${client.id}" value="${v.contact!=null?v.contact:(v.phone||'')}" placeholder="Contact (name, phone, or email)" style="max-width:180px;" onchange="updateVendorField('${client.id}',${i},'contact',this.value)">
+          <input id="vendor_schedule_${i}_${client.id}" value="${v.schedule||''}" placeholder="Schedule — e.g. Every Monday @ 9am" style="min-width:200px;" onchange="updateVendorField('${client.id}',${i},'schedule',this.value)">
+          <button class="danger" onclick="removeVendor('${client.id}',${i})">Remove</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap;">
+          <label class="small">Company directory</label>
+          <select onchange="updateVendorField('${client.id}',${i},'directoryVendorId',this.value||null)">
+            <option value="">— Not linked / one-off —</option>
+            ${(state.vendors||[]).slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(dv=>`<option value="${dv.id}" ${v.directoryVendorId===dv.id?'selected':''}>${escHtml(dv.name||'(unnamed)')}${dv.profession?' — '+escHtml(dv.profession):''}</option>`).join("")}
+          </select>
+          ${linked ? `<span class="small">${linked.rating?'★'.repeat(linked.rating):'Not rated'}${linked.commissionPercent!=null?' · '+linked.commissionPercent+'% commission':''}</span>` : ""}
+        </div>
+      </div>`;
+    }).join("") || `<div class="small">No vendors on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
       <input id="v_service_${client.id}" placeholder="Service" style="max-width:150px;">
       <input id="v_company_${client.id}" placeholder="Company" style="max-width:150px;">
