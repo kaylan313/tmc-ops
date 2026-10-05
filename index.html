@@ -3697,24 +3697,24 @@ function renderLeadEditorModal(prefill){
     <div class="modal">
       <h3>New lead</h3>
       <div class="row">
-        <div><label class="small">Name</label><input id="nl_name" placeholder="e.g. Jamie Rivera" value="${escHtml(prefill.name||'')}"></div>
-        <div><label class="small">Email</label><input id="nl_email" type="email" value="${escHtml(prefill.email||'')}"></div>
-        <div><label class="small">Phone</label><input id="nl_phone" value="${escHtml(prefill.phone||'')}"></div>
+        <div><label class="small">Name</label><input id="nl_name" placeholder="e.g. Jamie Rivera" value="${escHtml(prefill.name||'')}" oninput="state.modal.prefill.name=this.value"></div>
+        <div><label class="small">Email</label><input id="nl_email" type="email" value="${escHtml(prefill.email||'')}" oninput="state.modal.prefill.email=this.value"></div>
+        <div><label class="small">Phone</label><input id="nl_phone" value="${escHtml(prefill.phone||'')}" oninput="state.modal.prefill.phone=this.value"></div>
       </div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Found us via</label>
-          <select id="nl_source">
-            ${LEAD_SOURCES.map(s=>`<option value="${s}" ${s==='Other'?'selected':''}>${s}</option>`).join("")}
+          <select id="nl_source" onchange="state.modal.prefill.source=this.value">
+            ${LEAD_SOURCES.map(s=>`<option value="${s}" ${(prefill.source||'Other')===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
         <div><label class="small">Status</label>
-          <select id="nl_status">
+          <select id="nl_status" onchange="state.modal.prefill.status=this.value">
             ${LEAD_STATUSES.map(s=>`<option value="${s}" ${(prefill.status||'New')===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
-        <div><label class="small">Next follow-up</label><input id="nl_followup" type="date"></div>
+        <div><label class="small">Next follow-up</label><input id="nl_followup" type="date" value="${prefill.nextFollowUpDate||''}" onchange="state.modal.prefill.nextFollowUpDate=this.value"></div>
       </div>
-      <div style="margin-top:8px;"><label class="small">Notes</label><textarea id="nl_notes" placeholder="What was discussed, how they found us, etc.">${escHtml(prefill.notes||'')}</textarea></div>
+      <div style="margin-top:8px;"><label class="small">Notes</label><textarea id="nl_notes" placeholder="What was discussed, how they found us, etc." oninput="state.modal.prefill.notes=this.value">${escHtml(prefill.notes||'')}</textarea></div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
         <button onclick="saveNewLead()">Add lead</button>
@@ -3723,17 +3723,18 @@ function renderLeadEditorModal(prefill){
   `;
 }
 function saveNewLead(){
-  const name = document.getElementById("nl_name").value.trim();
+  const draft = state.modal.prefill;
+  const name = (draft.name||"").trim();
   if(!name){ alert("Name is required."); return; }
   const lead = {
     id: newId("lead"),
     name,
-    email: document.getElementById("nl_email").value.trim(),
-    phone: document.getElementById("nl_phone").value.trim(),
-    source: document.getElementById("nl_source").value,
-    status: document.getElementById("nl_status").value,
-    nextFollowUpDate: document.getElementById("nl_followup").value,
-    notes: document.getElementById("nl_notes").value.trim(),
+    email: (draft.email||"").trim(),
+    phone: (draft.phone||"").trim(),
+    source: draft.source || "Other",
+    status: draft.status || "New",
+    nextFollowUpDate: draft.nextFollowUpDate || "",
+    notes: (draft.notes||"").trim(),
     createdDate: new Date().toISOString().slice(0,10)
   };
   upsert("leads", lead.id, lead);
@@ -3867,28 +3868,29 @@ function removeVendorEarning(vendorId, earningId){
 // is too easy to fabricate, which defeats the point of the log.
 function openCardPurchaseEntry(){
   if(!state.currentAssistant){ alert("Log in with your own Team access code to log a card purchase — this doesn't work from the shared Admin login."); return; }
-  state.modal = { type:"cardPurchaseEntry" };
+  state.modal = { type:"cardPurchaseEntry", draft:{} };
   render();
 }
 function renderCardPurchaseEntryModal(){
   const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"));
+  const d = state.modal.draft;
   return `
     <div class="modal">
       <h3>Log a Client Card Purchase</h3>
       <div class="small" style="margin-bottom:10px;">Fill this out any time you use a client's card — a photo of the receipt is required.</div>
       <div class="row">
         <div><label class="small">Client</label>
-          <select id="cp_client">
+          <select id="cp_client" onchange="state.modal.draft.clientId=this.value">
             <option value="">— Select —</option>
-            ${realClients.map(c=>`<option value="${c.id}">${c.name}</option>`).join("")}
+            ${realClients.map(c=>`<option value="${c.id}" ${d.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
           </select>
         </div>
-        <div><label class="small">Amount ($)</label><input id="cp_amount" type="number" step="0.01" placeholder="e.g. 42.17"></div>
+        <div><label class="small">Amount ($)</label><input id="cp_amount" type="number" step="0.01" value="${d.amount||''}" oninput="state.modal.draft.amount=this.value" placeholder="e.g. 42.17"></div>
       </div>
       <div class="row" style="margin-top:8px;">
-        <div><label class="small">Store</label><input id="cp_store" placeholder="e.g. Target, Walgreens"></div>
+        <div><label class="small">Store</label><input id="cp_store" value="${d.store||''}" oninput="state.modal.draft.store=this.value" placeholder="e.g. Target, Walgreens"></div>
       </div>
-      <div style="margin-top:8px;"><label class="small">What was it for?</label><textarea id="cp_description" placeholder="e.g. Household supplies per client request"></textarea></div>
+      <div style="margin-top:8px;"><label class="small">What was it for?</label><textarea id="cp_description" oninput="state.modal.draft.description=this.value" placeholder="e.g. Household supplies per client request">${d.description||''}</textarea></div>
       <div style="margin-top:8px;">
         <label class="small">Receipt photo (required)</label><br>
         <input type="file" id="cp_photo" accept="image/*" capture="environment">
@@ -3901,10 +3903,11 @@ function renderCardPurchaseEntryModal(){
   `;
 }
 async function saveCardPurchase(){
-  const clientId = document.getElementById("cp_client").value;
-  const amount = parseFloat(document.getElementById("cp_amount").value);
-  const store = document.getElementById("cp_store").value.trim();
-  const description = document.getElementById("cp_description").value.trim();
+  const draft = state.modal.draft;
+  const clientId = draft.clientId || "";
+  const amount = parseFloat(draft.amount);
+  const store = (draft.store||"").trim();
+  const description = (draft.description||"").trim();
   const photoInput = document.getElementById("cp_photo");
   const file = photoInput.files && photoInput.files[0];
   if(!clientId){ alert("Select which client's card this was."); return; }
@@ -4250,9 +4253,14 @@ function renderClientsList(){
 }
 function openClient(id){ state.selectedClientId = id; state.crmSubTab="tasks"; state.profileOpenSections = new Set(["visit"]); render(); }
 function openClientEditor(id){
-  const c = id ? state.clients.find(x=>x.id===id) : null;
-  state.modal = { type:"clientEditor", client:c };
+  const existing = id ? state.clients.find(x=>x.id===id) : null;
+  const client = existing || { name:"", packageHours:"", cycleType:"monthly", assistantIds:[] };
+  state.modal = { type:"clientEditor", client };
   render();
+}
+function toggleClientAssistantDraft(id, checked){
+  const list = state.modal.client.assistantIds || [];
+  state.modal.client.assistantIds = checked ? [...list, id] : list.filter(x=>x!==id);
 }
 // Permanent, not the same as cancelling/pausing a real client — for test
 // records or ones created by mistake that shouldn't show up anywhere at
@@ -9084,11 +9092,11 @@ function renderClientEditorModal(client){
   return `
     <div class="modal">
       <h3>${client ? "Edit client" : "New client"}</h3>
-      <div class="row"><div><label class="small">Name</label><input id="cf_name" value="${c.name||''}"></div></div>
+      <div class="row"><div><label class="small">Name</label><input id="cf_name" value="${c.name||''}" oninput="state.modal.client.name=this.value"></div></div>
       <div class="row" style="margin-top:8px;">
-        <div><label class="small">Package hours</label><input id="cf_pkg" value="${c.packageHours||''}"></div>
+        <div><label class="small">Package hours</label><input id="cf_pkg" value="${c.packageHours||''}" oninput="state.modal.client.packageHours=this.value"></div>
         <div><label class="small">Hours/billing cycle</label>
-          <select id="cf_cycle">
+          <select id="cf_cycle" onchange="state.modal.client.cycleType=this.value">
             ${["biweekly","monthly","quarterly","annual"].map(cy=>`<option value="${cy}" ${(c.cycleType||'monthly')===cy?'selected':''}>${cycleLabel(cy)}</option>`).join("")}
           </select>
         </div>
@@ -9097,7 +9105,7 @@ function renderClientEditorModal(client){
         <label class="small">Assigned assistants</label>
         ${assignableAssistants(c.assistantIds).map(a=>`
           <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:13px;">
-            <input type="checkbox" value="${a.id}" ${(c.assistantIds||[]).includes(a.id)?'checked':''} class="cf_assistant"> ${a.name}${a.active===false?' (former)':''}
+            <input type="checkbox" value="${a.id}" ${(c.assistantIds||[]).includes(a.id)?'checked':''} class="cf_assistant" onchange="toggleClientAssistantDraft('${a.id}',this.checked)"> ${a.name}${a.active===false?' (former)':''}
           </label>
         `).join("")}
       </div>
@@ -9109,12 +9117,13 @@ function renderClientEditorModal(client){
   `;
 }
 function saveClient(existingId){
+  const draft = state.modal.client;
   const id = existingId || newId("client");
-  const assistantIds = Array.from(document.querySelectorAll(".cf_assistant:checked")).map(el=>el.value);
+  const assistantIds = draft.assistantIds || [];
   upsert("clients", id, {
-    name: document.getElementById("cf_name").value.trim(),
-    packageHours: parseFloat(document.getElementById("cf_pkg").value)||0,
-    cycleType: document.getElementById("cf_cycle").value,
+    name: (draft.name||"").trim(),
+    packageHours: parseFloat(draft.packageHours)||0,
+    cycleType: draft.cycleType || "monthly",
     assistantIds,
     ...(existingId ? {} : { notes: [], specialDates: [], vendors: [], inspections: [] })
   });
