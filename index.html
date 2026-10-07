@@ -2658,6 +2658,15 @@ const app = document.getElementById("app");
 // page has already finished rendering, so the registry is always current.
 const comboboxCallbacks = {};
 function openCombobox(id){
+  // Without this guard, clicking the input opens a runaway loop: render()'s
+  // own focus-preservation (see the top of render()) restores focus to this
+  // same input after the rebuild it just caused, that restored focus fires
+  // THIS SAME onfocus handler again, which renders again, which restores
+  // focus again... synchronously, as fast as the browser can go — which is
+  // exactly what shows up as the page freezing/lagging the instant this box
+  // is clicked. Already being the open combobox makes opening it again a
+  // no-op, which breaks the cycle on its second pass.
+  if(state.openCombobox === id) return;
   state.openCombobox = id;
   state.comboboxQuery = "";
   render();
@@ -2739,7 +2748,13 @@ function render(){
   if(preserved && preserved.id){
     const el = document.getElementById(preserved.id);
     if(el){
-      el.value = preserved.value;
+      // A combobox's own input (see renderSearchablePicker) manages its text
+      // itself via state.comboboxQuery/openCombobox — restoring its OLD
+      // value here would stomp the empty, ready-to-type value it just
+      // rendered the instant it opens. Still re-focus it (a freshly created
+      // element is never auto-focused) so typing works immediately, just
+      // skip the value overwrite for this one case.
+      if(!preserved.id.startsWith("combobox_")) el.value = preserved.value;
       el.focus();
       try{ el.setSelectionRange(preserved.selStart, preserved.selEnd); }catch(e){}
     }
