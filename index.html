@@ -4658,6 +4658,126 @@ function submitVendorTicketComment(vendorId, ticketId){
   addVendorTicketComment(vendorId, ticketId, author, text);
   input.value = "";
 }
+// ---- Vendor portal (role==="vendor") ----
+function toggleVendorPortalHistory(){ state.vendorPortalHistoryOpen = !state.vendorPortalHistoryOpen; render(); }
+function renderVendorPortal(){
+  const vendor = (state.vendors||[]).find(v=>v.id===state.currentVendorId);
+  if(!vendor){ app.innerHTML = `<div class="center-screen"><div class="login-box">Vendor record not found. <button onclick="logout()">Back</button></div></div>`; return; }
+  const tickets = (vendor.tickets||[]).slice().sort((a,b)=> b.requestedAt < a.requestedAt ? -1 : 1);
+  const open = tickets.filter(t=>vendorTicketStage(t)!=="paid");
+  const done = tickets.filter(t=>vendorTicketStage(t)==="paid");
+  app.innerHTML = `
+    <div class="app-shell">
+      <div class="sidebar">
+        <div class="logo">TMC Portal</div>
+        <div class="who">${escHtml(vendor.name||'')}<div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div></div>
+      </div>
+      <div class="main">
+        <h2>Welcome, ${escHtml(vendor.name||'')}</h2>
+        <div class="small" style="margin-bottom:14px;">Your open requests — let us know when you can get to each one, what you will charge, and upload any material receipts.</div>
+        ${open.length ? open.map(t=>renderVendorPortalTicket(vendor,t)).join("") : `<div class="card"><div class="small">Nothing open right now.</div></div>`}
+        ${done.length ? `
+        <div class="card">
+          <div class="flex-between" style="cursor:pointer;" onclick="toggleVendorPortalHistory()">
+            <h3 style="margin:0;">Paid &amp; closed <span class="small">(${done.length})</span></h3>
+            <span class="small">${state.vendorPortalHistoryOpen?'Hide ▲':'Show ▼'}</span>
+          </div>
+          ${state.vendorPortalHistoryOpen ? done.map(t=>renderVendorPortalTicket(vendor,t)).join("") : ""}
+        </div>` : ""}
+      </div>
+    </div>
+  `;
+}
+function renderVendorPortalTicket(vendor, ticket){
+  const client = state.clients.find(c=>c.id===ticket.clientId);
+  const stage = vendorTicketStage(ticket);
+  const paymentStatusText = stage==="paid" ? "Paid on "+new Date(ticket.vendorPaidAt).toLocaleDateString()
+    : stage==="chargedAwaitingPayout" ? "Approved — included in the next Friday payout"
+    : ticket.vendorCost!=null ? "Submitted, awaiting approval"
+    : "Submit your cost below first";
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">${escHtml(ticket.title||'(untitled)')}</h3>
+        <span class="small">${client?client.name:'—'}</span>
+      </div>
+      ${ticket.description ? `<p style="margin-top:8px;">${escHtml(ticket.description)}</p>` : ''}
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">When can you get to this?</label>
+        <div class="row" style="margin-top:4px;">
+          <div><label class="small">Scheduled date/time</label><input type="datetime-local" id="vp_sched_${ticket.id}" value="${ticket.scheduledAt?toDatetimeLocalValue(ticket.scheduledAt):''}" onchange="updateVendorTicketField('${vendor.id}','${ticket.id}','scheduledAt',fromDatetimeLocalValue(this.value))"></div>
+        </div>
+        <div style="margin-top:6px;"><label class="small">Or list times you are available, and the assistant will check which works for the client</label><input id="vp_avail_${ticket.id}" value="${escHtml(ticket.availableTimesNote||'')}" oninput="updateVendorTicketField('${vendor.id}','${ticket.id}','availableTimesNote',this.value)" placeholder="e.g. Tue 2-4pm, Wed anytime"></div>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">What will you charge for this?</label>
+        ${ticket.vendorCost!=null ? `
+          <div class="small" style="margin-top:4px;">Submitted: $${ticket.vendorCost.toFixed(2)} on ${new Date(ticket.vendorCostSubmittedAt).toLocaleDateString()}</div>
+        ` : `
+          <div class="row" style="margin-top:4px;">
+            <div><input id="vp_cost_${ticket.id}" type="number" step="1" placeholder="e.g. 85" style="max-width:120px;"></div>
+            <button class="secondary" onclick="submitVendorTicketCost('${vendor.id}','${ticket.id}',parseFloat(document.getElementById('vp_cost_${ticket.id}').value)||0)">Submit</button>
+          </div>
+        `}
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Payment status</label>
+        <div class="small" style="margin-top:4px;">${paymentStatusText}</div>
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Receipts</label>
+        <div>
+          ${(ticket.receipts||[]).length ? ticket.receipts.map(r=>`
+            <div class="list-item">
+              <div>📎 <a href="${r.dataUrl}" download="${r.name}">${escHtml(r.name||'receipt')}</a></div>
+              <button class="danger" style="padding:2px 8px;" onclick="removeVendorTicketReceipt('${vendor.id}','${ticket.id}','${r.id}')">Remove</button>
+            </div>`).join("") : `<div class="small">None uploaded yet.</div>`}
+        </div>
+        <div style="margin-top:6px;">
+          <input type="file" id="vp_receipt_${ticket.id}" accept="image/*,.pdf">
+          <button class="secondary" onclick="uploadVendorTicketReceipt('${vendor.id}','${ticket.id}')">Upload</button>
+        </div>
+      </div>
+      ${renderVendorTicketDiscussion(vendor.id, ticket)}
+    </div>
+  `;
+}
+// Same size-capping approach as addTaskAttachment — no separate file
+// storage wired up, everything lives inline on the Firestore doc.
+async function uploadVendorTicketReceipt(vendorId, ticketId){
+  const input = document.getElementById("vp_receipt_"+ticketId);
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  const ticket = vendor && (vendor.tickets||[]).find(t=>t.id===ticketId);
+  if(!ticket) return;
+  let dataUrl;
+  try{
+    if(file.type.startsWith("image/")){
+      dataUrl = await readAndCompressImage(file, 1400, 0.75);
+    } else {
+      if(file.size > MAX_ATTACHMENT_BYTES){
+        alert(`That file is too big (${Math.round(file.size/1000)}KB) — receipts are capped around ${Math.round(MAX_ATTACHMENT_BYTES/1000)}KB. Try a smaller file or a photo instead.`);
+        return;
+      }
+      dataUrl = await readFileAsDataURL(file);
+    }
+  }catch(e){
+    console.warn("Receipt read failed:", e);
+    alert("Couldn't read that file.");
+    return;
+  }
+  const existingBytes = (ticket.receipts||[]).reduce((s,r)=>s+(r.dataUrl?r.dataUrl.length:0),0);
+  if(existingBytes + dataUrl.length > MAX_ATTACHMENTS_TOTAL_BYTES){
+    alert("This request's receipts are getting too large to save reliably. Remove one before adding another.");
+    return;
+  }
+  addVendorTicketReceipt(vendorId, ticketId, {
+    id: newId("receipt"), name: file.name, type: file.type || "application/octet-stream",
+    dataUrl, uploadedAt: new Date().toISOString()
+  });
+  input.value = "";
+}
 // --- Client Card Purchases — accountability log for assistants using a
 // client's own card. Admin-only to view/review; assistants can only
 // submit a new entry, never browse past ones (see openCardPurchaseEntry).
