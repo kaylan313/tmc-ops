@@ -1297,11 +1297,35 @@ function receiptsInWindow(client, window){
     (t.attachments||[]).forEach(a=>{
       const uploaded = new Date(a.uploadedAt);
       if(uploaded >= window.start && uploaded < window.end){
-        receipts.push({ ...a, taskTitle: t.title });
+        receipts.push({ ...a, taskId: t.id, taskTitle: t.title });
       }
     });
   });
   return receipts.sort((a,b)=> new Date(a.uploadedAt) - new Date(b.uploadedAt));
+}
+// Once a report has actually gone out, the receipts it embedded don't need
+// to keep living on the task too — this is what actually relieves the
+// attachments size limit above long-term, instead of just raising it once
+// and hitting it again later. Deletes real task attachments — only call
+// this after confirming the report was sent.
+function clearReceiptsInWindow(clientId, kind){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const window = reportWindowFor(client, kind);
+  if(!window) return;
+  const receipts = receiptsInWindow(client, window);
+  if(!receipts.length){ alert("No receipts in this report's date range to clear."); return; }
+  if(!confirm(`Only do this once you've actually sent this report to the client — it already has these receipts embedded in it.\n\nDelete ${receipts.length} receipt${receipts.length===1?'':'s'} from ${receipts.length===1?'its task':'their tasks'}? This can't be undone.`)) return;
+  const idsByTask = {};
+  receipts.forEach(r=>{ (idsByTask[r.taskId] = idsByTask[r.taskId]||[]).push(r.id); });
+  Object.entries(idsByTask).forEach(([taskId, attachmentIds])=>{
+    const task = state.tasks.find(t=>t.id===taskId);
+    if(!task) return;
+    const attachments = (task.attachments||[]).filter(a=>!attachmentIds.includes(a.id));
+    task.attachments = attachments;
+    upsert("tasks", taskId, { attachments });
+  });
+  render();
 }
 // kind: "week" (the Friday recap, Saturday–Friday), "period" (the client's
 // current billing cycle), or "lastPeriod" (the cycle just before that, for
@@ -5014,7 +5038,7 @@ function renderCardPurchaseEntryModal(){
       <div style="margin-top:8px;"><label class="small">What was it for?</label><textarea id="cp_description" oninput="state.modal.draft.description=this.value" placeholder="e.g. Household supplies per client request">${d.description||''}</textarea></div>
       <div style="margin-top:8px;">
         <label class="small">Receipt photo (required)</label><br>
-        <input type="file" id="cp_photo" accept="image/*" capture="environment">
+        <input type="file" id="cp_photo" accept="image/*">
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
@@ -6789,6 +6813,9 @@ function renderClientEmailTemplates(client){
   const noEmail = !client.email;
   const addOnPaymentRows = clientAddOnPaymentRows(client);
   const todayStr = new Date().toISOString().slice(0,10);
+  const weekReceiptCount = client.includeReceiptsInReport ? receiptsInWindow(client, week).length : 0;
+  const periodReceiptCount = client.includeReceiptsInReport && periodWindow ? receiptsInWindow(client, periodWindow).length : 0;
+  const lastPeriodReceiptCount = client.includeReceiptsInReport && lastPeriodWindow ? receiptsInWindow(client, lastPeriodWindow).length : 0;
   return `
     ${noEmail ? `<div class="alert warn">No client email on file — add one on the Membership tab before sending anything below.</div>` : ""}
     ${addOnPaymentRows.length ? `
@@ -6828,6 +6855,7 @@ function renderClientEmailTemplates(client){
       <div class="small" style="margin-bottom:8px;">To send: click "Copy message," then paste into whatever email or text you use with this client — works the same for everyone, nothing to attach or download.</div>
       <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
       <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
+      ${client.includeReceiptsInReport && weekReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','week')">Clear sent receipts (${weekReceiptCount})</button>` : ""}
     </div>
     <div class="card">
       <div class="flex-between">
@@ -6838,6 +6866,7 @@ function renderClientEmailTemplates(client){
       ${periodWindow ? `
         <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
         <button onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
+        ${client.includeReceiptsInReport && periodReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','period')">Clear sent receipts (${periodReceiptCount})</button>` : ""}
       ` : ""}
     </div>
     <div class="card">
@@ -6846,6 +6875,7 @@ function renderClientEmailTemplates(client){
       ${lastPeriodWindow ? `
         <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
         <button onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
+        ${client.includeReceiptsInReport && lastPeriodReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','lastPeriod')">Clear sent receipts (${lastPeriodReceiptCount})</button>` : ""}
       ` : ""}
     </div>
     ${isPilot ? `
@@ -9575,9 +9605,13 @@ function readAndCompressImage(file, maxDim, quality){
 // a combined budget well under that ceiling so title/subtasks/discussion
 // always have room too — otherwise a doc can quietly exceed Firestore's
 // limit and the write just fails (silently, before the fix that now alerts
-// on a failed save).
+// on a failed save). Raised from 650000 — a multi-store task's receipts
+// were hitting this after only ~3 photos. The real long-term relief valve
+// is clearSentReceipts() below: once a client's report (which embeds these
+// receipts directly) has actually gone out, there's no reason to keep
+// storing them on the task at all.
 const MAX_ATTACHMENT_BYTES = 400000;
-const MAX_ATTACHMENTS_TOTAL_BYTES = 650000;
+const MAX_ATTACHMENTS_TOTAL_BYTES = 900000;
 function readFileAsDataURL(file){
   return new Promise((resolve, reject)=>{
     const reader = new FileReader();
@@ -9612,7 +9646,7 @@ async function addTaskAttachment(taskId){
     return;
   }
   if(currentAttachmentsBytes(task) + dataUrl.length > MAX_ATTACHMENTS_TOTAL_BYTES){
-    alert("This task's attachments are getting too large to save reliably. Remove an existing attachment before adding another, or attach fewer/smaller files.");
+    alert("This task's attachments are getting too large to save reliably. If any of these have already gone out on a client report, clear them from the client's Email Templates page (receipts are embedded in the report itself, so they don't need to stay on the task too). Otherwise remove an existing attachment before adding another.");
     return;
   }
   const attachments = [...(task.attachments||[]), {
