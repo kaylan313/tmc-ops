@@ -394,6 +394,7 @@ let state = {
   leads: [],
   vendors: [],
   cardPurchases: [],
+  supportTickets: [],
   activeTab: "dashboard",
   crmSubTab: "tasks",
   selectedClientId: null,
@@ -758,6 +759,7 @@ function subscribeAppData(){
   // there) — a vendor portal login needs to check it before anyone's
   // necessarily logged in yet, same reason clients/settings already did.
   subscribe("cardPurchases", items=>{ state.cardPurchases = items; if(!state.modal) render(); });
+  subscribe("supportTickets", items=>{ state.supportTickets = items; if(!state.modal) render(); });
 }
 
 // ---- 6. Orientation sync (existing integration, preserved) ----
@@ -2808,16 +2810,16 @@ function renderAppShell(){
   // Creator lists stay short enough (5-7 items) that grouping them wouldn't
   // add anything, so they stay as one unlabeled group (no header renders).
   const tabGroups = isContentCreator
-    ? [{ label:null, tabs:[["content","Content Calendar"]] }]
+    ? [{ label:null, tabs:[["content","Content Calendar"],["techSupport","Tech Support"]] }]
     : state.role==="admin"
     ? [
         { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
-        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]] }
+        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["techSupport","Tech Support"]] }
       ]
     : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["onboarding","Onboarding"],
-       ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : [])] }];
+       ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : []), ["techSupport","Tech Support"]] }];
 
   app.innerHTML = `
     <div class="app-shell">
@@ -2868,6 +2870,7 @@ function renderMain(){
     case "onboarding": return renderOnboarding();
     case "team": return renderTeamAdmin();
     case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
+    case "techSupport": return renderTechSupportTab();
     default: return "";
   }
 }
@@ -5128,6 +5131,169 @@ function renderCardPurchaseRow(p){
 }
 function toggleCardPurchaseReviewed(id, reviewed){
   upsert("cardPurchases", id, { reviewed, reviewedAt: reviewed ? new Date().toISOString() : null });
+}
+
+// ---- Tech Support tickets — bugs/errors and feature requests from the team,
+// straight into the app instead of a text to Kaylan that's easy to lose
+// track of. Same shape as the Vendor Ticket system: a list + detail view
+// with a comment thread, admin moves it through a status. Anyone logged in
+// (admin or team) can submit one and see their own; only admin sees everyone
+// else's.
+const SUPPORT_TICKET_STATUSES = ["Open","In Progress","Resolved"];
+function currentSupportAuthor(){
+  return state.role==="admin" ? { id:"admin", name:"Admin" } : { id: state.currentAssistant.id, name: state.currentAssistant.name };
+}
+function openNewSupportTicketModal(){
+  state.modal = { type:"newSupportTicket", draft:{ kind:"bug", title:"", description:"" } };
+  render();
+}
+function renderNewSupportTicketModal(){
+  const d = state.modal.draft;
+  return `
+    <div class="modal">
+      <h3>Submit to Tech Support</h3>
+      <div class="row">
+        <div><label class="small">Type</label>
+          <select onchange="state.modal.draft.kind=this.value">
+            <option value="bug" ${d.kind==='bug'?'selected':''}>Bug / something's broken</option>
+            <option value="feature" ${d.kind==='feature'?'selected':''}>Feature idea</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:8px;"><label class="small">Title</label><input id="st_title" value="${escHtml(d.title||'')}" oninput="state.modal.draft.title=this.value" placeholder="${d.kind==='feature'?'e.g. Add a filter for...':'e.g. Save button not working on...'}"></div>
+      <div style="margin-top:8px;"><label class="small">${d.kind==='feature'?'What would you like, and why?':'What happened? Which page/tab were you on?'}</label><textarea id="st_description" oninput="state.modal.draft.description=this.value">${escHtml(d.description||'')}</textarea></div>
+      <div style="margin-top:8px;">
+        <label class="small">Screenshot (optional)</label><br>
+        <input type="file" id="st_screenshot" accept="image/*">
+      </div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="saveNewSupportTicket()">Submit</button>
+      </div>
+    </div>`;
+}
+async function saveNewSupportTicket(){
+  const draft = state.modal.draft;
+  const title = (draft.title||"").trim();
+  const description = (draft.description||"").trim();
+  if(!title){ alert("Please enter a short title."); return; }
+  const fileInput = document.getElementById("st_screenshot");
+  const file = fileInput.files && fileInput.files[0];
+  let screenshot = null;
+  if(file){
+    try{ screenshot = await readAndCompressImage(file, 1400, 0.75); }
+    catch(e){ console.warn("Screenshot read failed:", e); alert("Couldn't read that screenshot — submitting without it."); }
+  }
+  const author = currentSupportAuthor();
+  const ticket = {
+    id: newId("support"),
+    kind: draft.kind || "bug",
+    title, description,
+    screenshot,
+    authorId: author.id, authorName: author.name,
+    status: "Open",
+    createdAt: new Date().toISOString(),
+    comments: []
+  };
+  const saved = await upsert("supportTickets", ticket.id, ticket);
+  if(saved){ closeModal(); alert("Submitted — thanks! Kaylan will follow up here if she has questions."); }
+}
+function visibleSupportTickets(){
+  const all = (state.supportTickets||[]).slice().sort((a,b)=> b.createdAt < a.createdAt ? -1 : 1);
+  if(state.role==="admin") return all;
+  const me = currentSupportAuthor().id;
+  return all.filter(t=>t.authorId===me);
+}
+function renderTechSupportTab(){
+  const tickets = visibleSupportTickets();
+  const openCount = tickets.filter(t=>t.status!=="Resolved").length;
+  return `
+    <div class="flex-between">
+      <h2>Tech Support</h2>
+      <button onclick="openNewSupportTicketModal()">+ New request</button>
+    </div>
+    <div class="small" style="margin-bottom:12px;">${state.role==="admin" ? "Every bug report and feature idea the team has submitted." : "Bugs, errors, or feature ideas — submit one any time, and check back here for updates."} ${openCount ? openCount + " still open." : "Nothing open right now."}</div>
+    <div class="card">
+      ${tickets.length===0 ? `<div class="small">Nothing submitted yet.</div>` : tickets.map(renderSupportTicketRow).join("")}
+    </div>`;
+}
+function renderSupportTicketRow(t){
+  const statusColor = t.status==="Resolved" ? "var(--ok)" : t.status==="In Progress" ? "var(--warn)" : "#8a7a72";
+  return `
+    <div class="list-item" style="cursor:pointer;" onclick="openSupportTicketDetail('${t.id}')">
+      <div>
+        <span class="badge">${t.kind==='feature'?'Feature idea':'Bug'}</span>
+        <strong>${escHtml(t.title)}</strong>
+        <div class="small">${t.authorName} &middot; ${new Date(t.createdAt).toLocaleDateString()}</div>
+      </div>
+      <span class="small" style="color:${statusColor};font-weight:600;">${t.status}</span>
+    </div>`;
+}
+function openSupportTicketDetail(id){
+  state.modal = { type:"supportTicketDetail", ticketId:id };
+  render();
+}
+function updateSupportTicketStatus(id, status){
+  upsert("supportTickets", id, { status });
+}
+function addSupportTicketComment(id){
+  const text = ((state.commentDrafts&&state.commentDrafts[id])||"").trim();
+  if(!text) return;
+  const ticket = (state.supportTickets||[]).find(t=>t.id===id);
+  if(!ticket) return;
+  const author = currentSupportAuthor();
+  const comments = [...(ticket.comments||[]), { id:newId("comment"), authorName:author.name, text, date:new Date().toISOString() }];
+  upsert("supportTickets", id, { comments });
+  if(state.commentDrafts) delete state.commentDrafts[id];
+  render();
+}
+function renderSupportTicketDetailModal(id){
+  const t = (state.supportTickets||[]).find(x=>x.id===id);
+  if(!t) return `<div class="modal"><div class="small">This request no longer exists.</div><div style="margin-top:14px;text-align:right;"><button class="secondary" onclick="closeModal()">Close</button></div></div>`;
+  return `
+    <div class="modal">
+      <div class="flex-between">
+        <h3>${escHtml(t.title)}</h3>
+        <span class="badge">${t.kind==='feature'?'Feature idea':'Bug'}</span>
+      </div>
+      <div class="small" style="margin-bottom:10px;">Submitted by ${t.authorName} on ${new Date(t.createdAt).toLocaleString()}</div>
+      ${t.description ? `<p>${escHtml(t.description)}</p>` : ""}
+      ${t.screenshot ? `<img src="${t.screenshot}" style="max-width:100%;max-height:280px;border-radius:8px;margin:8px 0;display:block;cursor:pointer;" onclick="openImageViewer('${t.screenshot}')">` : ""}
+      ${state.role==="admin" ? `
+      <div style="margin-top:10px;"><label class="small">Status</label>
+        <select onchange="updateSupportTicketStatus('${t.id}',this.value)">
+          ${SUPPORT_TICKET_STATUSES.map(s=>`<option ${t.status===s?'selected':''}>${s}</option>`).join("")}
+        </select>
+      </div>` : `<div class="small" style="margin-top:10px;">Status: <strong>${t.status}</strong></div>`}
+      ${renderSupportTicketDiscussion(t)}
+      <div style="margin-top:14px;text-align:right;">
+        <button class="secondary" onclick="closeModal()">Close</button>
+      </div>
+    </div>`;
+}
+// A dedicated comment thread instead of reusing renderTaskDiscussion() — that
+// one's "mark as seen" button hardcodes upsert("tasks", ...), which would
+// write a bogus document into the wrong collection if pointed at a support
+// ticket's id. Tickets don't need read receipts anyway.
+function renderSupportTicketDiscussion(t){
+  const comments = t.comments||[];
+  return `
+    <div style="margin-top:14px;">
+      <label class="small">Discussion</label>
+      <div style="max-height:180px;overflow-y:auto;margin:6px 0;">
+        ${comments.length ? comments.map(c=>`
+          <div class="list-item" style="flex-direction:column;align-items:stretch;gap:2px;">
+            <div class="flex-between">
+              <div><strong>${escHtml(c.authorName)}</strong>: ${escHtml(c.text)}</div>
+              <span class="small">${new Date(c.date).toLocaleString()}</span>
+            </div>
+          </div>`).join("") : `<div class="small">No comments yet.</div>`}
+      </div>
+      <div style="display:flex;gap:6px;">
+        <input id="st_new_comment" value="${escHtml((state.commentDrafts&&state.commentDrafts[t.id])||'')}" oninput="(state.commentDrafts=state.commentDrafts||{})['${t.id}']=this.value" placeholder="Add a comment...">
+        <button class="secondary" onclick="addSupportTicketComment('${t.id}')">Post</button>
+      </div>
+    </div>`;
 }
 function renderPausedClientRow(c){
   const daysSince = c.cancelledDate ? Math.round((Date.now()-parseYMD(c.cancelledDate).getTime())/86400000) : null;
@@ -10752,6 +10918,8 @@ function renderModal(){
     : state.modal.type==="cardPurchaseEntry" ? renderCardPurchaseEntryModal()
     : state.modal.type==="newVendorTicket" ? renderNewVendorTicketModal()
     : state.modal.type==="vendorTicketDetail" ? renderVendorTicketDetailModal(state.modal.vendorId, state.modal.ticketId)
+    : state.modal.type==="newSupportTicket" ? renderNewSupportTicketModal()
+    : state.modal.type==="supportTicketDetail" ? renderSupportTicketDetailModal(state.modal.ticketId)
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
