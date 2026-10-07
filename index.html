@@ -985,8 +985,17 @@ function entryDurationHours(entry){
   const end = entry.clockOut ? new Date(entry.clockOut) : new Date();
   return (end - start) / 3600000;
 }
+// Reset once per render() call, not once per call here — see the comment at
+// the top of render() for why.
+let _taskHoursCache = null;
 function hoursForTask(taskId){
-  return state.timeEntries.filter(e=>e.taskId===taskId).reduce((s,e)=>s+entryDurationHours(e),0);
+  if(!_taskHoursCache){
+    _taskHoursCache = new Map();
+    state.timeEntries.forEach(e=>{
+      _taskHoursCache.set(e.taskId, (_taskHoursCache.get(e.taskId)||0) + entryDurationHours(e));
+    });
+  }
+  return _taskHoursCache.get(taskId) || 0;
 }
 function isStale(entry){
   return !entry.clockOut && entryDurationHours(entry) > 8;
@@ -1213,14 +1222,26 @@ function hoursInPeriod(entries, period){
 // clock-in time, so if a task's client ever gets reassigned afterward, old
 // entries silently keep the stale client forever and drop out of the real
 // client's totals even though the task now correctly belongs to them.
-function entriesForClient(clientId){
-  const taskIds = new Set(state.tasks.filter(t=>t.clientId===clientId).map(t=>t.id));
-  const existingTaskIds = new Set(state.tasks.map(t=>t.id));
-  return state.timeEntries.filter(e=>{
-    if(taskIds.has(e.taskId)) return true; // task currently belongs to this client
-    if(e.taskId && existingTaskIds.has(e.taskId)) return false; // task exists but belongs to someone else now — don't double-count it there too
-    return e.clientId===clientId; // task was deleted (or entry never had one) — fall back to what was recorded at the time
+// Reset once per render() call, not once per call here — see the comment at
+// the top of render() for why. Builds the same resolved-client grouping the
+// old per-call filter did (current task's client wins; a deleted/missing
+// task falls back to the entry's own recorded clientId) in one O(tasks +
+// timeEntries) pass instead of redoing a full timeEntries scan per client.
+let _entriesByClientCache = null;
+function entriesByClientMap(){
+  if(_entriesByClientCache) return _entriesByClientCache;
+  const taskClientMap = new Map(state.tasks.map(t=>[t.id, t.clientId]));
+  const map = new Map();
+  state.timeEntries.forEach(e=>{
+    const resolvedClientId = (e.taskId && taskClientMap.has(e.taskId)) ? taskClientMap.get(e.taskId) : e.clientId;
+    if(!map.has(resolvedClientId)) map.set(resolvedClientId, []);
+    map.get(resolvedClientId).push(e);
   });
+  _entriesByClientCache = map;
+  return map;
+}
+function entriesForClient(clientId){
+  return entriesByClientMap().get(clientId) || [];
 }
 function hoursForClientInPeriod(clientId, period){
   return hoursInPeriod(entriesForClient(clientId), period);
@@ -2599,6 +2620,17 @@ function logout(){
 const app = document.getElementById("app");
 
 function render(){
+  // hoursForTask()/entriesForClient() used to re-scan the entire timeEntries
+  // array from zero on every single call — called once per task row and once
+  // per client row respectively, so one render of a big Task Board or client
+  // list did (rows × timeEntries) work instead of (rows + timeEntries). Only
+  // gets worse as months of real use pile up more time entries. Clearing
+  // these two caches here (once per render) instead of once per call keeps
+  // them exactly as fresh as before — including the 60s live-timer tick that
+  // needs an in-progress clock-in's hours to keep ticking up — while doing
+  // the expensive scan only once per render instead of once per row.
+  _taskHoursCache = null;
+  _entriesByClientCache = null;
   // A full re-render happens constantly in the background (the 60s live-timer
   // tick, any Firestore snapshot from anyone's activity) and always rebuilds
   // the whole page from `state`. Since a text field's typed characters don't
@@ -3812,6 +3844,19 @@ async function disconnectQuickBooksAccount(){
     alert("Couldn't disconnect — check the console for details.");
   }
 }
+// Races any promise against a plain timeout — a Cloud Function call that
+// hangs (cold start, flaky connection) rather than rejecting used to leave
+// each QuickBooks fetch's in-flight flag stuck true forever, since it's
+// only ever cleared in .then()/.catch(). Rejecting here flows into the same
+// .catch() already in place below, so the flag always gets cleared and the
+// next scheduled fetch can actually run instead of silently never refreshing
+// again for the rest of the session.
+function withTimeout(promise, ms, label){
+  return Promise.race([
+    promise,
+    new Promise((_, reject)=>setTimeout(()=>reject(new Error((label||"Request") + " timed out")), ms))
+  ]);
+}
 // Throttled to once per 5 minutes so re-renders (the 60s live-timer tick,
 // any background Firestore update) don't hammer the function on every
 // paint — this tab's numbers don't need to be that fresh.
@@ -3821,7 +3866,7 @@ function fetchQuickBooksSummaryIfStale(){
   state.qbFetchInFlight = true;
   const weekStart = scorecardWeekStart();
   const today = new Date().toISOString().slice(0,10);
-  fns.httpsCallable("getQuickBooksSummary")({ startDate: weekStart, endDate: today })
+  withTimeout(fns.httpsCallable("getQuickBooksSummary")({ startDate: weekStart, endDate: today }), 20000, "QuickBooks summary fetch")
     .then(({data})=>{
       state.qbConnected = !!data.connected;
       state.qbReauthRequired = !!data.reauthRequired;
@@ -3862,7 +3907,7 @@ function fetchQuickBooksMonthSummaryIfStale(){
   state.qbMonthFetchInFlight = true;
   const { start } = monthToDateRange();
   const today = new Date().toISOString().slice(0,10);
-  fns.httpsCallable("getQuickBooksSummary")({ startDate: start.toISOString().slice(0,10), endDate: today })
+  withTimeout(fns.httpsCallable("getQuickBooksSummary")({ startDate: start.toISOString().slice(0,10), endDate: today }), 20000, "QuickBooks month summary fetch")
     .then(({data})=>{
       state.qbMonthSummary = data.connected ? data : null;
       state.qbMonthLastFetchAt = Date.now();
@@ -3898,10 +3943,10 @@ function fetchQuickBooksLastMonthSummaryIfStale(){
   if(Date.now() - (state.qbLastMonthFetchAt||0) < 5*60*1000) return;
   state.qbLastMonthFetchInFlight = true;
   const period = previousCalendarMonthRange();
-  fns.httpsCallable("getQuickBooksSummary")({
+  withTimeout(fns.httpsCallable("getQuickBooksSummary")({
     startDate: period.start.toISOString().slice(0,10),
     endDate: new Date(period.end.getTime()-1).toISOString().slice(0,10)
-  })
+  }), 20000, "QuickBooks last-month summary fetch")
     .then(({data})=>{
       state.qbLastMonthSummary = data.connected ? { ...data, period } : null;
       state.qbLastMonthFetchAt = Date.now();
@@ -4515,8 +4560,16 @@ function updateVendorTicketFields(vendorId, ticketId, patch){
 function updateVendorTicketField(vendorId, ticketId, field, value){
   updateVendorTicketFields(vendorId, ticketId, { [field]: value });
 }
-function submitVendorTicketCost(vendorId, ticketId, amount){
+function submitVendorTicketCost(vendorId, ticketId){
+  // renderVendorPortal() isn't a modal, so it's unprotected from the
+  // `if(!state.modal) render())` guard — any write to the vendors collection
+  // by any vendor forces a re-render here. Reading the amount from a bound
+  // draft (instead of only at click-time via getElementById) means a vendor
+  // typing their cost doesn't lose it if that happens first.
+  const amount = parseFloat((state.vendorCostDrafts&&state.vendorCostDrafts[ticketId])||0) || 0;
   updateVendorTicketFields(vendorId, ticketId, { vendorCost: amount, vendorCostSubmittedAt: new Date().toISOString() });
+  if(state.vendorCostDrafts) delete state.vendorCostDrafts[ticketId];
+  render();
 }
 function setVendorTicketClientCharge(vendorId, ticketId, amount){
   updateVendorTicketFields(vendorId, ticketId, { clientChargeAmount: amount, clientChargeSetAt: new Date().toISOString() });
@@ -4814,8 +4867,8 @@ function renderVendorPortalTicket(vendor, ticket){
           <div class="small" style="margin-top:4px;">Submitted: $${ticket.vendorCost.toFixed(2)} on ${new Date(ticket.vendorCostSubmittedAt).toLocaleDateString()}</div>
         ` : `
           <div class="row" style="margin-top:4px;">
-            <div><input id="vp_cost_${ticket.id}" type="number" step="1" placeholder="e.g. 85" style="max-width:120px;"></div>
-            <button class="secondary" onclick="submitVendorTicketCost('${vendor.id}','${ticket.id}',parseFloat(document.getElementById('vp_cost_${ticket.id}').value)||0)">Submit</button>
+            <div><input id="vp_cost_${ticket.id}" type="number" step="1" value="${escHtml((state.vendorCostDrafts&&state.vendorCostDrafts[ticket.id])||'')}" oninput="(state.vendorCostDrafts=state.vendorCostDrafts||{})['${ticket.id}']=this.value" placeholder="e.g. 85" style="max-width:120px;"></div>
+            <button class="secondary" onclick="submitVendorTicketCost('${vendor.id}','${ticket.id}')">Submit</button>
           </div>
         `}
       </div>
@@ -5946,8 +5999,8 @@ function renderClientProfile(client){
         </div>
       `).join("") || `<div class="small">None added yet.</div>`}
       <div style="display:flex;gap:6px;margin-top:6px;">
-        <input id="fam_name_${client.id}" placeholder="Name" style="max-width:180px;">
-        <input id="fam_age_${client.id}" placeholder="Age" style="max-width:80px;">
+        <input id="fam_name_${client.id}" value="${escHtml(clientDraft(client.id).famName||'')}" oninput="clientDraft('${client.id}').famName=this.value" placeholder="Name" style="max-width:180px;">
+        <input id="fam_age_${client.id}" value="${escHtml(clientDraft(client.id).famAge||'')}" oninput="clientDraft('${client.id}').famAge=this.value" placeholder="Age" style="max-width:80px;">
         <button class="secondary" onclick="addFamilyMember('${client.id}')">Add</button>
       </div>
     </div>
@@ -6006,8 +6059,8 @@ function renderClientProfile(client){
       </div>
     `).join("") || `<div class="small">None recorded yet.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;">
-      <input id="sd_label_${client.id}" placeholder="e.g. Mom's birthday, Anniversary">
-      <input id="sd_date_${client.id}" type="date" style="max-width:170px;">
+      <input id="sd_label_${client.id}" value="${escHtml(clientDraft(client.id).sdLabel||'')}" oninput="clientDraft('${client.id}').sdLabel=this.value" placeholder="e.g. Mom's birthday, Anniversary">
+      <input id="sd_date_${client.id}" type="date" value="${clientDraft(client.id).sdDate||''}" onchange="clientDraft('${client.id}').sdDate=this.value" style="max-width:170px;">
       <button class="secondary" onclick="addSpecialDate('${client.id}')">Add</button>
     </div>
   `;
@@ -6060,10 +6113,10 @@ function renderClientProfile(client){
       </div>`;
     }).join("") || `<div class="small">No vendors on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-      <input id="v_service_${client.id}" placeholder="Service" style="max-width:150px;">
-      <input id="v_company_${client.id}" placeholder="Company" style="max-width:150px;">
-      <input id="v_contact_${client.id}" placeholder="Contact (name, phone, or email)" style="max-width:180px;">
-      <input id="v_schedule_${client.id}" placeholder="Schedule — e.g. Every Monday @ 9am" style="min-width:200px;">
+      <input id="v_service_${client.id}" value="${escHtml(clientDraft(client.id).vService||'')}" oninput="clientDraft('${client.id}').vService=this.value" placeholder="Service" style="max-width:150px;">
+      <input id="v_company_${client.id}" value="${escHtml(clientDraft(client.id).vCompany||'')}" oninput="clientDraft('${client.id}').vCompany=this.value" placeholder="Company" style="max-width:150px;">
+      <input id="v_contact_${client.id}" value="${escHtml(clientDraft(client.id).vContact||'')}" oninput="clientDraft('${client.id}').vContact=this.value" placeholder="Contact (name, phone, or email)" style="max-width:180px;">
+      <input id="v_schedule_${client.id}" value="${escHtml(clientDraft(client.id).vSchedule||'')}" oninput="clientDraft('${client.id}').vSchedule=this.value" placeholder="Schedule — e.g. Every Monday @ 9am" style="min-width:200px;">
       <button class="secondary" onclick="addVendor('${client.id}')">Add</button>
     </div>
   `;
@@ -6077,8 +6130,8 @@ function renderClientProfile(client){
         <button class="danger" onclick="removeInspection('${client.id}',${i})">Remove</button>
       </div>`).join("") || `<div class="small">Nothing scheduled.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;">
-      <input id="ins_name_${client.id}" placeholder="e.g. Pest control, HVAC filter, Gutters, Pressure wash">
-      <input id="ins_due_${client.id}" type="date">
+      <input id="ins_name_${client.id}" value="${escHtml(clientDraft(client.id).insName||'')}" oninput="clientDraft('${client.id}').insName=this.value" placeholder="e.g. Pest control, HVAC filter, Gutters, Pressure wash">
+      <input id="ins_due_${client.id}" type="date" value="${clientDraft(client.id).insDue||''}" onchange="clientDraft('${client.id}').insDue=this.value">
       <button class="secondary" onclick="addInspection('${client.id}')">Add</button>
     </div>
   `;
@@ -6093,8 +6146,8 @@ function renderClientProfile(client){
         <button class="danger" onclick="removeImportantInfo('${client.id}',${i})">Remove</button>
       </div>`).join("") || `<div class="small">Nothing on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-      <input id="info_label_${client.id}" placeholder="Label (e.g. Card Number, Driver's License #)" style="max-width:220px;">
-      <input id="info_value_${client.id}" placeholder="Value">
+      <input id="info_label_${client.id}" value="${escHtml(clientDraft(client.id).infoLabel||'')}" oninput="clientDraft('${client.id}').infoLabel=this.value" placeholder="Label (e.g. Card Number, Driver's License #)" style="max-width:220px;">
+      <input id="info_value_${client.id}" value="${escHtml(clientDraft(client.id).infoValue||'')}" oninput="clientDraft('${client.id}').infoValue=this.value" placeholder="Value">
       <button class="secondary" onclick="addImportantInfo('${client.id}')">Add</button>
     </div>
     <label class="small" style="display:block;margin-top:16px;">Website logins</label>
@@ -6112,17 +6165,17 @@ function renderClientProfile(client){
       </div>`;
     }).join("") || `<div class="small">None on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
-      <input id="login_site_${client.id}" placeholder="Site / service" style="max-width:150px;">
-      <input id="login_user_${client.id}" placeholder="Username / email" style="max-width:170px;">
-      <input id="login_pass_${client.id}" placeholder="Password" style="max-width:150px;">
-      <input id="login_notes_${client.id}" placeholder="Notes (optional)" style="max-width:170px;">
+      <input id="login_site_${client.id}" value="${escHtml(clientDraft(client.id).loginSite||'')}" oninput="clientDraft('${client.id}').loginSite=this.value" placeholder="Site / service" style="max-width:150px;">
+      <input id="login_user_${client.id}" value="${escHtml(clientDraft(client.id).loginUser||'')}" oninput="clientDraft('${client.id}').loginUser=this.value" placeholder="Username / email" style="max-width:170px;">
+      <input id="login_pass_${client.id}" value="${escHtml(clientDraft(client.id).loginPass||'')}" oninput="clientDraft('${client.id}').loginPass=this.value" placeholder="Password" style="max-width:150px;">
+      <input id="login_notes_${client.id}" value="${escHtml(clientDraft(client.id).loginNotes||'')}" oninput="clientDraft('${client.id}').loginNotes=this.value" placeholder="Notes (optional)" style="max-width:170px;">
       <button class="secondary" onclick="addLogin('${client.id}')">Add</button>
     </div>
   `;
 
   const notesBody = `
     <div style="margin-bottom:10px;">
-      <textarea id="newNoteText" placeholder="Add a note... press Enter between separate points to show them as bullets"></textarea>
+      <textarea id="newNoteText" oninput="clientDraft('${client.id}').newNote=this.value" placeholder="Add a note... press Enter between separate points to show them as bullets">${escHtml(clientDraft(client.id).newNote||'')}</textarea>
       <button style="margin-top:6px;" onclick="addClientNote('${client.id}')">Add note</button>
     </div>
     ${indexedNotes.map(({n,i})=>{
@@ -6536,16 +6589,30 @@ function updatePriority(clientId, index, value){
   const profile = { ...(client.profile||{}), topPriorities };
   upsert("clients", clientId, { profile });
 }
+// The client profile page isn't a modal, so it's never protected by the
+// `if(!state.modal) render())` guard around the clients subscription — ANY
+// client write anywhere, by anyone, forces a full re-render of whatever
+// profile page happens to be open. Every "add new X" box below used to be a
+// bare input read only via getElementById at its own Add button's click, so
+// typing into one while someone else saved an unrelated field on this (or
+// any) client would silently wipe it before Add was ever clicked. Each field
+// now echoes a small per-client draft that survives re-renders, same pattern
+// used for task subtasks/comments, cleared once its own Add actually runs.
+function clientDraft(clientId){
+  state.clientDrafts = state.clientDrafts || {};
+  return state.clientDrafts[clientId] || (state.clientDrafts[clientId] = {});
+}
 function addFamilyMember(clientId){
-  const nameEl = document.getElementById("fam_name_"+clientId);
-  const ageEl = document.getElementById("fam_age_"+clientId);
-  const name = nameEl.value.trim();
+  const d = clientDraft(clientId);
+  const name = (d.famName||"").trim();
   if(!name) return;
-  const age = ageEl.value.trim();
+  const age = (d.famAge||"").trim();
   const client = state.clients.find(c=>c.id===clientId);
   const familyMembers = [...((client.profile&&client.profile.familyMembers)||[]), { name, age }];
   const profile = { ...(client.profile||{}), familyMembers };
   upsert("clients", clientId, { profile });
+  d.famName = ""; d.famAge = "";
+  render();
 }
 function removeFamilyMember(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
@@ -6554,14 +6621,15 @@ function removeFamilyMember(clientId, index){
   upsert("clients", clientId, { profile });
 }
 function addSpecialDate(clientId){
-  const labelEl = document.getElementById("sd_label_"+clientId);
-  const dateEl = document.getElementById("sd_date_"+clientId);
-  const label = labelEl.value.trim();
-  const date = dateEl.value;
+  const d = clientDraft(clientId);
+  const label = (d.sdLabel||"").trim();
+  const date = d.sdDate||"";
   if(!label || !date){ alert("Please enter both a label and a date."); return; }
   const client = state.clients.find(c=>c.id===clientId);
   const specialDates = [...(client.specialDates||[]), { label, date }];
   upsert("clients", clientId, { specialDates });
+  d.sdLabel = ""; d.sdDate = "";
+  render();
 }
 function removeSpecialDate(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
@@ -6767,12 +6835,15 @@ function renderNoteBullets(text){
   return `<ul style="margin:4px 0 0;padding-left:18px;">${lines.map(l=>`<li>${l}</li>`).join("")}</ul>`;
 }
 function addImportantInfo(clientId){
-  const label = document.getElementById("info_label_"+clientId).value.trim();
-  const value = document.getElementById("info_value_"+clientId).value.trim();
+  const d = clientDraft(clientId);
+  const label = (d.infoLabel||"").trim();
+  const value = (d.infoValue||"").trim();
   if(!label || !value){ alert("Please enter both a label and a value."); return; }
   const client = state.clients.find(c=>c.id===clientId);
   const importantInfo = [...(client.importantInfo||[]), { label, value }];
   upsert("clients", clientId, { importantInfo });
+  d.infoLabel = ""; d.infoValue = "";
+  render();
 }
 function removeImportantInfo(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
@@ -6785,14 +6856,17 @@ function updateImportantInfoField(clientId, index, field, value){
   upsert("clients", clientId, { importantInfo });
 }
 function addLogin(clientId){
-  const site = document.getElementById("login_site_"+clientId).value.trim();
-  const username = document.getElementById("login_user_"+clientId).value.trim();
-  const password = document.getElementById("login_pass_"+clientId).value;
-  const notes = document.getElementById("login_notes_"+clientId).value.trim();
+  const d = clientDraft(clientId);
+  const site = (d.loginSite||"").trim();
+  const username = (d.loginUser||"").trim();
+  const password = d.loginPass||"";
+  const notes = (d.loginNotes||"").trim();
   if(!site){ alert("Please enter a site or service name."); return; }
   const client = state.clients.find(c=>c.id===clientId);
   const logins = [...(client.logins||[]), { site, username, password, notes }];
   upsert("clients", clientId, { logins });
+  d.loginSite = ""; d.loginUser = ""; d.loginPass = ""; d.loginNotes = "";
+  render();
 }
 function removeLogin(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
@@ -6812,15 +6886,18 @@ function toggleRevealLogin(clientId, index){
   render();
 }
 function addVendor(clientId){
-  const service = document.getElementById("v_service_"+clientId).value.trim();
-  const company = document.getElementById("v_company_"+clientId).value.trim();
-  const contact = document.getElementById("v_contact_"+clientId).value.trim();
-  const schedule = document.getElementById("v_schedule_"+clientId).value.trim();
+  const d = clientDraft(clientId);
+  const service = (d.vService||"").trim();
+  const company = (d.vCompany||"").trim();
+  const contact = (d.vContact||"").trim();
+  const schedule = (d.vSchedule||"").trim();
   if(!service && !company){ alert("Please enter at least a service or company name."); return; }
   const client = state.clients.find(c=>c.id===clientId);
   const vendor = { service, company, contact, schedule };
   const vendors = [...(client.vendors||[]), vendor];
   upsert("clients", clientId, { vendors });
+  d.vService = ""; d.vCompany = ""; d.vContact = ""; d.vSchedule = "";
+  render();
 }
 function removeVendor(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
@@ -6833,12 +6910,15 @@ function updateVendorField(clientId, index, field, value){
   upsert("clients", clientId, { vendors });
 }
 function addInspection(clientId){
-  const name = document.getElementById("ins_name_"+clientId).value.trim();
-  const nextDue = document.getElementById("ins_due_"+clientId).value;
+  const d = clientDraft(clientId);
+  const name = (d.insName||"").trim();
+  const nextDue = d.insDue||"";
   if(!name || !nextDue){ alert("Please enter both a name and a due date."); return; }
   const client = state.clients.find(c=>c.id===clientId);
   const inspections = [...(client.inspections||[]), { name, nextDue }];
   upsert("clients", clientId, { inspections });
+  d.insName = ""; d.insDue = "";
+  render();
 }
 function removeInspection(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
@@ -7420,11 +7500,14 @@ function confirmReassign(clientId){
   closeModal();
 }
 function addClientNote(clientId){
-  const text = document.getElementById("newNoteText").value.trim();
+  const d = clientDraft(clientId);
+  const text = (d.newNote||"").trim();
   if(!text) return;
   const client = state.clients.find(c=>c.id===clientId);
   const notes = client.notes || [];
   upsert("clients", clientId, { notes: [...notes, { id:newId("note"), text, date:new Date().toISOString(), source:"manual" }] });
+  d.newNote = "";
+  render();
 }
 function startEditNote(clientId, index){
   state.editingNote = { clientId, index };
@@ -7517,7 +7600,7 @@ function renderKanban(){
     <div class="row" style="margin-bottom:14px;">
       <div>
         <label class="small">Search</label>
-        <input id="kanbanSearch" type="text" style="width:200px;" placeholder="Title or #number..." value="${(f.search||'').replace(/"/g,'&quot;')}" oninput="setKanbanFilter('search',this.value)">
+        <input id="kanbanSearch" type="text" style="width:200px;" placeholder="Title or #number..." value="${(f.search||'').replace(/"/g,'&quot;')}" oninput="setKanbanSearchDebounced(this.value)">
       </div>
       <div>
         <label class="small">Sort</label>
@@ -7575,6 +7658,16 @@ function renderKanban(){
 function setKanbanFilter(field, value){
   state.kanbanFilter[field] = value;
   render();
+}
+// The search box re-renders every column of the whole Task Board on every
+// keystroke — fine with a handful of tasks, visibly laggy with months of
+// accumulated ones. Debouncing means typing itself never stalls (the browser
+// shows what you type regardless), only the actual re-filter waits for a
+// short pause, same as any typeahead search.
+let _kanbanSearchDebounceTimer = null;
+function setKanbanSearchDebounced(value){
+  clearTimeout(_kanbanSearchDebounceTimer);
+  _kanbanSearchDebounceTimer = setTimeout(()=>{ setKanbanFilter('search', value); }, 200);
 }
 function renderKanbanCard(t){
   const client = state.clients.find(c=>c.id===t.clientId);
@@ -9451,7 +9544,7 @@ async function addTaskAttachment(taskId){
   const input = document.getElementById("tf_attachment");
   const file = input.files && input.files[0];
   if(!file) return;
-  const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
+  const task = (state.modal && state.modal.task && state.modal.task.id===taskId) ? state.modal.task : state.tasks.find(t=>t.id===taskId);
   if(!task) return;
   let dataUrl;
   try{
@@ -9483,7 +9576,7 @@ async function addTaskAttachment(taskId){
   render();
 }
 function removeTaskAttachment(taskId, attachmentId){
-  const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
+  const task = (state.modal && state.modal.task && state.modal.task.id===taskId) ? state.modal.task : state.tasks.find(t=>t.id===taskId);
   if(!task) return;
   const attachments = (task.attachments||[]).filter(a=>a.id!==attachmentId);
   task.attachments = attachments;
@@ -9779,25 +9872,44 @@ function renderImageViewerModal(dataUrl){
 // that's the #586-on-two-different-tasks bug. A transaction serializes
 // this: Firestore retries one side automatically if they race, so no two
 // calls can ever walk away with the same value.
+function bestEffortTaskNumber(){
+  return state.tasks.reduce((max,t)=>Math.max(max, t.taskNumber||0), 0) + 1;
+}
 async function allocateTaskNumber(){
   if(!db){
     // Local-only/demo mode has no shared counter to coordinate through —
     // fall back to the old best-effort approach, which is fine since
     // there's only one browser involved.
-    return state.tasks.reduce((max,t)=>Math.max(max, t.taskNumber||0), 0) + 1;
+    return bestEffortTaskNumber();
   }
   const counterRef = col("settings").doc("taskCounter");
-  return db.runTransaction(async (tx) => {
-    const snap = await tx.get(counterRef);
-    // First run ever (counter doc doesn't exist yet): start from whatever
-    // the highest existing task number already is, so it doesn't restart
-    // at 1 and collide with real tasks already numbered well past that.
-    const current = snap.exists ? (snap.data().value || 0)
-      : state.tasks.reduce((max,t)=>Math.max(max, t.taskNumber||0), 0);
-    const next = current + 1;
-    tx.set(counterRef, { value: next }, { merge: true });
-    return next;
-  });
+  // A hung transaction (not an error — a connection that just never answers)
+  // used to leave every caller stuck forever: saveTask()'s Save button never
+  // completes, clockInAdminWork() had no error handling at all, and the
+  // client portal's "Submitting..." button stayed disabled permanently with
+  // no way to retry. Racing against a timeout and falling back to the same
+  // best-effort local numbering the offline branch already uses means a task
+  // ALWAYS gets saved — worst case, two numbers collide on an exceedingly
+  // rare timeout, which is a cosmetic display number, not a real identifier
+  // (tasks are keyed by their own doc id, not this).
+  try {
+    return await Promise.race([
+      db.runTransaction(async (tx) => {
+        const snap = await tx.get(counterRef);
+        // First run ever (counter doc doesn't exist yet): start from whatever
+        // the highest existing task number already is, so it doesn't restart
+        // at 1 and collide with real tasks already numbered well past that.
+        const current = snap.exists ? (snap.data().value || 0) : bestEffortTaskNumber() - 1;
+        const next = current + 1;
+        tx.set(counterRef, { value: next }, { merge: true });
+        return next;
+      }),
+      new Promise((_, reject)=>setTimeout(()=>reject(new Error("Task numbering timed out")), 10000))
+    ]);
+  } catch(err){
+    console.warn("Task numbering transaction failed or timed out, using best-effort local numbering:", err);
+    return bestEffortTaskNumber();
+  }
 }
 // Task numbers are no longer assigned here, at draft-creation time — a
 // "New task" modal can sit open for minutes while someone fills it in,
@@ -10425,7 +10537,7 @@ function renderManualTimeEntryModal(){
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Task</label>
-          <input id="mte_task" list="mte_task_list" placeholder="Search by # or title...">
+          <input id="mte_task" list="mte_task_list" value="${(state.modal.taskSearch||'').replace(/"/g,'&quot;')}" oninput="state.modal.taskSearch=this.value" placeholder="Search by # or title...">
           <datalist id="mte_task_list">${taskSearchOptions(state.tasks)}</datalist>
         </div>
       </div>
