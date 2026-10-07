@@ -439,14 +439,34 @@ function col(name){
   return db.collection(name);
 }
 
-async function ensureSettings(){
-  const ref = col("settings").doc("access");
-  const snap = await ref.get();
-  if(!snap.exists){
-    await ref.set(SEED_SETTINGS);
-    return SEED_SETTINGS;
-  }
-  return snap.data();
+// Settings used to load via a single one-shot ensureSettings().get() with no
+// retry at all — on a weak connection that one request could hang or fail
+// and state.settingsReady would just never become true, leaving admin/team
+// login stuck on "still connecting" forever (nothing was ever going to
+// retry it). A live subscription gets the same auto-retry-with-backoff
+// resilience subscribe() below already has for every other collection.
+let settingsDocBootstrapped = false;
+function subscribeSettingsDoc(onChange, attempt){
+  attempt = attempt || 0;
+  return col("settings").doc("access").onSnapshot(snap=>{
+    if(state.firebaseError){ state.firebaseError = null; }
+    if(snap.exists){
+      onChange(snap.data());
+    } else if(!settingsDocBootstrapped){
+      // First-ever boot of a fresh project only — create the doc once, then
+      // let this same listener pick up the write it just made.
+      settingsDocBootstrapped = true;
+      col("settings").doc("access").set(SEED_SETTINGS).catch(err=>console.warn("Could not create default settings doc:", err));
+      onChange(SEED_SETTINGS);
+    }
+  }, err=>{
+    console.warn("Firestore subscription failed for 'settings':", err);
+    state.firebaseError = err.message;
+    render();
+    if(err.code === "permission-denied") return;
+    const delay = Math.min(5000 * Math.pow(2, attempt), 120000);
+    setTimeout(()=>subscribeSettingsDoc(onChange, attempt+1), delay);
+  });
 }
 
 function subscribe(name, onChange, attempt){
@@ -632,6 +652,11 @@ async function boot(){
   // couldn't load at all).
   render();
   state.bootStartedAt = Date.now();
+  // One-shot nudge so the login screen's message upgrades from "still
+  // connecting" to the "this is a real connection problem" wording right
+  // around the 12s mark in notReadyMessage() below, even though nothing else
+  // would otherwise trigger a re-render while still waiting on first data.
+  setTimeout(()=>{ if(!state.modal && state.view==="login") render(); }, 12000);
 
   if(!FIREBASE_AVAILABLE || !FIREBASE_CONFIGURED){
     console.warn("Running with local seed data only — Firebase is either unavailable or still using placeholder config. Nothing will persist.");
@@ -653,7 +678,7 @@ async function boot(){
     // connection (reported: a client stuck on "still connecting" with a
     // single signal bar), signInAnonymously() can hang indefinitely rather
     // than rejecting quickly — and since this sat behind a plain `await`,
-    // NOTHING after it (ensureSettings, the clients subscription) ever ran.
+    // NOTHING after it (settings, the clients subscription) ever ran.
     // "Try again in a couple seconds" was actively wrong advice in that
     // case: no amount of waiting fixes a call that never resolves. Now,
     // after the timeout, boot proceeds to attempt the data loads anyway —
@@ -670,20 +695,17 @@ async function boot(){
     }catch(err){
       console.warn("Anonymous auth sign-in failed or timed out (Anonymous provider may not be enabled yet in Firebase Console, or the connection is too slow/unstable):", err);
     }
-    // Settings and the collection subscriptions below are independent reads
-    // — firing ensureSettings() without awaiting it lets it load IN PARALLEL
-    // with the subscribe() calls instead of one full extra network
-    // round-trip happening first. A client typing their portal code within
-    // the first second or two of the page loading was hitting a still-empty
-    // state.clients and getting "code not recognized" on a perfectly
-    // correct code — this was the main contributor to that delay.
-    ensureSettings().then(s=>{
+    // Settings and the collection subscriptions below are independent reads,
+    // all fired without awaiting each other so they load IN PARALLEL instead
+    // of one full extra network round-trip happening first. A client typing
+    // their portal code within the first second or two of the page loading
+    // was hitting a still-empty state.clients and getting "code not
+    // recognized" on a perfectly correct code — this was the main
+    // contributor to that delay.
+    subscribeSettingsDoc(s=>{
       state.settings = s;
       state.settingsReady = true;
       if(!state.modal) render();
-    }).catch(err=>{
-      console.warn("Could not load settings from Firestore, using local seed data:", err);
-      state.firebaseError = state.firebaseError || err.message;
     });
     // Data still updates in the background even with a modal open (so it's
     // fresh the moment it closes) -- it just skips forcing a re-render while
@@ -2622,6 +2644,11 @@ function render(){
 window.addEventListener('resize', ()=>{ if(typeof resizeClientSigCanvas==='function') resizeClientSigCanvas(); });
 
 function renderLogin(){
+  // Buttons stay disabled (instead of letting someone click through to a
+  // "still connecting" alert) until the data a login actually checks against
+  // has arrived — login attempted before data existed was the main cause of
+  // a right code getting rejected.
+  const loginReady = !FIREBASE_AVAILABLE || !FIREBASE_CONFIGURED || (state.settingsReady && state.clientsReady && state.vendorsReady);
   app.innerHTML = `
     <div class="center-screen">
       <div class="login-box">
@@ -2642,11 +2669,12 @@ function renderLogin(){
             Couldn't reach Firestore: ${state.firebaseError}
           </div>` : ""}
         <div class="role-btns">
-          <button onclick="promptLogin('admin')">Admin</button>
-          <button class="secondary" onclick="promptLogin('team')">Team Member</button>
-          <button class="secondary" onclick="promptLogin('client')">Client Portal</button>
-          <button class="secondary" onclick="promptLogin('vendor')">Vendor Portal</button>
+          <button ${loginReady?'':'disabled'} onclick="promptLogin('admin')">Admin</button>
+          <button class="secondary" ${loginReady?'':'disabled'} onclick="promptLogin('team')">Team Member</button>
+          <button class="secondary" ${loginReady?'':'disabled'} onclick="promptLogin('client')">Client Portal</button>
+          <button class="secondary" ${loginReady?'':'disabled'} onclick="promptLogin('vendor')">Vendor Portal</button>
         </div>
+        ${!loginReady ? `<div class="small" style="margin-top:10px;">${notReadyMessage()}</div>` : ""}
       </div>
     </div>`;
 }
@@ -9938,7 +9966,7 @@ function renderTaskEditorModal(task){
             </div>`).join("")}
         </div>
         <div style="display:flex;gap:6px;margin-top:6px;">
-          <input id="tf_new_subtask" placeholder="Add subtask...">
+          <input id="tf_new_subtask" value="${escHtml(task._newSubtaskDraft||'')}" oninput="state.modal.task._newSubtaskDraft=this.value" placeholder="Add subtask...">
           <button class="secondary" onclick="addSubtaskDraft('${task.id}')">Add</button>
         </div>
       </div>
@@ -9998,7 +10026,12 @@ function ackTaskAssignment(taskId, assistantId){
   upsert("tasks", taskId, { assignmentAcks: [...acks, { assistantId, name: assistant?assistant.name:'', ackedAt:new Date().toISOString() }] });
 }
 function toggleSubtask(taskId, i){
-  const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
+  // Prefer the open editor's own draft object over state.tasks — any other
+  // task write anywhere (another assistant's edit, even to a different
+  // task) replaces state.tasks with brand-new objects, which would silently
+  // detach this toggle from whatever saveTask() reads from at Save time and
+  // get reverted the moment Save is clicked.
+  const task = (state.modal && state.modal.task && state.modal.task.id===taskId) ? state.modal.task : state.tasks.find(t=>t.id===taskId);
   if(!task || !(task.subtasks||[])[i]) return;
   const subtasks = (task.subtasks||[]).slice();
   subtasks[i] = { ...subtasks[i], done: !subtasks[i].done };
@@ -10010,11 +10043,11 @@ function toggleSubtask(taskId, i){
   render();
 }
 function addSubtaskDraft(taskId){
-  const input = document.getElementById("tf_new_subtask");
-  const text = input.value.trim();
-  if(!text) return;
   const task = state.modal.task;
+  const text = (task._newSubtaskDraft||"").trim();
+  if(!text) return;
   task.subtasks = (task.subtasks||[]).concat([{ text, done:false }]);
+  task._newSubtaskDraft = "";
   render();
 }
 // Shared by the full task editor and the Content Creator's lightweight
@@ -10042,15 +10075,14 @@ function renderTaskDiscussion(task, inputId, postOnclick){
         }).join("") : `<div class="small">No comments yet.</div>`}
       </div>
       <div style="display:flex;gap:6px;">
-        <input id="${inputId}" placeholder="Add a comment...">
+        <input id="${inputId}" value="${escHtml((state.commentDrafts&&state.commentDrafts[task.id])||'')}" oninput="(state.commentDrafts=state.commentDrafts||{})['${task.id}']=this.value" placeholder="Add a comment...">
         <button class="secondary" onclick="${postOnclick}">Post</button>
       </div>
     </div>
   `;
 }
 function addTaskComment(taskId){
-  const input = document.getElementById("tf_new_comment");
-  const text = input.value.trim();
+  const text = ((state.commentDrafts&&state.commentDrafts[taskId])||"").trim();
   if(!text) return;
   // Posts immediately (unlike subtasks, which wait for the Save button) so a
   // comment can't be lost by closing the modal without saving, and so it
@@ -10060,11 +10092,12 @@ function addTaskComment(taskId){
   const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
   task.discussion = discussion;
   upsert("tasks", taskId, { discussion });
+  if(state.commentDrafts) delete state.commentDrafts[taskId];
   render();
 }
 function markCommentSeen(taskId, commentId){
   if(!state.currentAssistant) return;
-  const task = state.tasks.find(t=>t.id===taskId) || (state.modal && state.modal.task);
+  const task = (state.modal && state.modal.task && state.modal.task.id===taskId) ? state.modal.task : state.tasks.find(t=>t.id===taskId);
   if(!task) return;
   const discussion = (task.discussion||[]).map(d=>{
     if(d.id!==commentId) return d;
@@ -10135,8 +10168,7 @@ function addFlaggedTaskToContentPlan(taskId){
   render();
 }
 function addContentTaskComment(taskId){
-  const input = document.getElementById("ctf_new_comment");
-  const text = input.value.trim();
+  const text = ((state.commentDrafts&&state.commentDrafts[taskId])||"").trim();
   if(!text) return;
   const task = state.tasks.find(t=>t.id===taskId);
   if(!task) return;
@@ -10144,6 +10176,7 @@ function addContentTaskComment(taskId){
   const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
   task.discussion = discussion;
   upsert("tasks", taskId, { discussion });
+  if(state.commentDrafts) delete state.commentDrafts[taskId];
   render();
 }
 function addClientTaskComment(taskId){
