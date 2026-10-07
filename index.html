@@ -6710,6 +6710,7 @@ function renderClientEmailTemplates(client){
     <div class="card">
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
+      <div class="small" style="margin-bottom:8px;color:var(--warn);">Use "Email client" to send it — that's a working link. Don't attach the "Download" file to an email; most email apps show it as raw code instead of the report.</div>
       <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
           <button class="secondary" onclick="downloadClientReportFile('${client.id}','week')">Download</button>
       <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','week')">Email client</button>
@@ -6722,6 +6723,7 @@ function renderClientEmailTemplates(client){
       </div>
       <div class="small" style="margin-bottom:8px;">${periodWindow ? "Ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Set a renewal date on the Membership tab to enable"}</div>
       ${periodWindow ? `
+        <div class="small" style="margin-bottom:8px;color:var(--warn);">Use "Email client" to send it, not the "Download" file — see note on Weekly Recap above.</div>
         <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
           <button class="secondary" onclick="downloadClientReportFile('${client.id}','period')">Download</button>
         <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','period')">Email client</button>
@@ -6732,6 +6734,7 @@ function renderClientEmailTemplates(client){
       <h3>Last Period Recap</h3>
       <div class="small" style="margin-bottom:8px;">${lastPeriodWindow ? formatPeriodRange(lastPeriodWindow) : "Not enough billing history yet"}</div>
       ${lastPeriodWindow ? `
+        <div class="small" style="margin-bottom:8px;color:var(--warn);">Use "Email client" to send it, not the "Download" file — see note on Weekly Recap above.</div>
         <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
           <button class="secondary" onclick="downloadClientReportFile('${client.id}','lastPeriod')">Download</button>
         <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
@@ -8160,9 +8163,11 @@ function renderReportsTab(){
       Each report is built live from current task statuses and hours — "In Progress" reflects tasks in that column right now.
       <strong>Weekly</strong> covers Saturday–Friday completions for the Friday client update; <strong>Period</strong> covers
       everything completed across the client's full current billing cycle, for their end-of-membership-period recap.
-      Download and attach it to an email, or use Email to open a pre-filled message (your email client won't auto-attach the
-      file — attach the download manually). Use Copy message to grab a short cover note for the body — mailto: links can't
-      attach files or send the pretty formatted report, only plain text, so that's the "Email" button's ceiling.
+      <strong>To send it to the client, use "Email" — not "Download."</strong> Email opens a pre-filled message with a working
+      link to the formatted report (Copy message grabs the same cover note without opening your mail app). Download saves a
+      copy of the raw file for your own records only — <strong>never attach that downloaded file directly to an email</strong>,
+      Gmail and most other email apps show the raw code instead of the actual report when you do that (that's the "shows a
+      wall of code" problem — it only happens with the downloaded file, never with the Email button's link).
     </div>
     <div class="card">
       ${rows.length===0 ? `<div class="small">No clients yet.</div>` : rows.map(({client, weekReport, periodReport, lastPeriodReport})=>`
