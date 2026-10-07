@@ -3192,8 +3192,15 @@ function renderAdminDashboard(){
   }).filter(r=>r.assistant.active!==false || r.hrs>0)
     .sort((a,b)=>b.hrs-a.hrs);
 
+  const openSupportTicketCount = (state.supportTickets||[]).filter(t=>t.status!=="Resolved").length;
+
   return `
     <h2>Dashboard</h2>
+
+    ${openSupportTicketCount ? `
+    <div class="alert warn" style="cursor:pointer;margin-bottom:14px;" onclick="setTab('techSupport')">
+      ${openSupportTicketCount} open Tech Support request${openSupportTicketCount===1?'':'s'} from the team — click to view
+    </div>` : ""}
 
     <div class="stat-row">
       <div class="stat-tile">
