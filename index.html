@@ -1433,9 +1433,11 @@ function clientReportHtml(report){
   </div>
   </body></html>`;
 }
-// The short message used both as "Email client"'s mailto body and as the
-// standalone "Copy message" text — the itemized task breakdown lives in the
-// downloaded/attached report itself, so the email doesn't repeat it.
+// The short message behind the "Copy message" button — paste-ready text with
+// a link to the hosted report, built this way instead of a mailto: link so
+// sending a report never depends on what mail app is set up on a given
+// computer. The itemized task breakdown lives in the linked report itself,
+// so this message doesn't repeat it.
 function clientReportCoverNote(report, reportUrl){
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
   const noun = isPeriod ? "end-of-period" : "weekly";
@@ -1827,21 +1829,6 @@ async function saveReportAndGetLink(html, type, title){
   });
   return REPORT_VIEWER_URL + "?id=" + doc.id;
 }
-// Saves an actual .html file to disk — separate from downloadClientReport
-// (which opens the hosted report link instead, for emailing). Kept as its
-// own explicit action since "Download" and "View a link" are different
-// things a person might want, and the link-based system replaced the file
-// download entirely rather than sitting alongside it.
-async function downloadClientReportFile(clientId, kind){
-  const client = state.clients.find(c=>c.id===clientId);
-  if(!client) return;
-  const reportWindow = reportWindowFor(client, kind);
-  if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
-  const report = buildClientReport(client, reportWindow, kind);
-  const html = clientReportHtml(report);
-  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
-  downloadHtmlFileFallback(html, client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html");
-}
 function downloadHtmlFileFallback(html, filename){
   const blob = new Blob([html], { type: "text/html" });
   const url = URL.createObjectURL(blob);
@@ -1874,20 +1861,6 @@ async function downloadClientReport(clientId, kind){
 // around (a plain boolean would never reset).
 function markPeriodRecapSent(clientId, reportWindow){
   upsert("clients", clientId, { periodRecapSentForPeriodStart: reportWindow.start.toISOString().slice(0,10) });
-}
-async function emailClientReport(clientId, kind){
-  const client = state.clients.find(c=>c.id===clientId);
-  if(!client) return;
-  if(!client.email){ alert(client.name + " doesn't have an email on file yet — add one on their Membership tab first."); return; }
-  const reportWindow = reportWindowFor(client, kind);
-  if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
-  const report = buildClientReport(client, reportWindow, kind);
-  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
-  const url = await saveReportAndGetLink(clientReportHtml(report), "clientRecap", client.name + " — " + kindSlug + " report");
-  const subject = encodeURIComponent(((kind==="period"||kind==="lastPeriod") ? "Your Membership Period Recap — " : "Your Weekly Update — ") + client.name);
-  const body = encodeURIComponent(clientReportCoverNote(report, url));
-  window.location.href = "mailto:" + client.email + "?subject=" + subject + "&body=" + body;
-  if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
 }
 
 // ---- 8f. Payroll report (per assistant, same branded format) ----
@@ -6625,34 +6598,28 @@ function renderClientHoursCard(client){
       </table></div>` : `<div class="small">No time clocked for this client in this range.</div>`}
 
       <hr style="margin:14px 0;">
+      <div class="small" style="margin-bottom:8px;">To send a report: click "Copy message," then paste into whatever email or text you use with this client — same steps for everyone, nothing to download or attach.</div>
       <div class="row">
         <div>
           <div class="small" style="margin-bottom:4px;">Weekly recap &middot; Sat–Fri, week of ${formatPeriodRange(week)}</div>
           <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','week')">Download</button>
-          <button onclick="emailClientReport('${client.id}','week')">Email client</button>
-          <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
+          <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
         </div>
         <div>
           <div class="small" style="margin-bottom:4px;">${periodWindow ? "Period recap &middot; ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Period recap — set a renewal date on the Membership tab"}</div>
           ${periodWindow ? `
             <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','period')">Download</button>
-            <button onclick="emailClientReport('${client.id}','period')">Email client</button>
-            <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
+            <button onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
           ` : ""}
         </div>
         <div>
           <div class="small" style="margin-bottom:4px;">${lastPeriodWindow ? "Last period recap &middot; " + formatPeriodRange(lastPeriodWindow) : "Last period — not enough billing history yet"}</div>
           ${lastPeriodWindow ? `
             <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','lastPeriod')">Download</button>
-            <button onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
-            <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
+            <button onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
           ` : ""}
         </div>
       </div>
-      ${!client.email ? `<div class="small" style="color:var(--danger);margin-top:8px;">No client email on file — add one on the Membership tab before emailing.</div>` : ""}
     </div>`;
 }
 // One place to send every client-facing email for this client — the same
@@ -6703,18 +6670,16 @@ function renderClientEmailTemplates(client){
       <h3>Receipts</h3>
       <label style="display:flex;align-items:center;gap:8px;">
         <input type="checkbox" ${client.includeReceiptsInReport?'checked':''} onchange="updateClientField('${client.id}','includeReceiptsInReport',this.checked)">
-        Include receipts in this client's Download/Email reports
+        Include receipts in this client's reports
       </label>
       <div class="small" style="margin-top:6px;">When on, any receipt uploaded as a task attachment during a report's date range gets pulled into that report automatically (Weekly, Period, and Last Period below) — nothing extra to attach by hand. Most clients don't need this; Rachel's normal per-task attachments are unaffected either way.</div>
     </div>
     <div class="card">
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
-      <div class="small" style="margin-bottom:8px;color:var(--warn);">Use "Email client" to send it — that's a working link. Don't attach the "Download" file to an email; most email apps show it as raw code instead of the report.</div>
+      <div class="small" style="margin-bottom:8px;">To send: click "Copy message," then paste into whatever email or text you use with this client — works the same for everyone, nothing to attach or download.</div>
       <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','week')">Download</button>
-      <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','week')">Email client</button>
-      <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
+      <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
     </div>
     <div class="card">
       <div class="flex-between">
@@ -6723,22 +6688,16 @@ function renderClientEmailTemplates(client){
       </div>
       <div class="small" style="margin-bottom:8px;">${periodWindow ? "Ends " + new Date(periodWindow.end.getTime()-1).toLocaleDateString() : "Set a renewal date on the Membership tab to enable"}</div>
       ${periodWindow ? `
-        <div class="small" style="margin-bottom:8px;color:var(--warn);">Use "Email client" to send it, not the "Download" file — see note on Weekly Recap above.</div>
         <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','period')">Download</button>
-        <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','period')">Email client</button>
-        <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
+        <button onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
       ` : ""}
     </div>
     <div class="card">
       <h3>Last Period Recap</h3>
       <div class="small" style="margin-bottom:8px;">${lastPeriodWindow ? formatPeriodRange(lastPeriodWindow) : "Not enough billing history yet"}</div>
       ${lastPeriodWindow ? `
-        <div class="small" style="margin-bottom:8px;color:var(--warn);">Use "Email client" to send it, not the "Download" file — see note on Weekly Recap above.</div>
         <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','lastPeriod')">Download</button>
-        <button ${noEmail?'disabled':''} onclick="emailClientReport('${client.id}','lastPeriod')">Email client</button>
-        <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
+        <button onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
       ` : ""}
     </div>
     ${isPilot ? `
@@ -8163,11 +8122,10 @@ function renderReportsTab(){
       Each report is built live from current task statuses and hours — "In Progress" reflects tasks in that column right now.
       <strong>Weekly</strong> covers Saturday–Friday completions for the Friday client update; <strong>Period</strong> covers
       everything completed across the client's full current billing cycle, for their end-of-membership-period recap.
-      <strong>To send it to the client, use "Email" — not "Download."</strong> Email opens a pre-filled message with a working
-      link to the formatted report (Copy message grabs the same cover note without opening your mail app). Download saves a
-      copy of the raw file for your own records only — <strong>never attach that downloaded file directly to an email</strong>,
-      Gmail and most other email apps show the raw code instead of the actual report when you do that (that's the "shows a
-      wall of code" problem — it only happens with the downloaded file, never with the Email button's link).
+      <strong>To send it, click "Copy message," then paste it into whatever email (or text) you use to reach the client.</strong>
+      That's the one way everyone should send these — it works the same regardless of what's set up on your computer, and
+      the pasted message already includes a working link to the formatted report (receipts included automatically, if this
+      client has that turned on below). "View" just lets you preview it first — nothing to download or attach, ever.
     </div>
     <div class="card">
       ${rows.length===0 ? `<div class="small">No clients yet.</div>` : rows.map(({client, weekReport, periodReport, lastPeriodReport})=>`
@@ -8180,26 +8138,20 @@ function renderReportsTab(){
             <div>
               <div class="small" style="margin-bottom:4px;">Weekly &middot; ${weekReport.inProgress.length} in progress · ${weekReport.completed.length} completed this week</div>
               <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','week')">Download</button>
-              <button onclick="emailClientReport('${client.id}','week')">Email</button>
-              <button class="secondary" onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
+              <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
             </div>
             <div>
               <div class="small" style="margin-bottom:4px;">${periodReport ? "Period &middot; " + periodReport.completed.length + " completed &middot; ends " + new Date(periodReport.billingPeriod.end.getTime()-1).toLocaleDateString() : "Period — set a renewal date on the Membership tab to enable"}</div>
               ${periodReport ? `
                 <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','period')">Download</button>
-                <button onclick="emailClientReport('${client.id}','period')">Email</button>
-                <button class="secondary" onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
+                <button onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
               ` : ""}
             </div>
             <div>
               <div class="small" style="margin-bottom:4px;">${lastPeriodReport ? "Last period &middot; " + lastPeriodReport.completed.length + " completed &middot; " + formatPeriodRange(lastPeriodReport.billingPeriod) : "Last period — not enough billing history yet"}</div>
               ${lastPeriodReport ? `
                 <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
-          <button class="secondary" onclick="downloadClientReportFile('${client.id}','lastPeriod')">Download</button>
-                <button onclick="emailClientReport('${client.id}','lastPeriod')">Email</button>
-                <button class="secondary" onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
+                <button onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
               ` : ""}
             </div>
           </div>
