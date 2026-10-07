@@ -2990,6 +2990,30 @@ function renderDocsLeadColumn(assistant, d){
         <div>${c.name}</div><span class="alert danger" style="margin:0;">term ended</span>
       </div>`).join("")}
   `);
+  if(d.vendorTicketsAwaitingMarkup.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Vendor requests awaiting markup</div>
+    ${d.vendorTicketsAwaitingMarkup.map(({vendor,ticket,client})=>`
+      <div class="list-item" style="cursor:pointer;" onclick="openVendorTicketDetail('${vendor.id}','${ticket.id}')">
+        <div><strong>${client?client.name:'—'}</strong> — ${escHtml(ticket.title||'')}<div class="small">${escHtml(vendor.name||'')} submitted $${ticket.vendorCost.toFixed(2)} — set the client-charge amount</div></div>
+      </div>`).join("")}
+  `);
+  if(d.vendorTicketsAwaitingPayout.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Vendor payout due ${d.nextPayoutDate.toLocaleDateString('en-US',{weekday:'long',month:'short',day:'numeric'})}</div>
+    ${Object.entries(d.vendorTicketsAwaitingPayout.reduce((groups,{vendor,ticket})=>{
+        (groups[vendor.id] = groups[vendor.id] || { vendor, tickets:[] }).tickets.push(ticket);
+        return groups;
+      },{})).map(([vendorId,{vendor,tickets}])=>{
+        const total = tickets.reduce((s,t)=>s+(t.vendorCost||0),0);
+        return `
+      <div class="list-item">
+        <div><strong>${escHtml(vendor.name||'')}</strong><div class="small">${tickets.length} ticket${tickets.length===1?'':'s'} charged, not yet paid out</div></div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <strong>$${total.toFixed(2)}</strong>
+          <button class="secondary" onclick="markAllVendorTicketsPaidForVendor('${vendorId}')">Mark paid</button>
+        </div>
+      </div>`;
+      }).join("")}
+  `);
   return `
     <div class="card">
       <h3 style="margin:0;">Attention: ${assistant.name}</h3>
@@ -3108,7 +3132,7 @@ function renderAdminDashboard(){
 
     <div class="row">
       ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns:clientCheckInsForOps, renewalCheckInEmails:renewalCheckInEmailsForOps, pending:pendingForOps, notStartedClients:notStartedClientsForOps, atRiskClients:atRiskClientsForOps, awaitingClient:awaitingClientForOps, paused:pausedForOps, overdue, pastDue })}
-      ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, contractsReady, emailsNeeded:docsEmailsNeeded, termUpdateClients })}
+      ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, contractsReady, emailsNeeded:docsEmailsNeeded, termUpdateClients, vendorTicketsAwaitingMarkup: vendorTicketsAwaitingMarkup(), vendorTicketsAwaitingPayout: vendorTicketsAwaitingPayout(), nextPayoutDate: nextVendorPayoutDate() })}
     </div>
 
     ${(renewingThisWeek.length || renewingNextWeek.length) ? `
@@ -4493,6 +4517,34 @@ function allVendorTickets(){
   return rows.sort((a,b)=> b.ticket.requestedAt < a.ticket.requestedAt ? -1 : 1);
 }
 function toggleVendorTicketsHistory(){ state.vendorTicketsHistoryOpen = !state.vendorTicketsHistoryOpen; render(); }
+function vendorTicketsAwaitingMarkup(){
+  return allVendorTickets().filter(({ticket})=>ticket.vendorCost!=null && ticket.clientChargeAmount==null);
+}
+// Charged to the client but not yet paid out to the vendor — these all get
+// bundled into one weekly Friday payout per vendor rather than paid
+// one-off as each ticket closes (materials costs mean a vendor floating a
+// client purchase for up to two weeks until the next 1st/15th payroll
+// cycle isn't workable, but paying instantly per-ticket is too manual to
+// track reliably either — Friday is the agreed middle ground).
+function vendorTicketsAwaitingPayout(){
+  return allVendorTickets().filter(({ticket})=>ticket.clientCharged && !ticket.vendorPaid);
+}
+function nextVendorPayoutDate(refDate){
+  const d = refDate || new Date();
+  const day = d.getDay(); // 0=Sun..6=Sat, Friday=5
+  const diff = (5 - day + 7) % 7;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()+diff);
+}
+// Pays out every outstanding charged-but-unpaid ticket for one vendor at
+// once — the whole point of bundling to a single weekly payout instead of
+// tracking each ticket's payment separately.
+function markAllVendorTicketsPaidForVendor(vendorId){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return;
+  const now = new Date().toISOString();
+  const tickets = (vendor.tickets||[]).map(t=> (t.clientCharged && !t.vendorPaid) ? { ...t, vendorPaid:true, vendorPaidAt:now } : t);
+  upsert("vendors", vendorId, { tickets });
+}
 // Visible to admin AND every team member, same as the Task Board — anyone
 // might need to check on a job for a client they work with, not just
 // whoever happened to submit the original request.
