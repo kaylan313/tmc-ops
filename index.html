@@ -1311,16 +1311,18 @@ function receiptsInWindow(client, window){
 // Once a report has actually gone out, the receipts it embedded don't need
 // to keep living on the task too — this is what actually relieves the
 // attachments size limit above long-term, instead of just raising it once
-// and hitting it again later. Deletes real task attachments — only call
-// this after confirming the report was sent.
-function clearReceiptsInWindow(clientId, kind){
+// and hitting it again later. Deletes real task attachments, grouped so
+// each affected task gets one write instead of one per receipt. Returns how
+// many it deleted. No confirmation here — callers that are a direct
+// response to the user clicking something destructive (clearReceiptsInWindow
+// below) confirm first; copyReportCoverNote calls this automatically
+// because the copy itself IS the send action, not a separate step to ask
+// about.
+function deleteReceiptsInWindow(clientId, window){
   const client = state.clients.find(c=>c.id===clientId);
-  if(!client) return;
-  const window = reportWindowFor(client, kind);
-  if(!window) return;
+  if(!client) return 0;
   const receipts = receiptsInWindow(client, window);
-  if(!receipts.length){ alert("No receipts in this report's date range to clear."); return; }
-  if(!confirm(`Only do this once you've actually sent this report to the client — it already has these receipts embedded in it.\n\nDelete ${receipts.length} receipt${receipts.length===1?'':'s'} from ${receipts.length===1?'its task':'their tasks'}? This can't be undone.`)) return;
+  if(!receipts.length) return 0;
   const idsByTask = {};
   receipts.forEach(r=>{ (idsByTask[r.taskId] = idsByTask[r.taskId]||[]).push(r.id); });
   Object.entries(idsByTask).forEach(([taskId, attachmentIds])=>{
@@ -1330,6 +1332,21 @@ function clearReceiptsInWindow(clientId, kind){
     task.attachments = attachments;
     upsert("tasks", taskId, { attachments });
   });
+  return receipts.length;
+}
+// Manual fallback — kept around in case a report went out some other way, or
+// there's a backlog from before receipts started clearing automatically.
+// In normal use copyReportCoverNote's automatic clear below means this
+// button simply won't have anything left to show.
+function clearReceiptsInWindow(clientId, kind){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const window = reportWindowFor(client, kind);
+  if(!window) return;
+  const count = receiptsInWindow(client, window).length;
+  if(!count){ alert("No receipts in this report's date range to clear."); return; }
+  if(!confirm(`Only do this once you've actually sent this report to the client — it already has these receipts embedded in it.\n\nDelete ${count} receipt${count===1?'':'s'} from ${count===1?'its task':'their tasks'}? This can't be undone.`)) return;
+  deleteReceiptsInWindow(clientId, window);
   render();
 }
 // kind: "week" (the Friday recap, Saturday–Friday), "period" (the client's
@@ -1542,6 +1559,11 @@ async function copyReportCoverNote(clientId, kind, btnEl){
   const text = clientReportCoverNote(report, url);
   navigator.clipboard.writeText(text).then(()=>{
     if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
+    // Copying the message IS sending it — the receipts embedded in this
+    // report don't need to keep sitting on the task too, and this way it
+    // actually happens every time instead of depending on an assistant
+    // remembering to come back and clear them.
+    if(client.includeReceiptsInReport) deleteReceiptsInWindow(clientId, reportWindow);
     if(!btnEl) return;
     const orig = btnEl.textContent;
     btnEl.textContent = "Copied ✓";
