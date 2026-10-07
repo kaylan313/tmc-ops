@@ -2619,6 +2619,64 @@ function logout(){
 // ---- 10. Rendering ----
 const app = document.getElementById("app");
 
+// A searchable, type-to-filter dropdown — a drop-in replacement for a plain
+// <select> wherever the option list is long enough that scrolling to find
+// one by eye is painful (mainly clients, which render in creation order,
+// not alphabetically). Local-only UI state, never sent to Firestore.
+//
+// Inline onclick="..." handlers can only call a global function by name,
+// not hold a live JS closure — so each instance registers its real
+// onSelect callback here (keyed by its own id) at render time, since
+// renderSearchablePicker() itself still runs as plain JS before its return
+// value gets stringified into the page. By the time a click can happen the
+// page has already finished rendering, so the registry is always current.
+const comboboxCallbacks = {};
+function openCombobox(id){
+  state.openCombobox = id;
+  state.comboboxQuery = "";
+  render();
+}
+function closeComboboxIfStillOpen(id){
+  // Deferred via setTimeout by the input's onblur below — mousedown on an
+  // option (which fires before blur) handles the normal "picked something"
+  // case; this is the fallback for "clicked/tabbed away without picking."
+  if(state.openCombobox === id){ state.openCombobox = null; render(); }
+}
+function selectComboboxOption(id, value){
+  const cb = comboboxCallbacks[id];
+  state.openCombobox = null;
+  state.comboboxQuery = "";
+  if(cb) cb(value); else render();
+}
+// `options`: [{value, label}]. `value`: the currently selected option's
+// value (or "" / null for none). `onSelect(value)`: runs when something's
+// picked — never called with raw typed text, only a real option's value.
+// `id` must be unique among pickers rendered on the page at the same time.
+function renderSearchablePicker(id, options, value, onSelect, placeholder){
+  comboboxCallbacks[id] = onSelect;
+  const isOpen = state.openCombobox === id;
+  const selected = options.find(o=>o.value===value);
+  const query = isOpen ? (state.comboboxQuery||"") : "";
+  const q = query.trim().toLowerCase();
+  const matches = q ? options.filter(o=>(o.label||"").toLowerCase().includes(q)) : options;
+  return `
+    <div style="position:relative;display:inline-block;">
+      <input type="text" id="combobox_${id}" autocomplete="off" style="width:100%;"
+        value="${escHtml(isOpen ? query : (selected ? selected.label : ''))}"
+        placeholder="${escHtml(placeholder||'Search...')}"
+        onfocus="openCombobox('${id}');this.select();"
+        oninput="state.comboboxQuery=this.value;render();"
+        onblur="setTimeout(()=>closeComboboxIfStillOpen('${id}'),150)">
+      ${isOpen ? `
+        <div style="position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--cream);border:1px solid var(--cream-dark);max-height:220px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+          ${matches.length ? matches.map(o=>`
+            <div style="padding:6px 10px;cursor:pointer;" onmousedown="selectComboboxOption('${id}','${o.value}')" onmouseover="this.style.background='var(--cream-dark)'" onmouseout="this.style.background=''">${escHtml(o.label)}</div>
+          `).join("") : `<div style="padding:6px 10px;color:#8a7a72;">No matches</div>`}
+        </div>
+      ` : ""}
+    </div>`;
+}
+
 function render(){
   // hoursForTask()/entriesForClient() used to re-scan the entire timeEntries
   // array from zero on every single call — called once per task row and once
@@ -4709,10 +4767,7 @@ function renderNewVendorTicketModal(){
           </select>
         </div>
         <div><label class="small">Client</label>
-          <select onchange="state.modal.draft.clientId=this.value">
-            <option value="">— Select —</option>
-            ${state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>`<option value="${c.id}" ${d.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
-          </select>
+          ${renderSearchablePicker('nvt_client', state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>({value:c.id,label:c.name})), d.clientId, v=>{ state.modal.draft.clientId=v; render(); }, '— Select —')}
         </div>
       </div>
       <div style="margin-top:8px;"><label class="small">What's needed?</label><input id="nvt_title" value="${escHtml(d.title||'')}" oninput="state.modal.draft.title=this.value" placeholder="e.g. Change light bulbs, assemble furniture, swap AC filter"></div>
@@ -4949,10 +5004,7 @@ function renderCardPurchaseEntryModal(){
       <div class="small" style="margin-bottom:10px;">Fill this out any time you use a client's card — a photo of the receipt is required.</div>
       <div class="row">
         <div><label class="small">Client</label>
-          <select id="cp_client" onchange="state.modal.draft.clientId=this.value">
-            <option value="">— Select —</option>
-            ${realClients.map(c=>`<option value="${c.id}" ${d.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
-          </select>
+          ${renderSearchablePicker('cp_client', realClients.map(c=>({value:c.id,label:c.name})), d.clientId, v=>{ state.modal.draft.clientId=v; render(); }, '— Select —')}
         </div>
         <div><label class="small">Amount ($)</label><input id="cp_amount" type="number" step="0.01" value="${d.amount||''}" oninput="state.modal.draft.amount=this.value" placeholder="e.g. 42.17"></div>
       </div>
@@ -6078,10 +6130,9 @@ function renderClientProfile(client){
     <div class="small" style="margin:14px 0 8px;">If this client was referred by an existing client, they can earn that client 20% off one month once this account signs a 3-month+ term.</div>
     <div class="row">
       <div><label class="small">Referred by another client</label>
-        <select onchange="updateClientField('${client.id}','referredByClientId',this.value)">
-          <option value="">None</option>
-          ${state.clients.filter(c=>c.id!==client.id && c.id!==INTERNAL_CLIENT_ID).map(c=>`<option value="${c.id}" ${client.referredByClientId===c.id?'selected':''}>${c.name}</option>`).join("")}
-        </select>
+        ${renderSearchablePicker('referredByClientId_'+client.id,
+          [{value:'',label:'None'}, ...state.clients.filter(c=>c.id!==client.id && c.id!==INTERNAL_CLIENT_ID).map(c=>({value:c.id,label:c.name}))],
+          client.referredByClientId||'', v=>updateClientField(client.id,'referredByClientId',v||null), 'None')}
       </div>
     </div>
     <div class="small" style="margin-top:10px;">This client's own referral credits: ${discountStatus.earned} referral(s) signed 3-month+, ${discountStatus.redeemed} redeemed, <strong>${discountStatus.available} available</strong>.</div>
@@ -7610,11 +7661,9 @@ function renderKanban(){
       </div>
       <div>
         <label class="small">Client</label>
-        <select onchange="setKanbanFilter('clientId',this.value)">
-          <option value="all" ${f.clientId==='all'?'selected':''}>All clients</option>
-          <option value="${INTERNAL_CLIENT_ID}" ${f.clientId===INTERNAL_CLIENT_ID?'selected':''}>Internal / Modern Co.</option>
-          ${state.clients.map(c=>`<option value="${c.id}" ${f.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
-        </select>
+        ${renderSearchablePicker('kanbanClientFilter',
+          [{value:'all',label:'All clients'}, {value:INTERNAL_CLIENT_ID,label:'Internal / Modern Co.'}, ...state.clients.map(c=>({value:c.id,label:c.name}))],
+          f.clientId, v=>setKanbanFilter('clientId', v), 'All clients')}
       </div>
       <div>
         <label class="small">Category</label>
@@ -9988,10 +10037,9 @@ function renderTaskEditorModal(task){
       <div class="modal-section-label">Assignment &amp; Status</div>
       <div class="row">
         <div><label class="small">Client</label>
-          <select id="tf_client" onchange="state.modal.task.clientId=this.value">
-            <option value="${INTERNAL_CLIENT_ID}" ${task.clientId===INTERNAL_CLIENT_ID?'selected':''}>Internal / Modern Co.</option>
-            ${state.clients.map(c=>`<option value="${c.id}" ${task.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
-          </select>
+          ${renderSearchablePicker('tf_client',
+            [{value:INTERNAL_CLIENT_ID,label:'Internal / Modern Co.'}, ...state.clients.map(c=>({value:c.id,label:c.name}))],
+            task.clientId, v=>{ state.modal.task.clientId=v; render(); }, 'Internal / Modern Co.')}
         </div>
         <div><label class="small">Category</label>
           <select id="tf_category" onchange="state.modal.task.category=this.value">
