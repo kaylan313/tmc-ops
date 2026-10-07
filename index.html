@@ -5130,7 +5130,7 @@ function renderTaskMiniList(tasks){
   if(tasks.length===0) return `<div class="small">Nothing open.</div>`;
   return tasks.map(t=>{
     const client = state.clients.find(c=>c.id===t.clientId);
-    return `<div class="list-item">
+    return `<div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${t.id}')">
       <div>
         <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
         ${t.title} <span class="small">(${client?client.name:'Internal'})</span>
@@ -6059,8 +6059,9 @@ function renderClientProfile(client){
     <label class="small">Important info</label>
     <div class="small" style="margin-bottom:8px;">IDs, membership numbers, card numbers, alarm codes, anything reference-worthy that isn't a running note — add as many rows as you need, any label.</div>
     ${(client.importantInfo||[]).map((info,i)=>`
-      <div class="list-item">
-        <div><strong>${info.label}</strong>: ${info.value}</div>
+      <div class="list-item" style="flex-wrap:wrap;">
+        <input id="info_label_edit_${i}_${client.id}" value="${escHtml(info.label||'')}" placeholder="Label" style="max-width:220px;" onchange="updateImportantInfoField('${client.id}',${i},'label',this.value)">
+        <input id="info_value_edit_${i}_${client.id}" value="${escHtml(info.value||'')}" placeholder="Value" onchange="updateImportantInfoField('${client.id}',${i},'value',this.value)">
         <button class="danger" onclick="removeImportantInfo('${client.id}',${i})">Remove</button>
       </div>`).join("") || `<div class="small">Nothing on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
@@ -6070,18 +6071,18 @@ function renderClientProfile(client){
     </div>
     <label class="small" style="display:block;margin-top:16px;">Website logins</label>
     <div class="small" style="margin-bottom:8px;">Stored as plain text on this client's record — visible to anyone with access to this client's profile.</div>
-    ${(client.logins||[]).map((l,i)=>`
-      <div class="list-item">
-        <div>
-          <strong>${l.site}</strong>${l.username ? ` — ${l.username}` : ""}
-          ${l.notes ? `<div class="small">${l.notes}</div>` : ""}
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span class="small" style="font-family:monospace;">${state.revealedLogins && state.revealedLogins.has(client.id+'_'+i) ? (l.password||'(none)') : '••••••••'}</span>
-          <button class="secondary" style="padding:2px 8px;" onclick="toggleRevealLogin('${client.id}',${i})">${state.revealedLogins && state.revealedLogins.has(client.id+'_'+i) ? 'Hide' : 'Show'}</button>
-          <button class="danger" onclick="removeLogin('${client.id}',${i})">Remove</button>
-        </div>
-      </div>`).join("") || `<div class="small">None on file.</div>`}
+    ${(client.logins||[]).map((l,i)=>{
+      const revealed = state.revealedLogins && state.revealedLogins.has(client.id+'_'+i);
+      return `
+      <div class="list-item" style="flex-wrap:wrap;">
+        <input id="login_site_edit_${i}_${client.id}" value="${escHtml(l.site||'')}" placeholder="Site / service" style="max-width:150px;" onchange="updateLoginField('${client.id}',${i},'site',this.value)">
+        <input id="login_user_edit_${i}_${client.id}" value="${escHtml(l.username||'')}" placeholder="Username / email" style="max-width:170px;" onchange="updateLoginField('${client.id}',${i},'username',this.value)">
+        <input id="login_pass_edit_${i}_${client.id}" type="${revealed?'text':'password'}" value="${escHtml(l.password||'')}" placeholder="Password" style="max-width:150px;" onchange="updateLoginField('${client.id}',${i},'password',this.value)">
+        <input id="login_notes_edit_${i}_${client.id}" value="${escHtml(l.notes||'')}" placeholder="Notes (optional)" style="max-width:170px;" onchange="updateLoginField('${client.id}',${i},'notes',this.value)">
+        <button class="secondary" style="padding:2px 8px;" onclick="toggleRevealLogin('${client.id}',${i})">${revealed ? 'Hide' : 'Show'}</button>
+        <button class="danger" onclick="removeLogin('${client.id}',${i})">Remove</button>
+      </div>`;
+    }).join("") || `<div class="small">None on file.</div>`}
     <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
       <input id="login_site_${client.id}" placeholder="Site / service" style="max-width:150px;">
       <input id="login_user_${client.id}" placeholder="Username / email" style="max-width:170px;">
@@ -6750,6 +6751,11 @@ function removeImportantInfo(clientId, index){
   const importantInfo = (client.importantInfo||[]).filter((_,i)=>i!==index);
   upsert("clients", clientId, { importantInfo });
 }
+function updateImportantInfoField(clientId, index, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  const importantInfo = (client.importantInfo||[]).map((info,i)=>i!==index ? info : { ...info, [field]:value });
+  upsert("clients", clientId, { importantInfo });
+}
 function addLogin(clientId){
   const site = document.getElementById("login_site_"+clientId).value.trim();
   const username = document.getElementById("login_user_"+clientId).value.trim();
@@ -6763,6 +6769,11 @@ function addLogin(clientId){
 function removeLogin(clientId, index){
   const client = state.clients.find(c=>c.id===clientId);
   const logins = (client.logins||[]).filter((_,i)=>i!==index);
+  upsert("clients", clientId, { logins });
+}
+function updateLoginField(clientId, index, field, value){
+  const client = state.clients.find(c=>c.id===clientId);
+  const logins = (client.logins||[]).map((l,i)=>i!==index ? l : { ...l, [field]:value });
   upsert("clients", clientId, { logins });
 }
 function toggleRevealLogin(clientId, index){
