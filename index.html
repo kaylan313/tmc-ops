@@ -2934,11 +2934,19 @@ function renderDocsLeadColumn(assistant, d){
   `);
   if(d.paymentsReady.length) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Payments ready to process</div>
-    ${d.paymentsReady.map(({client,addOn,payment})=>`
+    ${d.paymentsReady.map(({client,addOn,payment})=>{
+      const todayStr = new Date().toISOString().slice(0,10);
+      const overdue = payment.dueDate && payment.dueDate<todayStr;
+      return `
       <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
-        <div><strong>${client.name}</strong> — ${addOn.label}: ${payment.label}<div class="small">flagged ${payment.readyMarkedAt?parseYMD(payment.readyMarkedAt).toLocaleDateString():'—'}</div></div>
+        <div>
+          <strong>${client.name}</strong> — ${addOn.category||'Add-On'}: ${payment.label}
+          <div class="small" style="color:var(--rose-dark);">Separate from ${client.name}'s membership billing — charge it on its own.</div>
+          <div class="small">${payment.dueDate ? (overdue?'overdue, was due ':'due ')+parseYMD(payment.dueDate).toLocaleDateString() : (payment.readyMarkedAt?'flagged '+parseYMD(payment.readyMarkedAt).toLocaleDateString():'')}</div>
+        </div>
         <strong>$${(payment.amount||0).toFixed(0)}</strong>
-      </div>`).join("")}
+      </div>`;
+    }).join("")}
   `);
   if(d.contractsReady.length) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Contracts ready to download</div>
@@ -3206,12 +3214,23 @@ function allClientAddOns(){
   });
   return rows;
 }
+// Shows up for Heidi automatically once a payment's due date actually
+// arrives — not just when someone remembers to click "Mark ready to
+// process." That's the whole point of auto-computing build payment due
+// dates off Day 1/15/30 (see defaultAddOnPayments/updateAddOnField): the
+// Dashboard reminder follows from the date on its own, nothing to forget.
+// Manual "ready to process" still works too, for anything flagged ahead of
+// its due date or with no due date tracked at all.
 function paymentsReadyToProcess(){
+  const todayStr = new Date().toISOString().slice(0,10);
   const rows = [];
   allClientAddOns().forEach(({client,addOn})=>{
-    (addOn.payments||[]).forEach(p=>{ if(p.readyToProcess && !p.paid) rows.push({ client, addOn, payment:p }); });
+    (addOn.payments||[]).forEach(p=>{
+      if(p.paid) return;
+      if(p.readyToProcess || (p.dueDate && p.dueDate<=todayStr)) rows.push({ client, addOn, payment:p });
+    });
   });
-  return rows.sort((a,b)=> (a.payment.readyMarkedAt||'') < (b.payment.readyMarkedAt||'') ? -1 : 1);
+  return rows.sort((a,b)=> (a.payment.dueDate||a.payment.readyMarkedAt||'') < (b.payment.dueDate||b.payment.readyMarkedAt||'') ? -1 : 1);
 }
 function renderAddOnsTab(){
   const rows = allClientAddOns();
@@ -6506,7 +6525,7 @@ function renderAddOnRow(clientId, a){
       <div><label class="small">Notes</label><textarea id="addon_notes_${a.id}" onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Flat-Fee Build — Assistant Pay (optional)</label>
-        <div class="small" style="margin-bottom:6px;">For a flat-fee build an assistant does instead of hourly work — her cut is a % of this build fee, paid out as each payment milestone below is actually received. Leave blank if this add-on isn't assistant-built work.</div>
+        <div class="small" style="margin-bottom:6px;">For a flat-fee build an assistant does instead of hourly work — her cut is a % of the build cost below, paid out as each payment milestone is actually received. Leave blank if this add-on isn't assistant-built work.</div>
         <div class="row">
           <div><label class="small">Assigned assistant</label>
             <select onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantId',this.value||null)">
@@ -6514,9 +6533,11 @@ function renderAddOnRow(clientId, a){
               ${state.settings.assistants.filter(x=>x.active!==false).map(x=>`<option value="${x.id}" ${a.buildAssistantId===x.id?'selected':''}>${x.name}</option>`).join("")}
             </select>
           </div>
-          <div><label class="small">Her % of build fee</label><input id="addon_buildpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.buildAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
+          <div><label class="small">Her %</label><input id="addon_buildpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.buildAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
+          <div><label class="small">Build cost her % is based on ($)</label><input id="addon_buildbasis_${a.id}" type="number" step="1" value="${a.buildAssistantBasisAmount!=null?a.buildAssistantBasisAmount:(a.flatFee||0)}" onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantBasisAmount',parseFloat(this.value)||0)" placeholder="${a.flatFee||0}"></div>
           <div><label class="small">Day 1 (deposit received)</label><input type="date" value="${a.buildStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','buildStartDate',this.value)"></div>
         </div>
+        <div class="small" style="margin-top:4px;">Defaults to the flat fee above — only change this if the client is charged more than the actual build cost (the markup is TMC's own margin, not part of her %).</div>
       </div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Payment Schedule</label>
@@ -6552,7 +6573,7 @@ function renderAddOnPaymentRow(clientId, a, p){
         Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+')' : ''}
       </label>
     </div>
-    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${assistantName(a.buildAssistantId)} earns $${cut.toFixed(2)} (${a.buildAssistantPercent}%) ${p.paid?'— counted in her payroll for '+parseYMD(p.paidDate).toLocaleDateString():'once this payment is marked paid'}</div>` : ""}
+    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${assistantName(a.buildAssistantId)} earns $${cut.toFixed(2)} (${a.buildAssistantPercent}%) ${p.paid?'— rolled into her '+formatPeriodRange(currentPayrollPeriod(new Date(p.paidDate)))+' paycheck, no separate payout needed':'— once this is marked paid, it gets added to her next regular paycheck automatically, not paid out separately'}</div>` : ""}
     ${!p.paid ? `
     <div style="margin-top:2px;">
       ${p.readyToProcess
@@ -6652,20 +6673,40 @@ function removeBuildTodo(clientId, addOnId, todoId){
 // deposit — derived live from the existing payment schedule rather than
 // stored separately, so there's only ever one set of numbers to keep in
 // sync (the client's own payment amounts).
+// buildAssistantBasisAmount is what the assistant's % is actually
+// calculated FROM — separate from flatFee (what the client is billed) for
+// cases where TMC marks the build up (e.g. client is charged $1,500 but
+// the real build cost — what the assistant's cut is based on — is less;
+// the markup is TMC's own margin, not something she gets a % of). Each
+// payment's cut is that SAME proportion of the basis amount that the
+// payment itself represents of the total flat fee (50/25/25, or whatever
+// the schedule's actually been edited to) — not just a flat % of the
+// payment's own dollar amount, which would silently use flatFee as the
+// basis even when a separate basis amount has been set.
 function buildAssistantCut(addOn, payment){
-  if(!addOn.buildAssistantId || !addOn.buildAssistantPercent) return 0;
-  return Math.round((payment.amount||0) * (addOn.buildAssistantPercent/100) * 100) / 100;
+  if(!addOn.buildAssistantId || !addOn.buildAssistantPercent || !addOn.flatFee) return 0;
+  const basis = addOn.buildAssistantBasisAmount!=null ? addOn.buildAssistantBasisAmount : addOn.flatFee;
+  const proportionOfTotal = (payment.amount||0) / addOn.flatFee;
+  return Math.round(basis * proportionOfTotal * (addOn.buildAssistantPercent/100) * 100) / 100;
 }
 function buildTodoDueDate(addOn, todo){
   if(!addOn.buildStartDate || todo.dueDayOffset==null) return null;
   return new Date(parseYMD(addOn.buildStartDate).getTime() + todo.dueDayOffset*24*3600000);
 }
-function defaultAddOnPayments(flatFee){
+// dueDayOffset (0/14/29) ties each standard milestone to the build's own
+// Day 1/15/30 — "1st day of their 30-day period: 50%, 15th day: 25%, 30th/
+// last day: 25%." If a start date is already known at creation time the
+// actual dueDate is filled in immediately; either way updateAddOnField's
+// buildStartDate branch keeps these in sync if the start date is set or
+// changes later, so Heidi's due-date reminders are never off relying on
+// someone to compute these by hand.
+function defaultAddOnPayments(flatFee, buildStartDate){
   const fee = flatFee || 0;
+  const dayDate = offset => buildStartDate ? new Date(parseYMD(buildStartDate).getTime() + offset*86400000).toISOString().slice(0,10) : "";
   return [
-    { id: newId("pay"), label:"50% Deposit", amount: Math.round(fee*0.5*100)/100, dueDate:"", paid:false, paidDate:"" },
-    { id: newId("pay"), label:"25% Progress Payment", amount: Math.round(fee*0.25*100)/100, dueDate:"", paid:false, paidDate:"" },
-    { id: newId("pay"), label:"25% Final Payment", amount: Math.round(fee*0.25*100)/100, dueDate:"", paid:false, paidDate:"" }
+    { id: newId("pay"), label:"50% Deposit", amount: Math.round(fee*0.5*100)/100, dueDayOffset:0, dueDate:dayDate(0), paid:false, paidDate:"" },
+    { id: newId("pay"), label:"25% Progress Payment", amount: Math.round(fee*0.25*100)/100, dueDayOffset:14, dueDate:dayDate(14), paid:false, paidDate:"" },
+    { id: newId("pay"), label:"25% Final Payment", amount: Math.round(fee*0.25*100)/100, dueDayOffset:29, dueDate:dayDate(29), paid:false, paidDate:"" }
   ];
 }
 function addClientAddOn(clientId){
@@ -6694,7 +6735,7 @@ function addClientAddOn(clientId){
 function generateAddOnPayments(clientId, addOnId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
-  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, payments: defaultAddOnPayments(a.flatFee) } : a);
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, payments: defaultAddOnPayments(a.flatFee, a.buildStartDate) } : a);
   upsert("clients", clientId, { addOns });
 }
 // The in-app replacement for "text Heidi when a milestone payment is
@@ -6748,7 +6789,22 @@ function updateAddOnCatalog(clientId, addOnId, catalogKey){
 function updateAddOnField(clientId, addOnId, field, value){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
-  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, [field]: value } : a);
+  const addOns = (client.addOns||[]).map(a=>{
+    if(a.id!==addOnId) return a;
+    const updated = { ...a, [field]: value };
+    // Keep each payment's due date in sync with Day 1 whenever it's set or
+    // changed — re-deriving dueDayOffset-tagged payments only (a payment
+    // added by hand, with no offset, is left exactly as whoever set it
+    // wanted) and never touching one that's already been paid, since
+    // that's history, not a schedule to keep adjusting.
+    if(field==="buildStartDate" && value){
+      updated.payments = (a.payments||[]).map(p=>{
+        if(p.paid || p.dueDayOffset==null) return p;
+        return { ...p, dueDate: new Date(parseYMD(value).getTime() + p.dueDayOffset*86400000).toISOString().slice(0,10) };
+      });
+    }
+    return updated;
+  });
   upsert("clients", clientId, { addOns });
 }
 function removeClientAddOn(clientId, addOnId){
@@ -7561,7 +7617,7 @@ function renderBuildsTab(){
             ${isAdmin ? `<button class="secondary" onclick="viewClientSoftwareBuild('${client.id}')">Open in client profile</button>` : ""}
           </div>
           <div class="small" style="margin-bottom:8px;">
-            ${isAdmin ? `${assistantName(addOn.buildAssistantId)} · ${addOn.buildAssistantPercent||0}% of $${(addOn.flatFee||0).toFixed(0)} build fee · earned so far: $${paidCut.toFixed(2)} of $${totalCut.toFixed(2)} total` : `${todos.length?doneCount+' of '+todos.length+' to-dos complete':'No to-dos set yet — ask Kaylan to add the checklist.'}`}
+            ${isAdmin ? `${assistantName(addOn.buildAssistantId)} · ${addOn.buildAssistantPercent||0}% of $${(addOn.buildAssistantBasisAmount!=null?addOn.buildAssistantBasisAmount:(addOn.flatFee||0)).toFixed(0)} build cost · earned so far: $${paidCut.toFixed(2)} of $${totalCut.toFixed(2)} total` : `${todos.length?doneCount+' of '+todos.length+' to-dos complete':'No to-dos set yet — ask Kaylan to add the checklist.'}`}
             ${addOn.buildStartDate ? ` · Day 1 was ${parseYMD(addOn.buildStartDate).toLocaleDateString()}` : ` · Day 1 (deposit received) not set yet`}
           </div>
           ${todos.length ? renderBuildTodoList(client.id, addOn, isAdmin) : ""}
