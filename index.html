@@ -691,15 +691,21 @@ async function boot(){
     // out anything typed into a field that's since been tabbed away from
     // (those values only live in the DOM until Save, nothing holds them
     // through a full re-render except the currently-focused field).
-    // Only settings + clients subscribe here — those are the only two any
-    // login check actually needs. tasks/timeEntries/leads are real accounts
-    // of months of daily use by now (by far the largest collections in the
-    // app) and nobody needs them until AFTER they're actually logged in —
-    // subscribing to all of them unconditionally on every page load, before
-    // anyone's even typed a passcode, was extra network/listener load
-    // directly competing with the two collections a login is waiting on.
-    // See subscribeAppData(), called once from each successful login path.
+    // Only settings + clients + vendors subscribe here — those are the only
+    // ones a login check actually needs (vendors joined this list once
+    // vendor portal logins started checking it for a matching
+    // portalAccessCode — same chicken-and-egg problem clients/settings
+    // already solved: a login can't wait on data that only starts loading
+    // AFTER a successful login). tasks/timeEntries/leads/cardPurchases are
+    // real accounts of months of daily use by now (by far the largest
+    // collections in the app) and nobody needs them until AFTER they're
+    // actually logged in — subscribing to all of them unconditionally on
+    // every page load, before anyone's even typed a passcode, was extra
+    // network/listener load directly competing with the collections a
+    // login is actually waiting on. See subscribeAppData(), called once
+    // from each successful login path.
     subscribe("clients", items=>{ state.clients = items; state.clientsReady = true; if(!state.modal) render(); });
+    subscribe("vendors", items=>{ state.vendors = items; state.vendorsReady = true; if(!state.modal) render(); });
     watchOrientationSync();
   }
 
@@ -726,7 +732,9 @@ function subscribeAppData(){
   });
   subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
   subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
-  subscribe("vendors", items=>{ state.vendors = items; if(!state.modal) render(); });
+  // vendors is subscribed unconditionally in boot() now (see the comment
+  // there) — a vendor portal login needs to check it before anyone's
+  // necessarily logged in yet, same reason clients/settings already did.
   subscribe("cardPurchases", items=>{ state.cardPurchases = items; if(!state.modal) render(); });
 }
 
@@ -2580,8 +2588,16 @@ function tryClientLogin(code){
     subscribeAppData(); render();
   } else alert("Client code not recognized.");
 }
+function tryVendorLogin(code){
+  if(FIREBASE_AVAILABLE && FIREBASE_CONFIGURED && !state.vendorsReady){ alert(notReadyMessage()); return; }
+  const match = (state.vendors||[]).find(v=>v.portalAccessCode && v.portalAccessCode===code);
+  if(match){
+    state.role="vendor"; state.currentVendorId = match.id; state.view="app";
+    subscribeAppData(); render();
+  } else alert("Vendor code not recognized.");
+}
 function logout(){
-  state.role=null; state.currentAssistant=null; state.currentClientId=null; state.view="login"; render();
+  state.role=null; state.currentAssistant=null; state.currentClientId=null; state.currentVendorId=null; state.view="login"; render();
 }
 
 // ---- 10. Rendering ----
@@ -2606,6 +2622,7 @@ function render(){
 
   if(state.view === "login") renderLogin();
   else if(state.role === "client") renderClientPortal();
+  else if(state.role === "vendor") renderVendorPortal();
   else renderAppShell();
 
   if(preserved && preserved.id){
@@ -2655,15 +2672,17 @@ function renderLogin(){
           <button onclick="promptLogin('admin')">Admin</button>
           <button class="secondary" onclick="promptLogin('team')">Team Member</button>
           <button class="secondary" onclick="promptLogin('client')">Client Portal</button>
+          <button class="secondary" onclick="promptLogin('vendor')">Vendor Portal</button>
         </div>
       </div>
     </div>`;
 }
 function promptLogin(kind){
-  const code = prompt(kind==="admin" ? "Admin passcode:" : kind==="team" ? "Your access code:" : "Your client portal code:");
+  const code = prompt(kind==="admin" ? "Admin passcode:" : kind==="team" ? "Your access code:" : kind==="vendor" ? "Your vendor portal code:" : "Your client portal code:");
   if(code===null) return;
   if(kind==="admin") tryAdminLogin(code.trim());
   else if(kind==="team") tryTeamLogin(code.trim());
+  else if(kind==="vendor") tryVendorLogin(code.trim());
   else tryClientLogin(code.trim());
 }
 
@@ -2677,12 +2696,12 @@ function renderAppShell(){
     ? [{ label:null, tabs:[["content","Content Calendar"]] }]
     : state.role==="admin"
     ? [
-        { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"]] },
+        { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"]] }
       ]
-    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["onboarding","Onboarding"],
+    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["onboarding","Onboarding"],
        ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : [])] }];
 
   app.innerHTML = `
@@ -2727,6 +2746,7 @@ function renderMain(){
     case "content": return (state.role==="admin" || (state.currentAssistant && state.currentAssistant.isContentCreator)) ? renderContentCalendarTab() : "";
     case "leads": return state.role==="admin" ? renderLeadOrganizerTab() : "";
     case "vendors": return renderVendorsTab();
+    case "vendorTickets": return renderVendorTicketsTab();
     case "cardPurchases": return state.role==="admin" ? renderCardPurchasesTab() : "";
     case "builds": return renderBuildsTab();
     case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
@@ -4309,6 +4329,14 @@ function renderVendorRow(v, isAdmin){
           ${earnings.length ? earnings.slice().sort((a,b)=> b.date < a.date ? -1 : 1).map(e=>renderVendorEarningRow(v.id,e)).join("") : `<div class="small">No referrals logged yet.</div>`}
         </div>
       </div>
+      <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Vendor Portal Access (optional)</label>
+        <div class="small" style="margin-bottom:6px;">For a vendor TMC acts as the middleman for (he bills TMC, TMC marks it up and bills the client) — set a code so he can log in, see requests, submit his cost, upload receipts, and track payment status. Leave blank if he's referral-only.</div>
+        <div class="row">
+          <div><label class="small">Portal access code</label><input id="vd_portalcode_${v.id}" value="${escHtml(v.portalAccessCode||'')}" onchange="updateVendorDirectoryField('${v.id}','portalAccessCode',this.value.trim())" placeholder="e.g. a short word or PIN"></div>
+          <div><label class="small">Requests on file</label><div style="padding-top:6px;">${(v.tickets||[]).length}</div></div>
+        </div>
+      </div>
       ` : ""}
       ${isAdmin ? `<div><button class="secondary" onclick="removeVendorDirectoryEntry('${v.id}')">Remove vendor</button></div>` : ""}
     </div>
@@ -4362,6 +4390,273 @@ function removeVendorEarning(vendorId, earningId){
   if(!vendor) return;
   if(!confirm("Remove this earnings entry?")) return;
   upsert("vendors", vendorId, { earnings: (vendor.earnings||[]).filter(e=>e.id!==earningId) });
+}
+// --- Vendor Tickets — TMC acts as the middleman: a vendor with his own
+// portal login (portalAccessCode) does a job for a client, submits what HE
+// charges, admin marks up to a client-facing price, the assistant charges
+// the client that marked-up amount off-app (same as any other billing in
+// this app — QuickBooks is where money actually moves), and the vendor
+// gets paid out on whatever cadence is set up for him. Deliberately a
+// SEPARATE structure from the referral commission "earnings" log above —
+// different business relationship (TMC bills the client directly and pays
+// the vendor, vs. the vendor billing the client directly and cutting TMC a
+// referral %) even for the same vendor record.
+function vendorTicketStage(t){
+  if(t.vendorPaid) return "paid";
+  if(t.clientCharged) return "chargedAwaitingPayout";
+  if(t.clientChargeAmount!=null) return "readyToCharge";
+  if(t.vendorCost!=null) return "awaitingMarkup";
+  if(t.scheduledAt || t.availableTimesNote) return "scheduled";
+  return "requested";
+}
+const VENDOR_TICKET_STAGE_LABELS = {
+  requested: "Requested — awaiting scheduling",
+  scheduled: "Scheduled — awaiting his cost",
+  awaitingMarkup: "Cost submitted — awaiting markup",
+  readyToCharge: "Ready to charge the client",
+  chargedAwaitingPayout: "Client charged — pay him next payout",
+  paid: "Paid"
+};
+function createVendorTicket(vendorId, clientId, title, description){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return null;
+  const ticket = {
+    id: newId("vticket"), clientId, title, description,
+    requestedByAssistantId: state.currentAssistant ? state.currentAssistant.id : null,
+    requestedByName: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:""),
+    requestedAt: new Date().toISOString(),
+    scheduledAt: "", availableTimesNote: "",
+    vendorCost: null, vendorCostSubmittedAt: null,
+    clientChargeAmount: null, clientChargeSetAt: null,
+    clientCharged: false, clientChargedAt: null,
+    vendorPaid: false, vendorPaidAt: null,
+    receipts: [], discussion: []
+  };
+  upsert("vendors", vendorId, { tickets: [...(vendor.tickets||[]), ticket] });
+  return ticket.id;
+}
+function updateVendorTicketFields(vendorId, ticketId, patch){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return;
+  const tickets = (vendor.tickets||[]).map(t=>t.id===ticketId?{...t,...patch}:t);
+  upsert("vendors", vendorId, { tickets });
+}
+function updateVendorTicketField(vendorId, ticketId, field, value){
+  updateVendorTicketFields(vendorId, ticketId, { [field]: value });
+}
+function submitVendorTicketCost(vendorId, ticketId, amount){
+  updateVendorTicketFields(vendorId, ticketId, { vendorCost: amount, vendorCostSubmittedAt: new Date().toISOString() });
+}
+function setVendorTicketClientCharge(vendorId, ticketId, amount){
+  updateVendorTicketFields(vendorId, ticketId, { clientChargeAmount: amount, clientChargeSetAt: new Date().toISOString() });
+}
+function markVendorTicketClientCharged(vendorId, ticketId){
+  updateVendorTicketFields(vendorId, ticketId, { clientCharged: true, clientChargedAt: new Date().toISOString() });
+}
+function markVendorTicketPaid(vendorId, ticketId, paid){
+  updateVendorTicketFields(vendorId, ticketId, { vendorPaid: paid, vendorPaidAt: paid ? new Date().toISOString() : null });
+}
+function addVendorTicketReceipt(vendorId, ticketId, receipt){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return;
+  const tickets = (vendor.tickets||[]).map(t=>t.id===ticketId?{...t, receipts:[...(t.receipts||[]), receipt]}:t);
+  upsert("vendors", vendorId, { tickets });
+}
+function removeVendorTicketReceipt(vendorId, ticketId, receiptId){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return;
+  const tickets = (vendor.tickets||[]).map(t=>t.id===ticketId?{...t, receipts:(t.receipts||[]).filter(r=>r.id!==receiptId)}:t);
+  upsert("vendors", vendorId, { tickets });
+}
+function addVendorTicketComment(vendorId, ticketId, author, text){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return;
+  const comment = { id:newId("vcomment"), author, text, date:new Date().toISOString() };
+  const tickets = (vendor.tickets||[]).map(t=>t.id===ticketId?{...t, discussion:[...(t.discussion||[]), comment]}:t);
+  upsert("vendors", vendorId, { tickets });
+}
+function removeVendorTicket(vendorId, ticketId){
+  if(!confirm("Remove this request? This can't be undone.")) return;
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  if(!vendor) return;
+  upsert("vendors", vendorId, { tickets:(vendor.tickets||[]).filter(t=>t.id!==ticketId) });
+}
+// All tickets across every vendor, newest first — used by both the
+// company-wide Vendor Tickets tab and the Dashboard's markup/payout queues.
+function allVendorTickets(){
+  const rows = [];
+  (state.vendors||[]).forEach(vendor=>{
+    (vendor.tickets||[]).forEach(ticket=>{
+      rows.push({ vendor, ticket, client: state.clients.find(c=>c.id===ticket.clientId) });
+    });
+  });
+  return rows.sort((a,b)=> b.ticket.requestedAt < a.ticket.requestedAt ? -1 : 1);
+}
+function toggleVendorTicketsHistory(){ state.vendorTicketsHistoryOpen = !state.vendorTicketsHistoryOpen; render(); }
+// Visible to admin AND every team member, same as the Task Board — anyone
+// might need to check on a job for a client they work with, not just
+// whoever happened to submit the original request.
+function renderVendorTicketsTab(){
+  const isAdmin = state.role==="admin";
+  const vendorsWithPortal = (state.vendors||[]).filter(v=>v.portalAccessCode);
+  const rows = allVendorTickets();
+  const openRows = rows.filter(({ticket})=>vendorTicketStage(ticket)!=="paid");
+  const doneRows = rows.filter(({ticket})=>vendorTicketStage(ticket)==="paid");
+  return `
+    <h2>Vendor Requests</h2>
+    <div class="small" style="margin-bottom:14px;">Submit a request to a vendor (handyman, etc.) on a client's behalf — he schedules it and submits his cost, ${isAdmin?'you mark it up':'admin marks it up'}, then whoever's on the job charges the client for the marked-up amount.</div>
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Open requests <span class="small">(${openRows.length})</span></h3>
+        <button onclick="openNewVendorTicketModal()" ${vendorsWithPortal.length?'':'disabled title="No vendor has a portal login set up yet — add one on the Vendors tab."'}>+ New request</button>
+      </div>
+      ${openRows.length ? openRows.map(r=>renderVendorTicketRow(r)).join("") : `<div class="small">No open requests right now.</div>`}
+    </div>
+    ${doneRows.length ? `
+    <div class="card">
+      <div class="flex-between" style="cursor:pointer;" onclick="toggleVendorTicketsHistory()">
+        <h3 style="margin:0;">Paid &amp; closed <span class="small">(${doneRows.length})</span></h3>
+        <span class="small">${state.vendorTicketsHistoryOpen?'Hide ▲':'Show ▼'}</span>
+      </div>
+      ${state.vendorTicketsHistoryOpen ? doneRows.map(r=>renderVendorTicketRow(r)).join("") : ""}
+    </div>` : ""}
+  `;
+}
+function renderVendorTicketRow({vendor, ticket, client}){
+  const stage = vendorTicketStage(ticket);
+  const stageLabel = VENDOR_TICKET_STAGE_LABELS[stage];
+  const stageColor = stage==="paid" ? 'var(--ok)' : stage==="readyToCharge" ? 'var(--warn)' : stage==="chargedAwaitingPayout" ? 'var(--rose-dark)' : '#8a7a72';
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;cursor:pointer;" onclick="openVendorTicketDetail('${vendor.id}','${ticket.id}')">
+      <div class="flex-between">
+        <div>
+          <strong>${escHtml(ticket.title||'(untitled)')}</strong>
+          <div class="small">${client?client.name:'—'} · ${escHtml(vendor.name||'')} · requested by ${ticket.requestedByName||'—'}</div>
+        </div>
+        <span class="badge" style="background:${stageColor};">${stageLabel}</span>
+      </div>
+      ${ticket.vendorCost!=null || ticket.clientChargeAmount!=null ? `<div class="small">${ticket.vendorCost!=null?'His cost: $'+ticket.vendorCost.toFixed(2):''}${ticket.clientChargeAmount!=null?' · Charge client: $'+ticket.clientChargeAmount.toFixed(2):''}</div>` : ""}
+    </div>
+  `;
+}
+function openNewVendorTicketModal(){
+  state.modal = { type:"newVendorTicket", draft:{ vendorId:"", clientId:"", title:"", description:"" } };
+  render();
+}
+function renderNewVendorTicketModal(){
+  const d = state.modal.draft;
+  const vendorsWithPortal = (state.vendors||[]).filter(v=>v.portalAccessCode);
+  return `
+    <div class="modal">
+      <h3>New vendor request</h3>
+      <div class="row">
+        <div><label class="small">Vendor</label>
+          <select onchange="state.modal.draft.vendorId=this.value">
+            <option value="">— Select —</option>
+            ${vendorsWithPortal.map(v=>`<option value="${v.id}" ${d.vendorId===v.id?'selected':''}>${escHtml(v.name||'')}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Client</label>
+          <select onchange="state.modal.draft.clientId=this.value">
+            <option value="">— Select —</option>
+            ${state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>`<option value="${c.id}" ${d.clientId===c.id?'selected':''}>${c.name}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:8px;"><label class="small">What's needed?</label><input id="nvt_title" value="${escHtml(d.title||'')}" oninput="state.modal.draft.title=this.value" placeholder="e.g. Change light bulbs, assemble furniture, swap AC filter"></div>
+      <div style="margin-top:8px;"><label class="small">Details (optional)</label><textarea id="nvt_description" oninput="state.modal.draft.description=this.value">${escHtml(d.description||'')}</textarea></div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="saveNewVendorTicket()">Send request</button>
+      </div>
+    </div>
+  `;
+}
+function saveNewVendorTicket(){
+  const d = state.modal.draft;
+  if(!d.vendorId){ alert("Pick a vendor."); return; }
+  if(!d.clientId){ alert("Pick a client."); return; }
+  if(!(d.title||"").trim()){ alert("Describe what's needed."); return; }
+  createVendorTicket(d.vendorId, d.clientId, d.title.trim(), (d.description||"").trim());
+  closeModal();
+}
+function openVendorTicketDetail(vendorId, ticketId){
+  state.modal = { type:"vendorTicketDetail", vendorId, ticketId };
+  render();
+}
+function renderVendorTicketDetailModal(vendorId, ticketId){
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  const ticket = vendor && (vendor.tickets||[]).find(t=>t.id===ticketId);
+  if(!vendor || !ticket){
+    return `<div class="modal"><div class="small">This request no longer exists.</div><div style="margin-top:10px;"><button class="secondary" onclick="closeModal()">Close</button></div></div>`;
+  }
+  const client = state.clients.find(c=>c.id===ticket.clientId);
+  const isAdmin = state.role==="admin";
+  return `
+    <div class="modal">
+      <div class="flex-between">
+        <h3 style="margin:0;">${escHtml(ticket.title||'(untitled)')}</h3>
+        <button class="secondary" onclick="closeModal()">Close</button>
+      </div>
+      <div class="small" style="margin:6px 0;">${client?client.name:'—'} · ${escHtml(vendor.name||'')} · requested by ${ticket.requestedByName||'—'} on ${new Date(ticket.requestedAt).toLocaleDateString()}</div>
+      ${ticket.description ? `<p>${escHtml(ticket.description)}</p>` : ''}
+      <div class="small" style="font-weight:600;margin-top:10px;">Scheduling</div>
+      <div class="small">${ticket.scheduledAt ? 'Scheduled for '+new Date(ticket.scheduledAt).toLocaleString() : ticket.availableTimesNote ? 'He offered: &ldquo;'+escHtml(ticket.availableTimesNote)+'&rdquo; — check with the client which works' : 'Not yet scheduled'}</div>
+      <div class="small" style="font-weight:600;margin-top:10px;">His cost</div>
+      <div class="small">${ticket.vendorCost!=null ? '$'+ticket.vendorCost.toFixed(2)+' (submitted '+new Date(ticket.vendorCostSubmittedAt).toLocaleDateString()+')' : 'Not submitted yet'}</div>
+      ${isAdmin ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Amount to charge the client</label>
+        <div class="row" style="margin-top:4px;">
+          <div><input id="vt_charge_${ticket.id}" type="number" step="1" value="${ticket.clientChargeAmount!=null?ticket.clientChargeAmount:''}" placeholder="e.g. 150" style="max-width:140px;"></div>
+          <button class="secondary" onclick="setVendorTicketClientCharge('${vendor.id}','${ticket.id}',parseFloat(document.getElementById('vt_charge_${ticket.id}').value)||0)">Save</button>
+        </div>
+        ${ticket.vendorCost!=null && ticket.clientChargeAmount!=null ? `<div class="small" style="margin-top:4px;">TMC margin: $${(ticket.clientChargeAmount-ticket.vendorCost).toFixed(2)}</div>` : ""}
+      </div>` : ticket.clientChargeAmount!=null ? `
+      <div class="small" style="margin-top:10px;font-weight:600;">Charge the client: $${ticket.clientChargeAmount.toFixed(2)}</div>
+      ` : ''}
+      ${ticket.clientChargeAmount!=null && !ticket.clientCharged ? `<button style="margin-top:8px;" onclick="markVendorTicketClientCharged('${vendor.id}','${ticket.id}')">I've charged the client</button>` : ""}
+      ${ticket.clientCharged ? `<div class="small" style="color:var(--ok);margin-top:8px;">✓ Client charged on ${new Date(ticket.clientChargedAt).toLocaleDateString()}</div>` : ""}
+      ${isAdmin ? `
+        ${ticket.clientCharged && !ticket.vendorPaid ? `<button class="secondary" style="margin-top:8px;" onclick="markVendorTicketPaid('${vendor.id}','${ticket.id}',true)">Mark ${escHtml(vendor.name||'vendor')} paid</button>` : ""}
+        ${ticket.vendorPaid ? `<div class="small" style="color:var(--ok);margin-top:8px;">✓ Paid ${escHtml(vendor.name||'')} on ${new Date(ticket.vendorPaidAt).toLocaleDateString()} <a href="#" onclick="markVendorTicketPaid('${vendor.id}','${ticket.id}',false);return false;">Undo</a></div>` : ""}
+      ` : ""}
+      ${(ticket.receipts||[]).length ? `
+      <div style="margin-top:10px;">
+        <label class="small" style="font-weight:600;">Receipts</label>
+        ${ticket.receipts.map(r=>`<div class="small">📎 <a href="${r.dataUrl}" download="${r.name}">${escHtml(r.name||'receipt')}</a> — ${new Date(r.uploadedAt).toLocaleDateString()}</div>`).join("")}
+      </div>` : ""}
+      ${renderVendorTicketDiscussion(vendor.id, ticket)}
+      ${isAdmin ? `<div style="margin-top:14px;"><button class="danger" onclick="removeVendorTicket('${vendor.id}','${ticket.id}');closeModal();">Remove request</button></div>` : ""}
+    </div>
+  `;
+}
+function renderVendorTicketDiscussion(vendorId, ticket){
+  return `
+    <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+      <label class="small" style="font-weight:600;">Discussion</label>
+      <div style="max-height:160px;overflow-y:auto;margin:6px 0;">
+        ${(ticket.discussion||[]).length ? ticket.discussion.map(d=>`
+          <div class="list-item" style="flex-direction:column;align-items:stretch;gap:2px;">
+            <div class="flex-between"><strong>${escHtml(d.author||'')}</strong><span class="small">${new Date(d.date).toLocaleString()}</span></div>
+            <div>${escHtml(d.text)}</div>
+          </div>`).join("") : `<div class="small">No messages yet.</div>`}
+      </div>
+      <div style="display:flex;gap:6px;">
+        <input id="vt_new_comment" placeholder="Message...">
+        <button class="secondary" onclick="submitVendorTicketComment('${vendorId}','${ticket.id}')">Send</button>
+      </div>
+    </div>
+  `;
+}
+function submitVendorTicketComment(vendorId, ticketId){
+  const input = document.getElementById("vt_new_comment");
+  const text = input.value.trim();
+  if(!text) return;
+  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
+  const author = state.role==="admin" ? "Admin" : state.role==="vendor" ? (vendor?vendor.name:"Vendor") : (state.currentAssistant?state.currentAssistant.name:"Team");
+  addVendorTicketComment(vendorId, ticketId, author, text);
+  input.value = "";
 }
 // --- Client Card Purchases — accountability log for assistants using a
 // client's own card. Admin-only to view/review; assistants can only
@@ -10033,6 +10328,8 @@ function renderModal(){
     : state.modal.type==="contentTaskViewer" ? renderContentTaskViewerModal(state.modal.taskId)
     : state.modal.type==="leadEditor" ? renderLeadEditorModal(state.modal.prefill)
     : state.modal.type==="cardPurchaseEntry" ? renderCardPurchaseEntryModal()
+    : state.modal.type==="newVendorTicket" ? renderNewVendorTicketModal()
+    : state.modal.type==="vendorTicketDetail" ? renderVendorTicketDetailModal(state.modal.vendorId, state.modal.ticketId)
     : "";
   const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
