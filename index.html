@@ -5043,7 +5043,7 @@ function renderTeamDashboard(){
   const myClientIds = new Set(state.clients.filter(c=>(c.assistantIds||[]).includes(state.currentAssistant?.id)).map(c=>c.id));
   const alerts = state.clients.filter(c=>myClientIds.has(c.id)).map(tierAlert).filter(Boolean);
   const myEntry = state.currentAssistant && activeEntryFor(state.currentAssistant.id);
-  const myOpenTasks = state.tasks.filter(t=>t.status!=="Done" && (t.assignees||[]).includes(state.currentAssistant?.id));
+  const myOpenTasks = state.tasks.filter(t=>t.status!=="Done" && taskBelongsToActiveClient(t) && (t.assignees||[]).includes(state.currentAssistant?.id));
   const myPending = state.tasks.filter(t=>t.status==="Pending approval" && (t.assignees||[]).includes(state.currentAssistant?.id));
 
   // Week ahead: anything flagged priority, plus anything due in the next 7
@@ -7455,8 +7455,14 @@ function taskMatchesMarketFilter(t, market){
 function renderKanban(){
   const f = state.kanbanFilter;
   const search = (f.search||"").trim().toLowerCase();
+  // A paused/cancelled client's tasks never close themselves out — without
+  // this they'd sit on the board forever. Picking that client by name in the
+  // filter above still shows them (e.g. to clean up or review before
+  // re-activating); "All clients" is the only view that hides them.
+  const inactiveHidden = t => f.clientId==="all" && !taskBelongsToActiveClient(t);
   const filtered = state.tasks.filter(t=>{
     if(f.clientId!=="all" && t.clientId!==f.clientId) return false;
+    if(inactiveHidden(t)) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
     if(!taskMatchesMarketFilter(t, f.market||"all")) return false;
     if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
@@ -7470,11 +7476,13 @@ function renderKanban(){
   const doneCount = state.tasks.filter(t=>{
     if(t.status!=="Done") return false;
     if(f.clientId!=="all" && t.clientId!==f.clientId) return false;
+    if(inactiveHidden(t)) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
     if(!taskMatchesMarketFilter(t, f.market||"all")) return false;
     if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
     return true;
   }).length;
+  const inactiveHiddenCount = f.clientId==="all" ? state.tasks.filter(t=>t.status!=="Done" && !taskBelongsToActiveClient(t)).length : 0;
   const visibleStatuses = f.hideDone ? STATUSES.filter(s=>s!=="Done") : STATUSES;
   return `
     <div class="flex-between"><h2>Task Board</h2><button onclick="openTaskEditor(null,null)">+ New task</button></div>
@@ -7525,6 +7533,7 @@ function renderKanban(){
       </div>
     </div>
     ${f.hideDone && doneCount>0 ? `<div class="small" style="margin-bottom:10px;">${doneCount} completed task${doneCount===1?'':'s'} hidden — nothing's deleted, they're still on the client's task history and this period's report. <a href="#" onclick="setKanbanFilter('hideDone',false);return false;">Show them</a>.</div>` : ""}
+    ${inactiveHiddenCount>0 ? `<div class="small" style="margin-bottom:10px;">${inactiveHiddenCount} open task${inactiveHiddenCount===1?'':'s'} hidden because ${inactiveHiddenCount===1?'its':'their'} client is paused or cancelled — nothing's deleted, pick that client from the Client filter above to see them.</div>` : ""}
     <div class="kanban">
       ${visibleStatuses.map(status=>`
         <div class="kanban-col">
