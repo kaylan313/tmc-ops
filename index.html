@@ -3917,7 +3917,8 @@ function fetchQuickBooksLastMonthSummaryIfStale(){
 // standalone Scorecard rows but are exactly what a goal gets set against.
 const SCORECARD_GOAL_METRICS = [
   ...SCORECARD_METRIC_DEFS,
-  { key:"qbPayrollMarginPct", label:"Payroll Margin % (last month)", group:"Operations", fmt:v=>v.toFixed(1)+"%", lowerIsBetter:true }
+  { key:"qbPayrollMarginPct", label:"Payroll Margin % (last month)", group:"Operations", fmt:v=>v.toFixed(1)+"%", lowerIsBetter:true },
+  { key:"vendorServicesMargin", label:"Vendor Services Margin (last month)", group:"Growth", fmt:v=>"$"+v.toLocaleString() }
 ];
 // Actual value for a goal — QB-sourced money/payroll metrics use the
 // MONTH-TO-DATE summary (qbMonthSummary), everything else (active clients,
@@ -3969,6 +3970,27 @@ function appPayrollMarginForLastMonth(){
   const payroll = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
   return { period, revenue, membershipRevenue, addOnRevenue, payroll, marginPct: payrollMarginPct(revenue, payroll) };
 }
+// What TMC actually makes off vendor-facilitated services (handyman, etc.)
+// — invisible anywhere else, since QuickBooks only sees the marked-up
+// client charge and the vendor payout as two generic, unconnected
+// transactions, with no link back to which ticket either belongs to. The
+// margin only exists here, where both sides of the same ticket are known.
+// Matched by clientChargedAt (when the client was actually billed), same
+// month window as Payroll Margin, for the same "fully closed, comparable"
+// reason.
+function vendorServicesMarginForLastMonth(){
+  const period = previousCalendarMonthRange();
+  let revenue = 0, cost = 0, count = 0;
+  allVendorTickets().forEach(({ticket})=>{
+    if(!ticket.clientCharged || !ticket.clientChargedAt) return;
+    const chargedAt = new Date(ticket.clientChargedAt);
+    if(chargedAt < period.start || chargedAt >= period.end) return;
+    revenue += ticket.clientChargeAmount||0;
+    cost += ticket.vendorCost||0;
+    count++;
+  });
+  return { period, revenue, cost, margin: revenue-cost, count };
+}
 function scorecardGoalActualValue(metricKey){
   const ms = state.qbMonthSummary;
   if(metricKey==="qbIncome") return ms ? ms.income : null;
@@ -3976,6 +3998,7 @@ function scorecardGoalActualValue(metricKey){
   if(metricKey==="qbExpenses") return ms ? ms.expenses : null;
   if(metricKey==="qbPayroll") return ms ? ms.payroll : null;
   if(metricKey==="qbPayrollMarginPct") return appPayrollMarginForLastMonth().marginPct;
+  if(metricKey==="vendorServicesMargin") return vendorServicesMarginForLastMonth().margin;
   return computeScorecardMetrics()[metricKey];
 }
 function addScorecardGoal(){
@@ -4127,6 +4150,29 @@ function renderScorecardTab(){
       </div>
       ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this period's Expenses and the QuickBooks comparison numbers.</div>` : ""}
     </div>
+    ${(()=>{
+      const vs = vendorServicesMarginForLastMonth();
+      return `
+    <div class="card">
+      <h3 style="margin:0;">Vendor Services Margin — Last Month</h3>
+      <div class="small" style="margin:4px 0 10px;">${formatPeriodRange(vs.period)} — what TMC actually makes marking up vendor-facilitated work (handyman, etc.). QuickBooks only ever sees the client charge and the vendor payout as two separate, unconnected transactions — this is the one place both sides of the same ticket meet.</div>
+      <div class="stat-row">
+        <div class="stat-tile">
+          <div class="stat-label">Charged to clients</div>
+          <div class="stat-value">$${vs.revenue.toFixed(2)}</div>
+          <div class="stat-sub">${vs.count} ticket${vs.count===1?'':'s'} closed this month</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Paid to vendors</div>
+          <div class="stat-value">$${vs.cost.toFixed(2)}</div>
+        </div>
+        <div class="stat-tile ${vs.margin<0?'status-danger':''}">
+          <div class="stat-label">Margin</div>
+          <div class="stat-value">$${vs.margin.toFixed(2)}</div>
+        </div>
+      </div>
+    </div>`;
+    })()}
     <div class="card">
       <div class="flex-between">
         <h3 style="margin:0;">Goals — ${monthLabel}</h3>
