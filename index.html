@@ -404,6 +404,7 @@ let state = {
   payrollReportPeriod: "period", // "period" (current) or "lastPeriod" — which payroll period the per-assistant report/email download covers
   clientHoursFilter: { preset: "week" },
   kanbanFilter: { clientId: "all", category: "all", market: "all", onlyMine: false, hideDone: true, sort: "priority", search: "" },
+  clientTaskListFilter: { sort: "newest", search: "" },
   clientMarketFilter: "all",
   // The client request form's fields used to be uncontrolled (no value=
   // binding), so a background render() — from any other client/assistant's
@@ -1195,22 +1196,24 @@ function togglePayrollPeriodPaid(periodEndIso, paid){
   upsert("settings","access", { paidPayrollPeriods: state.settings.paidPayrollPeriods });
   render();
 }
-// Permanently deletes a completed task once BOTH: (a) it's more than 60
-// days past its completion date — safely outside the current AND previous
-// 30-day payroll period, and (b) the payroll period it was completed in
-// has been explicitly marked paid via the Payroll tab. Runs once per admin
-// login (see subscribeAppData) rather than on every render, since it's a
-// real delete, not a display filter.
+// Permanently deletes a completed task once it's more than 60 days past its
+// completion date — by then it's well outside the current AND previous
+// billing/payroll period, so it can't still be needed for an active report,
+// and its hours/payroll numbers have long since been counted. Runs once per
+// admin login (see subscribeAppData) rather than on every render, since
+// it's a real delete, not a display filter.
+//
+// Used to ALSO require that task's payroll period be explicitly marked paid
+// via the Payroll tab first — in practice that extra step just didn't
+// happen reliably, so completed tasks were piling up on client profiles
+// indefinitely instead of actually clearing out at 60 days like intended.
+// Dropped that gate; this is now a plain age check.
 function cleanupOldCompletedTasks(){
-  const paidPeriods = new Set(state.settings.paidPayrollPeriods || []);
-  if(!paidPeriods.size) return;
   const cutoff = Date.now() - 60*24*3600000;
   state.tasks.forEach(t=>{
     if(t.status!=="Done" || !t.completedAt) return;
     const completedAt = new Date(t.completedAt).getTime();
     if(isNaN(completedAt) || completedAt > cutoff) return;
-    const period = currentPayrollPeriod(new Date(completedAt));
-    if(!paidPeriods.has(period.end.toISOString())) return;
     remove("tasks", t.id);
   });
 }
@@ -6901,13 +6904,46 @@ function removeSpecialDate(clientId, index){
 }
 
 function renderClientTasks(client){
-  const tasks = state.tasks.filter(t=>t.clientId===client.id);
+  const f = state.clientTaskListFilter;
+  const search = (f.search||"").trim().toLowerCase();
+  let tasks = state.tasks.filter(t=>t.clientId===client.id);
+  if(search){
+    tasks = tasks.filter(t=>{
+      const hay = (t.title||"").toLowerCase() + " #" + (t.taskNumber||"");
+      return hay.includes(search);
+    });
+  }
+  tasks = sortKanbanTasks(tasks, f.sort);
   return `
     ${renderClientHoursCard(client)}
     <div class="card">
       <div class="flex-between"><h3>Tasks</h3><button onclick="openTaskEditor(null,'${client.id}')">+ New task</button></div>
+      <div class="row" style="margin:10px 0;">
+        <div>
+          <label class="small">Search</label>
+          <input id="clientTaskSearch" type="text" style="width:180px;" placeholder="Title or #number..." value="${(f.search||'').replace(/"/g,'&quot;')}" oninput="setClientTaskSearchDebounced(this.value)">
+        </div>
+        <div>
+          <label class="small">Sort</label>
+          <select onchange="setClientTaskListFilter('sort',this.value)">
+            <option value="newest" ${f.sort==='newest'?'selected':''}>Newest to oldest</option>
+            <option value="oldest" ${f.sort==='oldest'?'selected':''}>Oldest to newest</option>
+          </select>
+        </div>
+      </div>
       ${renderTaskMiniList(tasks)}
     </div>`;
+}
+function setClientTaskListFilter(field, value){
+  state.clientTaskListFilter[field] = value;
+  render();
+}
+// Same reasoning as the Task Board's search debounce — typing shouldn't
+// re-render this list on every keystroke.
+let _clientTaskSearchDebounceTimer = null;
+function setClientTaskSearchDebounced(value){
+  clearTimeout(_clientTaskSearchDebounceTimer);
+  _clientTaskSearchDebounceTimer = setTimeout(()=>{ setClientTaskListFilter('search', value); }, 200);
 }
 // Lets whoever's on this client's Tasks tab — admin or the assigned
 // assistant(s) — see total hours clocked for this client over a range they
@@ -8301,7 +8337,7 @@ function renderPayrollTool(){
       <div class="small" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         ${periodIsPaid
           ? `✓ ${periodLabel} (${formatPeriodRange(period)}) is marked paid. <a href="#" onclick="togglePayrollPeriodPaid('${periodPaidKey}',false);return false;">Undo</a>`
-          : `${periodLabel} (${formatPeriodRange(period)}) not yet marked paid. <a href="#" onclick="togglePayrollPeriodPaid('${periodPaidKey}',true);return false;">Mark as paid</a> — once a completed task's period is marked paid and it's 60+ days old, it's permanently deleted automatically to keep the Task Board clean.`}
+          : `${periodLabel} (${formatPeriodRange(period)}) not yet marked paid. <a href="#" onclick="togglePayrollPeriodPaid('${periodPaidKey}',true);return false;">Mark as paid</a> — just an audit record for your own tracking; completed tasks clean themselves up automatically 60 days after completion regardless of this.`}
       </div>` : ""}
     </div>
 
