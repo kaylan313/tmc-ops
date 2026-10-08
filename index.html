@@ -2728,13 +2728,32 @@ function renderSearchablePicker(id, options, value, onSelect, placeholder){
         oninput="state.comboboxQuery=this.value;render();"
         onblur="setTimeout(()=>closeComboboxIfStillOpen('${id}'),150)">
       ${isOpen ? `
-        <div style="position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--cream);border:1px solid var(--cream-dark);max-height:220px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+        <div id="combobox_list_${id}" style="position:fixed;z-index:9999;background:var(--cream);border:1px solid var(--cream-dark);max-height:220px;overflow-y:auto;box-shadow:0 4px 12px rgba(0,0,0,0.15);">
           ${matches.length ? matches.map(o=>`
             <div style="padding:6px 10px;cursor:pointer;" onmousedown="selectComboboxOption('${id}','${o.value}')" onmouseover="this.style.background='var(--cream-dark)'" onmouseout="this.style.background=''">${escHtml(o.label)}</div>
           `).join("") : `<div style="padding:6px 10px;color:#8a7a72;">No matches</div>`}
         </div>
       ` : ""}
     </div>`;
+}
+// A dropdown list positioned with plain CSS (position:absolute under its
+// input) gets silently clipped whenever it's inside a scrolling container —
+// which every .modal is (see .modal's max-height + overflow-y:auto) — so the
+// bottom of a long client list was unreachable, with no way to scroll to it.
+// position:fixed escapes that clipping entirely (it's relative to the
+// viewport, not any scrolling ancestor), but then has to be positioned with
+// real coordinates instead of CSS alone — computed here, once per render,
+// right after the page is rebuilt, same timing as the focus-restore right
+// above this gets its own pass.
+function repositionOpenCombobox(){
+  if(!state.openCombobox) return;
+  const input = document.getElementById("combobox_" + state.openCombobox);
+  const list = document.getElementById("combobox_list_" + state.openCombobox);
+  if(!input || !list) return;
+  const rect = input.getBoundingClientRect();
+  list.style.top = rect.bottom + "px";
+  list.style.left = rect.left + "px";
+  list.style.width = rect.width + "px";
 }
 
 function render(){
@@ -2796,8 +2815,16 @@ function render(){
     const canvas = document.getElementById('sigPad_'+sigClientId);
     if(canvas) initClientSigPad(sigClientId);
   }
+  repositionOpenCombobox();
 }
 window.addEventListener('resize', ()=>{ if(typeof resizeClientSigCanvas==='function') resizeClientSigCanvas(); });
+// Typing/opening/picking all go through render(), which repositions the open
+// combobox's list already — this covers the one case that doesn't: scrolling
+// a modal (or the page) while a dropdown is open, with no other state change
+// to trigger a render on its own. Capture:true so it catches scrolling on
+// ANY nested scrollable ancestor (e.g. .modal's own overflow-y:auto), not
+// just the window itself.
+window.addEventListener('scroll', ()=>{ if(typeof repositionOpenCombobox==='function') repositionOpenCombobox(); }, true);
 
 function renderLogin(){
   // Buttons stay disabled (instead of letting someone click through to a
