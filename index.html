@@ -1356,21 +1356,40 @@ function clearReceiptsInWindow(clientId, kind){
 // "period"-flavored kind, hours used/remaining are scoped to that specific
 // window instead of always "right now" — otherwise a last-period recap would
 // show this period's usage, which doesn't match what it's reporting on.
+//
+// Activity is driven by time entries, not just task status: a report used to
+// list only tasks marked Done inside the window, so a week of logged hours on
+// tasks still open (In progress, Researching, Pending approval) read to the
+// client as "No tasks completed this week" — i.e. like nothing was done.
+// `workedOn` is every task with time logged in the window that wasn't
+// completed in it; `windowHoursByTask` is what each item shows as its hours.
 function buildClientReport(client, window, kind){
   const tasks = state.tasks.filter(t=>t.clientId===client.id);
-  const inProgress = tasks.filter(t=>t.status==="In progress");
-  const todo = tasks.filter(t=>t.status==="To do");
+  const windowEntries = entriesForClient(client.id).filter(e=>{ const d = new Date(e.clockIn); return d >= window.start && d < window.end; });
+  const windowHoursByTask = new Map();
+  windowEntries.forEach(e=>windowHoursByTask.set(e.taskId, (windowHoursByTask.get(e.taskId)||0) + entryDurationHours(e)));
+  const hoursThisWindow = windowEntries.reduce((s,e)=>s+entryDurationHours(e), 0);
   const completed = tasks.filter(t=>{
     if(t.status!=="Done" || !t.completedAt) return false;
     const d = new Date(t.completedAt);
     return d >= window.start && d < window.end;
   });
+  const completedIds = new Set(completed.map(t=>t.id));
+  const workedOn = tasks.filter(t=>!completedIds.has(t.id) && (windowHoursByTask.get(t.id)||0) > 0);
+  const workedOnIds = new Set(workedOn.map(t=>t.id));
+  // Time on a task that's since been deleted still counts toward hours — show
+  // it as one lump so the hours on the report add up to the total.
+  const taskIds = new Set(tasks.map(t=>t.id));
+  const otherHours = windowEntries.filter(e=>!taskIds.has(e.taskId)).reduce((s,e)=>s+entryDurationHours(e), 0);
+  const inProgress = tasks.filter(t=>t.status==="In progress" && !workedOnIds.has(t.id));
+  const todo = tasks.filter(t=>t.status==="To do" && !workedOnIds.has(t.id));
   const isPeriodKind = kind==="period" || kind==="lastPeriod";
   const used = isPeriodKind ? hoursForClientInPeriod(client.id, window) : hoursUsed(client.id);
   const pkg = isPeriodKind ? effectivePackageHours(client, window) : effectivePackageHours(client);
   const overHours = Math.max(0, used - pkg);
   return {
-    kind, client, week: window, inProgress, todo, completed,
+    kind, client, week: window, inProgress, todo, completed, workedOn,
+    windowHoursByTask, hoursThisWindow, otherHours,
     hoursUsed: used, packageHours: pkg,
     hoursRemaining: Math.max(0, pkg - used),
     overHours, overageAmount: overHours * OVERAGE_RATE,
@@ -1380,12 +1399,14 @@ function buildClientReport(client, window, kind){
   };
 }
 function clientReportHtml(report){
-  const { client, week, inProgress, todo, completed } = report;
+  const { client, week, inProgress, todo, completed, workedOn } = report;
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
+  const span = isPeriod ? "this period" : "this week";
   const recapLabel = isPeriod ? "END-OF-PERIOD RECAP" : "END-OF-WEEK RECAP";
   const recapNoun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
   const completedLabel = isPeriod ? "Completed This Period" : "Completed This Week";
-  const completedEmpty = isPeriod ? "No tasks completed this period." : "No tasks completed this week.";
+  const workedOnLabel = isPeriod ? "Worked On This Period" : "Worked On This Week";
+  const noActivity = !completed.length && !workedOn.length && !report.otherHours;
   const footerTag = isPeriod ? "MEMBERSHIP PERIOD REPORT" : "WEEKLY RECAP REPORT";
   const fmt = d => new Date(d).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
   const fmtShort = d => (d.getMonth()+1) + "/" + d.getDate();
@@ -1397,7 +1418,7 @@ function clientReportHtml(report){
     <div class="item ${itemKind==='progress'?'progress':''}${itemKind==='todo'?'todo':''}">
       <div class="item-label">${(t.title||'').toUpperCase()}</div>
       <div class="item-body">${(t.description||t.title||'').trim()}</div>
-      ${isPeriod && itemKind!=='todo' ? `<div class="item-hours">${formatHoursMinutes(hoursForTask(t.id))} logged</div>` : ""}
+      ${itemKind!=='todo' && report.windowHoursByTask.get(t.id) ? `<div class="item-hours">${formatHoursMinutes(report.windowHoursByTask.get(t.id))} logged ${span}</div>` : ""}
     </div>`;
 
   return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${client.name} — ${isPeriod ? 'Period' : 'Weekly'} Recap</title>
@@ -1468,8 +1489,18 @@ function clientReportHtml(report){
       <div class="sub-meta">${recapNoun} &middot; ${dateRange}</div>
       <hr>
 
+      <div class="section-label">Time Logged ${isPeriod ? "This Period" : "This Week"}</div>
+      <div class="item-body" style="margin-bottom:16px;font-size:20px;font-family:'Playfair Display',serif;font-weight:600;">${formatHoursMinutes(report.hoursThisWindow)}</div>
+
+      ${noActivity ? `<div class="item-body" style="margin-bottom:16px;">No work logged ${span}.</div>` : `
+      ${completed.length ? `
       <div class="section-label">${completedLabel}</div>
-      ${completed.length ? completed.map(t=>item(t,'done')).join("") : `<div class="item-body" style="margin-bottom:16px;">${completedEmpty}</div>`}
+      ${completed.map(t=>item(t,'done')).join("")}` : ""}
+      ${workedOn.length || report.otherHours ? `
+      <div class="section-label" style="margin-top:18px;">${workedOnLabel}</div>
+      ${workedOn.map(t=>item(t,'progress')).join("")}
+      ${report.otherHours ? `<div class="item progress"><div class="item-label">ADDITIONAL WORK</div><div class="item-hours">${formatHoursMinutes(report.otherHours)} logged ${span}</div></div>` : ""}` : ""}
+      `}
 
       <hr>
 
@@ -1543,7 +1574,8 @@ function clientReportCoverNote(report, reportUrl){
       + " — that's a $" + report.overageAmount.toFixed(2) + " overage at $" + OVERAGE_RATE + "/hr."
     : "";
   return "Hi " + firstName + ",\n\n"
-    + reportLine + " You have used " + formatHoursMinutes(report.hoursUsed)
+    + reportLine + " We logged " + formatHoursMinutes(report.hoursThisWindow) + " of work for you this " + (isPeriod?"period":"week") + "."
+    + " You have used " + formatHoursMinutes(report.hoursUsed)
     + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + overageLine + receiptsLine + "\n\n"
     + "Please let me know if you have any questions regarding this report.\n\n"
     + "The Modern Concierge Team";
@@ -8703,7 +8735,7 @@ function renderReportsTab(){
           </div>
           <div class="row">
             <div>
-              <div class="small" style="margin-bottom:4px;">Weekly &middot; ${weekReport.inProgress.length} in progress · ${weekReport.completed.length} completed this week</div>
+              <div class="small" style="margin-bottom:4px;">Weekly &middot; ${formatHoursMinutes(weekReport.hoursThisWindow)} logged · ${weekReport.completed.length} completed · ${weekReport.workedOn.length} worked on · ${weekReport.inProgress.length} other in progress</div>
               <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
               <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
             </div>
@@ -8728,7 +8760,7 @@ function renderReportsTab(){
           ${state.reportsExpanded && state.reportsExpanded.has(client.id) ? `
           <div style="border-top:1px solid var(--cream-dark);padding-top:10px;">
             <div class="small" style="margin-bottom:6px;">These are exactly the tasks this week's report will include. Wrong status, wrong completed date, or shouldn't exist at all? Fix or remove it right here.</div>
-            ${[...weekReport.inProgress.map(t=>({t,label:'In progress'})), ...weekReport.completed.map(t=>({t,label:'Completed '+(t.completedAt?new Date(t.completedAt).toLocaleDateString():'')}))].map(({t,label})=>`
+            ${[...weekReport.workedOn.map(t=>({t,label:'Worked on — '+formatHoursMinutes(weekReport.windowHoursByTask.get(t.id)||0)+' this week ('+t.status+')'})), ...weekReport.inProgress.map(t=>({t,label:'In progress'})), ...weekReport.completed.map(t=>({t,label:'Completed '+(t.completedAt?new Date(t.completedAt).toLocaleDateString():'')}))].map(({t,label})=>`
               <div class="list-item">
                 <div>${t.title} <span class="small">· ${label}</span></div>
                 <div style="display:flex;gap:6px;">
@@ -10223,6 +10255,7 @@ function renderClientPortal(){
         <div class="card">
           <h3>This week's update</h3>
           <div class="small" style="margin-bottom:8px;">${formatPeriodRange(weekReport.week)}</div>
+          <div class="small" style="margin-bottom:8px;">Time logged this week: <strong>${formatHoursMinutes(weekReport.hoursThisWindow)}</strong></div>
           <div class="small" style="font-weight:600;margin-bottom:4px;">Completed this week</div>
           ${weekReport.completed.map(t=>`
             <div class="list-item">
@@ -10230,6 +10263,14 @@ function renderClientPortal(){
               <span class="small">${hoursForTask(t.id).toFixed(1)} hrs</span>
             </div>
           `).join("") || `<div class="small">Nothing completed this week.</div>`}
+          ${weekReport.workedOn.length ? `
+          <div class="small" style="font-weight:600;margin:12px 0 4px;">Worked on this week</div>
+          ${weekReport.workedOn.map(t=>`
+            <div class="list-item">
+              <div>${t.description||t.title}</div>
+              <span class="small">${(weekReport.windowHoursByTask.get(t.id)||0).toFixed(1)} hrs this week</span>
+            </div>
+          `).join("")}` : ""}
           <div class="small" style="font-weight:600;margin:12px 0 4px;">In progress</div>
           ${weekReport.inProgress.map(t=>`
             <div class="list-item">
