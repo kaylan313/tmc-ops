@@ -2700,7 +2700,23 @@ function closeComboboxIfStillOpen(id){
   // Deferred via setTimeout by the input's onblur below — mousedown on an
   // option (which fires before blur) handles the normal "picked something"
   // case; this is the fallback for "clicked/tabbed away without picking."
-  if(state.openCombobox === id){ state.openCombobox = null; render(); }
+  //
+  // Every keystroke re-renders, which destroys the old input element and
+  // creates a new one — and a focused element being removed from the page
+  // fires its OWN blur event, which schedules its OWN 150ms close timer.
+  // Typing a few letters in under 150ms queues up several of these from
+  // already-destroyed nodes. By the time one of them fires, state.openCombobox
+  // is still set (nothing closed it), so checking only that used to close
+  // the box and blank the field out from under someone mid-type, or close
+  // the list while they were in the middle of scrolling it. Checking that
+  // the CURRENT combobox input has actually lost focus — not just that some
+  // earlier node fired blur at some point — is what actually distinguishes
+  // a real "clicked away" from this.
+  if(state.openCombobox !== id) return;
+  const current = document.getElementById("combobox_" + id);
+  if(current && document.activeElement === current) return;
+  state.openCombobox = null;
+  render();
 }
 function selectComboboxOption(id, value){
   const cb = comboboxCallbacks[id];
