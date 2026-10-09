@@ -4870,15 +4870,33 @@ function openNewVendorTicketModal(){
 // Prefills from the client's profile, but only overwrites what's in the box
 // if it's empty or still exactly the previous client's prefill — switching
 // clients shouldn't wipe out access notes someone already hand-edited.
+function clientHomeAccess(clientId){
+  const c = state.clients.find(x=>x.id===clientId);
+  return ((c && c.profile && c.profile.homeAccess) || "").trim();
+}
 function prefillVendorTicketAccess(clientId){
   const d = state.modal.draft;
-  const profileAccess = id=>{ const c = state.clients.find(x=>x.id===id); return (c && c.profile && c.profile.homeAccess) || ""; };
-  if(!(d.accessInstructions||"").trim() || d.accessInstructions===profileAccess(d.clientId)) d.accessInstructions = profileAccess(clientId);
+  if(!(d.accessInstructions||"").trim() || d.accessInstructions===clientHomeAccess(d.clientId)) d.accessInstructions = clientHomeAccess(clientId);
   d.clientId = clientId;
+}
+const MISSING_HOME_ACCESS_MSG = "This client has no Home access information on file, so the vendor won't know how to get into the home.\n\nGet the home access information from the client and add it to their client profile (Details tab → 2. Home Onboarding → Home access) first, then submit this request.";
+// Jumps straight to the empty Home access box so the assistant can fill it in.
+function openClientHomeAccess(clientId){
+  closeModal();
+  state.activeTab = "clients";
+  state.selectedClientId = clientId;
+  state.crmSubTab = "profileDetails";
+  state.profileOpenSections = new Set(["home"]);
+  render();
+  setTimeout(()=>{ const el = document.getElementById("prof_homeAccess_"+clientId); if(el){ el.scrollIntoView({block:"center"}); el.focus(); } }, 0);
 }
 function renderNewVendorTicketModal(){
   const d = state.modal.draft;
   const vendorsWithPortal = (state.vendors||[]).filter(v=>v.portalAccessCode);
+  const missingAccess = d.clientId && !clientHomeAccess(d.clientId);
+  // Profile may have been filled in (by someone else) after the client was
+  // picked — pick it up rather than leaving the box empty.
+  if(d.clientId && !missingAccess && !(d.accessInstructions||"").trim()) d.accessInstructions = clientHomeAccess(d.clientId);
   return `
     <div class="modal">
       <h3>New vendor request</h3>
@@ -4890,12 +4908,19 @@ function renderNewVendorTicketModal(){
           </select>
         </div>
         <div><label class="small">Client</label>
-          ${renderSearchablePicker('nvt_client', state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>({value:c.id,label:c.name})), d.clientId, v=>{ prefillVendorTicketAccess(v); render(); }, '— Select —')}
+          ${renderSearchablePicker('nvt_client', state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>({value:c.id,label:c.name})), d.clientId, v=>{ prefillVendorTicketAccess(v); render(); if(v && !clientHomeAccess(v)) setTimeout(()=>alert(MISSING_HOME_ACCESS_MSG), 0); }, '— Select —')}
         </div>
       </div>
       <div style="margin-top:8px;"><label class="small">What's needed?</label><input id="nvt_title" value="${escHtml(d.title||'')}" oninput="state.modal.draft.title=this.value" placeholder="e.g. Change light bulbs, assemble furniture, swap AC filter"></div>
       <div style="margin-top:8px;"><label class="small">Details (optional)</label><textarea id="nvt_description" oninput="state.modal.draft.description=this.value">${escHtml(d.description||'')}</textarea></div>
-      <div style="margin-top:8px;"><label class="small">How to get into the home (the vendor sees this — filled in from the client's Home access notes, edit it down to just what he needs)</label><textarea id="nvt_access" oninput="state.modal.draft.accessInstructions=this.value" placeholder="e.g. Lockbox on back door, code 1234. Alarm is off. Park in driveway.">${escHtml(d.accessInstructions||'')}</textarea></div>
+      <div style="margin-top:8px;"><label class="small">How to get into the home (the vendor sees this — pulled from the client's Details tab, Home Onboarding → Home access; edit it down to just what he needs)</label>
+        ${missingAccess ? `
+        <div class="alert danger" style="margin-top:4px;">
+          <strong>Home access info needed.</strong> This client's profile has nothing in the Home access box, so the vendor won't know how to get in. Get the home access information from the client and update their profile first, then submit this request.
+          <div style="margin-top:6px;"><button class="secondary" onclick="openClientHomeAccess('${d.clientId}')">Go to client profile → Home access</button></div>
+        </div>` : d.clientId ? `<textarea id="nvt_access" oninput="state.modal.draft.accessInstructions=this.value">${escHtml(d.accessInstructions||'')}</textarea>`
+        : `<div class="small">Pick a client to pull in their home access info.</div>`}
+      </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
         <button onclick="saveNewVendorTicket()">Send request</button>
@@ -4908,6 +4933,8 @@ function saveNewVendorTicket(){
   if(!d.vendorId){ alert("Pick a vendor."); return; }
   if(!d.clientId){ alert("Pick a client."); return; }
   if(!(d.title||"").trim()){ alert("Describe what's needed."); return; }
+  if(!clientHomeAccess(d.clientId)){ alert(MISSING_HOME_ACCESS_MSG); return; }
+  if(!(d.accessInstructions||"").trim()){ alert("The \"How to get into the home\" box is empty — the vendor needs this to get in. Fill it in before sending."); return; }
   createVendorTicket(d.vendorId, d.clientId, d.title.trim(), (d.description||"").trim(), (d.accessInstructions||"").trim());
   closeModal();
 }
