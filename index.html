@@ -4694,11 +4694,11 @@ const VENDOR_TICKET_STAGE_LABELS = {
   chargedAwaitingPayout: "Client charged — pay him next payout",
   paid: "Paid"
 };
-function createVendorTicket(vendorId, clientId, title, description){
+function createVendorTicket(vendorId, clientId, title, description, accessInstructions){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
   if(!vendor) return null;
   const ticket = {
-    id: newId("vticket"), clientId, title, description,
+    id: newId("vticket"), clientId, title, description, accessInstructions: accessInstructions||"",
     requestedByAssistantId: state.currentAssistant ? state.currentAssistant.id : null,
     requestedByName: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:""),
     requestedAt: new Date().toISOString(),
@@ -4711,6 +4711,13 @@ function createVendorTicket(vendorId, clientId, title, description){
   };
   upsert("vendors", vendorId, { tickets: [...(vendor.tickets||[]), ticket] });
   return ticket.id;
+}
+// Looked up live from settings by id (not snapshotted on the ticket) so a
+// phone number added/changed on the Team tab later still shows up on older
+// requests. Admin-submitted requests have no assistant id, so no phone.
+function vendorTicketRequester(ticket){
+  const asst = ticket.requestedByAssistantId && (state.settings.assistants||[]).find(a=>a.id===ticket.requestedByAssistantId);
+  return { name: asst ? asst.name : (ticket.requestedByName||""), phone: asst ? (asst.phone||"") : "" };
 }
 function updateVendorTicketFields(vendorId, ticketId, patch){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
@@ -4836,6 +4843,7 @@ function renderVendorTicketsTab(){
   `;
 }
 function renderVendorTicketRow({vendor, ticket, client}){
+  const isAdmin = state.role==="admin";
   const stage = vendorTicketStage(ticket);
   const stageLabel = VENDOR_TICKET_STAGE_LABELS[stage];
   const stageColor = stage==="paid" ? 'var(--ok)' : stage==="readyToCharge" ? 'var(--warn)' : stage==="chargedAwaitingPayout" ? 'var(--rose-dark)' : '#8a7a72';
@@ -4848,13 +4856,25 @@ function renderVendorTicketRow({vendor, ticket, client}){
         </div>
         <span class="badge" style="background:${stageColor};">${stageLabel}</span>
       </div>
-      ${ticket.vendorCost!=null || ticket.clientChargeAmount!=null ? `<div class="small">${ticket.vendorCost!=null?'His cost: $'+ticket.vendorCost.toFixed(2):''}${ticket.clientChargeAmount!=null?' · Charge client: $'+ticket.clientChargeAmount.toFixed(2):''}</div>` : ""}
+      ${(isAdmin && ticket.vendorCost!=null) || ticket.clientChargeAmount!=null ? `<div class="small">${[
+        isAdmin && ticket.vendorCost!=null ? 'His cost: $'+ticket.vendorCost.toFixed(2) : '',
+        ticket.clientChargeAmount!=null ? 'Charge client: $'+ticket.clientChargeAmount.toFixed(2) : ''
+      ].filter(Boolean).join(' · ')}</div>` : ""}
     </div>
   `;
 }
 function openNewVendorTicketModal(){
-  state.modal = { type:"newVendorTicket", draft:{ vendorId:"", clientId:"", title:"", description:"" } };
+  state.modal = { type:"newVendorTicket", draft:{ vendorId:"", clientId:"", title:"", description:"", accessInstructions:"" } };
   render();
+}
+// Prefills from the client's profile, but only overwrites what's in the box
+// if it's empty or still exactly the previous client's prefill — switching
+// clients shouldn't wipe out access notes someone already hand-edited.
+function prefillVendorTicketAccess(clientId){
+  const d = state.modal.draft;
+  const profileAccess = id=>{ const c = state.clients.find(x=>x.id===id); return (c && c.profile && c.profile.homeAccess) || ""; };
+  if(!(d.accessInstructions||"").trim() || d.accessInstructions===profileAccess(d.clientId)) d.accessInstructions = profileAccess(clientId);
+  d.clientId = clientId;
 }
 function renderNewVendorTicketModal(){
   const d = state.modal.draft;
@@ -4870,11 +4890,12 @@ function renderNewVendorTicketModal(){
           </select>
         </div>
         <div><label class="small">Client</label>
-          ${renderSearchablePicker('nvt_client', state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>({value:c.id,label:c.name})), d.clientId, v=>{ state.modal.draft.clientId=v; render(); }, '— Select —')}
+          ${renderSearchablePicker('nvt_client', state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>({value:c.id,label:c.name})), d.clientId, v=>{ prefillVendorTicketAccess(v); render(); }, '— Select —')}
         </div>
       </div>
       <div style="margin-top:8px;"><label class="small">What's needed?</label><input id="nvt_title" value="${escHtml(d.title||'')}" oninput="state.modal.draft.title=this.value" placeholder="e.g. Change light bulbs, assemble furniture, swap AC filter"></div>
       <div style="margin-top:8px;"><label class="small">Details (optional)</label><textarea id="nvt_description" oninput="state.modal.draft.description=this.value">${escHtml(d.description||'')}</textarea></div>
+      <div style="margin-top:8px;"><label class="small">How to get into the home (the vendor sees this — filled in from the client's Home access notes, edit it down to just what he needs)</label><textarea id="nvt_access" oninput="state.modal.draft.accessInstructions=this.value" placeholder="e.g. Lockbox on back door, code 1234. Alarm is off. Park in driveway.">${escHtml(d.accessInstructions||'')}</textarea></div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
         <button onclick="saveNewVendorTicket()">Send request</button>
@@ -4887,7 +4908,7 @@ function saveNewVendorTicket(){
   if(!d.vendorId){ alert("Pick a vendor."); return; }
   if(!d.clientId){ alert("Pick a client."); return; }
   if(!(d.title||"").trim()){ alert("Describe what's needed."); return; }
-  createVendorTicket(d.vendorId, d.clientId, d.title.trim(), (d.description||"").trim());
+  createVendorTicket(d.vendorId, d.clientId, d.title.trim(), (d.description||"").trim(), (d.accessInstructions||"").trim());
   closeModal();
 }
 function openVendorTicketDetail(vendorId, ticketId){
@@ -4910,10 +4931,14 @@ function renderVendorTicketDetailModal(vendorId, ticketId){
       </div>
       <div class="small" style="margin:6px 0;">${client?client.name:'—'} · ${escHtml(vendor.name||'')} · requested by ${ticket.requestedByName||'—'} on ${new Date(ticket.requestedAt).toLocaleDateString()}</div>
       ${ticket.description ? `<p>${escHtml(ticket.description)}</p>` : ''}
+      <label class="small" style="font-weight:600;margin-top:10px;display:block;">How to get into the home <span style="font-weight:400;">(the vendor sees this)</span></label>
+      <textarea id="vt_access_${ticket.id}" onchange="updateVendorTicketField('${vendor.id}','${ticket.id}','accessInstructions',this.value.trim())" placeholder="e.g. Lockbox on back door, code 1234. Alarm is off. Park in driveway.">${escHtml(ticket.accessInstructions||'')}</textarea>
       <div class="small" style="font-weight:600;margin-top:10px;">Scheduling</div>
       <div class="small">${ticket.scheduledAt ? 'Scheduled for '+new Date(ticket.scheduledAt).toLocaleString() : ticket.availableTimesNote ? 'He offered: &ldquo;'+escHtml(ticket.availableTimesNote)+'&rdquo; — check with the client which works' : 'Not yet scheduled'}</div>
+      ${isAdmin ? `
       <div class="small" style="font-weight:600;margin-top:10px;">His cost</div>
       <div class="small">${ticket.vendorCost!=null ? '$'+ticket.vendorCost.toFixed(2)+' (submitted '+new Date(ticket.vendorCostSubmittedAt).toLocaleDateString()+')' : 'Not submitted yet'}</div>
+      ` : ''}
       ${isAdmin ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Amount to charge the client</label>
@@ -5005,13 +5030,33 @@ function renderVendorPortalTicket(vendor, ticket){
     : stage==="chargedAwaitingPayout" ? "Approved — included in the next Friday payout"
     : ticket.vendorCost!=null ? "Submitted, awaiting approval"
     : "Submit your cost below first";
+  const requester = vendorTicketRequester(ticket);
+  const address = client && client.profile && client.profile.homeAddress ? client.profile.homeAddress.trim() : "";
   return `
     <div class="card">
       <div class="flex-between">
         <h3 style="margin:0;">${escHtml(ticket.title||'(untitled)')}</h3>
-        <span class="small">${client?client.name:'—'}</span>
+        <span class="small">${escHtml(client?client.name:'—')}</span>
       </div>
       ${ticket.description ? `<p style="margin-top:8px;">${escHtml(ticket.description)}</p>` : ''}
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <div class="row">
+          <div>
+            <label class="small" style="font-weight:600;">Client</label>
+            <div>${escHtml(client?client.name:'—')}</div>
+            <div class="small">${address ? `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}" target="_blank" rel="noopener">${escHtml(address)}</a>` : 'No address on file — ask the assistant below'}</div>
+          </div>
+          <div>
+            <label class="small" style="font-weight:600;">Requested by</label>
+            <div>${escHtml(requester.name||'—')}</div>
+            <div class="small">${requester.phone ? `<a href="tel:${escHtml(requester.phone.replace(/[^\d+]/g,''))}">${escHtml(requester.phone)}</a>` : 'No phone on file'}</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;">
+          <label class="small" style="font-weight:600;">How to get into the home</label>
+          <div class="small" style="white-space:pre-wrap;">${ticket.accessInstructions ? escHtml(ticket.accessInstructions) : 'Not provided — call or message the assistant before heading over.'}</div>
+        </div>
+      </div>
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">When can you get to this?</label>
         <div class="row" style="margin-top:4px;">
@@ -9151,6 +9196,7 @@ function renderAssistantRow(a){
         `}
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
         <div><label class="small">Email (for payroll reports)</label><input id="asst_email_${a.id}" type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
+        <div><label class="small">Phone (shown to vendors on requests they submit)</label><input id="asst_phone_${a.id}" type="tel" value="${escHtml(a.phone||'')}" onchange="updateAssistantField('${a.id}','phone',this.value.trim())"></div>
         <div><label class="small">Market</label>
           <select onchange="updateAssistantField('${a.id}','market',this.value)">
             ${MARKETS.map(m=>`<option value="${m}" ${(a.market||'Lafayette')===m?'selected':''}>${m}</option>`).join("")}
