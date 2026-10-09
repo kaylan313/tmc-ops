@@ -2919,7 +2919,7 @@ function renderAppShell(){
         { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["techSupport","Tech Support"]] }
       ]
-    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["onboarding","Onboarding"],
+    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
        ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : []), ["techSupport","Tech Support"]] }];
 
   app.innerHTML = `
@@ -2969,7 +2969,7 @@ function renderMain(){
     case "builds": return renderBuildsTab();
     case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
     case "onboarding": return renderOnboarding();
-    case "team": return renderTeamAdmin();
+    case "team": return state.role==="admin" ? renderTeamAdmin() : renderTeamDirectory();
     case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
     case "techSupport": return renderTechSupportTab();
     default: return "";
@@ -9217,6 +9217,31 @@ function renderTeamAdmin(){
     </div>
   `;
 }
+// Team-member view of the Team tab: a contact list only. Deliberately reads
+// just name/email/phone off each assistant record — everything else on it
+// (access codes, pay, agreements, roles, onboarding) is admin-only and must
+// never be rendered here.
+function renderTeamDirectory(){
+  const people = (state.settings.assistants||[])
+    .filter(a=>a.active!==false)
+    .map(a=>({ name: a.name||"", email: (a.email||"").trim(), phone: (a.phone||"").trim() }))
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  return `
+    <h2>Team</h2>
+    <div class="small" style="margin-bottom:14px;">Contact info for everyone on the team.</div>
+    <div class="card">
+      ${people.length ? `
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Name</th><th>Email</th><th>Phone</th></tr></thead>
+        <tbody>${people.map(p=>`<tr>
+          <td>${escHtml(p.name)}</td>
+          <td>${p.email ? `<a href="mailto:${escHtml(p.email)}">${escHtml(p.email)}</a>` : '—'}</td>
+          <td>${p.phone ? `<a href="tel:${escHtml(p.phone.replace(/[^\d+]/g,''))}">${escHtml(p.phone)}</a>` : '—'}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>` : `<div class="small">No team members yet.</div>`}
+    </div>
+  `;
+}
 function renderAssistantRow(a){
   const onboarding = a.onboarding || [];
   const doneCount = onboarding.filter(i=>i.done).length;
@@ -9254,8 +9279,8 @@ function renderAssistantRow(a){
         <div><label class="small">Hourly rate ($)</label><input id="asst_hourlyrate_${a.id}" type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
         `}
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
-        <div><label class="small">Email (for payroll reports)</label><input id="asst_email_${a.id}" type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
-        <div><label class="small">Phone (shown to vendors on requests they submit)</label><input id="asst_phone_${a.id}" type="tel" value="${escHtml(a.phone||'')}" onchange="updateAssistantField('${a.id}','phone',this.value.trim())"></div>
+        <div><label class="small">Email (for payroll reports; shown to teammates)</label><input id="asst_email_${a.id}" type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
+        <div><label class="small">Phone (shown to teammates, and to vendors on requests they submit)</label><input id="asst_phone_${a.id}" type="tel" value="${escHtml(a.phone||'')}" onchange="updateAssistantField('${a.id}','phone',this.value.trim())"></div>
         <div><label class="small">Market</label>
           <select onchange="updateAssistantField('${a.id}','market',this.value)">
             ${MARKETS.map(m=>`<option value="${m}" ${(a.market||'Lafayette')===m?'selected':''}>${m}</option>`).join("")}
