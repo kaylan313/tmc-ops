@@ -1380,21 +1380,40 @@ function clearReceiptsInWindow(clientId, kind){
 // "period"-flavored kind, hours used/remaining are scoped to that specific
 // window instead of always "right now" — otherwise a last-period recap would
 // show this period's usage, which doesn't match what it's reporting on.
+//
+// Activity is driven by time entries, not just task status: a report used to
+// list only tasks marked Done inside the window, so a week of logged hours on
+// tasks still open (In progress, Researching, Pending approval) read to the
+// client as "No tasks completed this week" — i.e. like nothing was done.
+// `workedOn` is every task with time logged in the window that wasn't
+// completed in it; `windowHoursByTask` is what each item shows as its hours.
 function buildClientReport(client, window, kind){
   const tasks = state.tasks.filter(t=>t.clientId===client.id);
-  const inProgress = tasks.filter(t=>t.status==="In progress");
-  const todo = tasks.filter(t=>t.status==="To do");
+  const windowEntries = entriesForClient(client.id).filter(e=>{ const d = new Date(e.clockIn); return d >= window.start && d < window.end; });
+  const windowHoursByTask = new Map();
+  windowEntries.forEach(e=>windowHoursByTask.set(e.taskId, (windowHoursByTask.get(e.taskId)||0) + entryDurationHours(e)));
+  const hoursThisWindow = windowEntries.reduce((s,e)=>s+entryDurationHours(e), 0);
   const completed = tasks.filter(t=>{
     if(t.status!=="Done" || !t.completedAt) return false;
     const d = new Date(t.completedAt);
     return d >= window.start && d < window.end;
   });
+  const completedIds = new Set(completed.map(t=>t.id));
+  const workedOn = tasks.filter(t=>!completedIds.has(t.id) && (windowHoursByTask.get(t.id)||0) > 0);
+  const workedOnIds = new Set(workedOn.map(t=>t.id));
+  // Time on a task that's since been deleted still counts toward hours — show
+  // it as one lump so the hours on the report add up to the total.
+  const taskIds = new Set(tasks.map(t=>t.id));
+  const otherHours = windowEntries.filter(e=>!taskIds.has(e.taskId)).reduce((s,e)=>s+entryDurationHours(e), 0);
+  const inProgress = tasks.filter(t=>t.status==="In progress" && !workedOnIds.has(t.id));
+  const todo = tasks.filter(t=>t.status==="To do" && !workedOnIds.has(t.id));
   const isPeriodKind = kind==="period" || kind==="lastPeriod";
   const used = isPeriodKind ? hoursForClientInPeriod(client.id, window) : hoursUsed(client.id);
   const pkg = isPeriodKind ? effectivePackageHours(client, window) : effectivePackageHours(client);
   const overHours = Math.max(0, used - pkg);
   return {
-    kind, client, week: window, inProgress, todo, completed,
+    kind, client, week: window, inProgress, todo, completed, workedOn,
+    windowHoursByTask, hoursThisWindow, otherHours,
     hoursUsed: used, packageHours: pkg,
     hoursRemaining: Math.max(0, pkg - used),
     overHours, overageAmount: overHours * OVERAGE_RATE,
@@ -1404,12 +1423,14 @@ function buildClientReport(client, window, kind){
   };
 }
 function clientReportHtml(report){
-  const { client, week, inProgress, todo, completed } = report;
+  const { client, week, inProgress, todo, completed, workedOn } = report;
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
+  const span = isPeriod ? "this period" : "this week";
   const recapLabel = isPeriod ? "END-OF-PERIOD RECAP" : "END-OF-WEEK RECAP";
   const recapNoun = isPeriod ? "End-of-Period Recap" : "End-of-Week Recap";
   const completedLabel = isPeriod ? "Completed This Period" : "Completed This Week";
-  const completedEmpty = isPeriod ? "No tasks completed this period." : "No tasks completed this week.";
+  const workedOnLabel = isPeriod ? "Worked On This Period" : "Worked On This Week";
+  const noActivity = !completed.length && !workedOn.length && !report.otherHours;
   const footerTag = isPeriod ? "MEMBERSHIP PERIOD REPORT" : "WEEKLY RECAP REPORT";
   const fmt = d => new Date(d).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'});
   const fmtShort = d => (d.getMonth()+1) + "/" + d.getDate();
@@ -1421,7 +1442,7 @@ function clientReportHtml(report){
     <div class="item ${itemKind==='progress'?'progress':''}${itemKind==='todo'?'todo':''}">
       <div class="item-label">${(t.title||'').toUpperCase()}</div>
       <div class="item-body">${(t.description||t.title||'').trim()}</div>
-      ${isPeriod && itemKind!=='todo' ? `<div class="item-hours">${formatHoursMinutes(hoursForTask(t.id))} logged</div>` : ""}
+      ${itemKind!=='todo' && report.windowHoursByTask.get(t.id) ? `<div class="item-hours">${formatHoursMinutes(report.windowHoursByTask.get(t.id))} logged ${span}</div>` : ""}
     </div>`;
 
   return `<!doctype html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${client.name} — ${isPeriod ? 'Period' : 'Weekly'} Recap</title>
@@ -1492,8 +1513,18 @@ function clientReportHtml(report){
       <div class="sub-meta">${recapNoun} &middot; ${dateRange}</div>
       <hr>
 
+      <div class="section-label">Time Logged ${isPeriod ? "This Period" : "This Week"}</div>
+      <div class="item-body" style="margin-bottom:16px;font-size:20px;font-family:'Playfair Display',serif;font-weight:600;">${formatHoursMinutes(report.hoursThisWindow)}</div>
+
+      ${noActivity ? `<div class="item-body" style="margin-bottom:16px;">No work logged ${span}.</div>` : `
+      ${completed.length ? `
       <div class="section-label">${completedLabel}</div>
-      ${completed.length ? completed.map(t=>item(t,'done')).join("") : `<div class="item-body" style="margin-bottom:16px;">${completedEmpty}</div>`}
+      ${completed.map(t=>item(t,'done')).join("")}` : ""}
+      ${workedOn.length || report.otherHours ? `
+      <div class="section-label" style="margin-top:18px;">${workedOnLabel}</div>
+      ${workedOn.map(t=>item(t,'progress')).join("")}
+      ${report.otherHours ? `<div class="item progress"><div class="item-label">ADDITIONAL WORK</div><div class="item-hours">${formatHoursMinutes(report.otherHours)} logged ${span}</div></div>` : ""}` : ""}
+      `}
 
       <hr>
 
@@ -1567,7 +1598,8 @@ function clientReportCoverNote(report, reportUrl){
       + " — that's a $" + report.overageAmount.toFixed(2) + " overage at $" + OVERAGE_RATE + "/hr."
     : "";
   return "Hi " + firstName + ",\n\n"
-    + reportLine + " You have used " + formatHoursMinutes(report.hoursUsed)
+    + reportLine + " We logged " + formatHoursMinutes(report.hoursThisWindow) + " of work for you this " + (isPeriod?"period":"week") + "."
+    + " You have used " + formatHoursMinutes(report.hoursUsed)
     + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + overageLine + receiptsLine + "\n\n"
     + "Please let me know if you have any questions regarding this report.\n\n"
     + "The Modern Concierge Team";
@@ -2911,7 +2943,7 @@ function renderAppShell(){
         { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["techSupport","Tech Support"]] }
       ]
-    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["onboarding","Onboarding"],
+    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
        ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : []), ["techSupport","Tech Support"]] }];
 
   app.innerHTML = `
@@ -2961,7 +2993,7 @@ function renderMain(){
     case "builds": return renderBuildsTab();
     case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
     case "onboarding": return renderOnboarding();
-    case "team": return renderTeamAdmin();
+    case "team": return state.role==="admin" ? renderTeamAdmin() : renderTeamDirectory();
     case "orgchart": return state.role==="admin" ? renderOrgChart() : "";
     case "techSupport": return renderTechSupportTab();
     default: return "";
@@ -4718,11 +4750,11 @@ const VENDOR_TICKET_STAGE_LABELS = {
   chargedAwaitingPayout: "Client charged — pay him next payout",
   paid: "Paid"
 };
-function createVendorTicket(vendorId, clientId, title, description){
+function createVendorTicket(vendorId, clientId, title, description, accessInstructions){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
   if(!vendor) return null;
   const ticket = {
-    id: newId("vticket"), clientId, title, description,
+    id: newId("vticket"), clientId, title, description, accessInstructions: accessInstructions||"",
     requestedByAssistantId: state.currentAssistant ? state.currentAssistant.id : null,
     requestedByName: state.role==="admin" ? "Admin" : (state.currentAssistant?state.currentAssistant.name:""),
     requestedAt: new Date().toISOString(),
@@ -4735,6 +4767,13 @@ function createVendorTicket(vendorId, clientId, title, description){
   };
   upsert("vendors", vendorId, { tickets: [...(vendor.tickets||[]), ticket] });
   return ticket.id;
+}
+// Looked up live from settings by id (not snapshotted on the ticket) so a
+// phone number added/changed on the Team tab later still shows up on older
+// requests. Admin-submitted requests have no assistant id, so no phone.
+function vendorTicketRequester(ticket){
+  const asst = ticket.requestedByAssistantId && (state.settings.assistants||[]).find(a=>a.id===ticket.requestedByAssistantId);
+  return { name: asst ? asst.name : (ticket.requestedByName||""), phone: asst ? (asst.phone||"") : "" };
 }
 function updateVendorTicketFields(vendorId, ticketId, patch){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
@@ -4860,6 +4899,7 @@ function renderVendorTicketsTab(){
   `;
 }
 function renderVendorTicketRow({vendor, ticket, client}){
+  const isAdmin = state.role==="admin";
   const stage = vendorTicketStage(ticket);
   const stageLabel = VENDOR_TICKET_STAGE_LABELS[stage];
   const stageColor = stage==="paid" ? 'var(--ok)' : stage==="readyToCharge" ? 'var(--warn)' : stage==="chargedAwaitingPayout" ? 'var(--rose-dark)' : '#8a7a72';
@@ -4872,17 +4912,47 @@ function renderVendorTicketRow({vendor, ticket, client}){
         </div>
         <span class="badge" style="background:${stageColor};">${stageLabel}</span>
       </div>
-      ${ticket.vendorCost!=null || ticket.clientChargeAmount!=null ? `<div class="small">${ticket.vendorCost!=null?'His cost: $'+ticket.vendorCost.toFixed(2):''}${ticket.clientChargeAmount!=null?' · Charge client: $'+ticket.clientChargeAmount.toFixed(2):''}</div>` : ""}
+      ${(isAdmin && ticket.vendorCost!=null) || ticket.clientChargeAmount!=null ? `<div class="small">${[
+        isAdmin && ticket.vendorCost!=null ? 'His cost: $'+ticket.vendorCost.toFixed(2) : '',
+        ticket.clientChargeAmount!=null ? 'Charge client: $'+ticket.clientChargeAmount.toFixed(2) : ''
+      ].filter(Boolean).join(' · ')}</div>` : ""}
     </div>
   `;
 }
 function openNewVendorTicketModal(){
-  state.modal = { type:"newVendorTicket", draft:{ vendorId:"", clientId:"", title:"", description:"" } };
+  state.modal = { type:"newVendorTicket", draft:{ vendorId:"", clientId:"", title:"", description:"", accessInstructions:"" } };
   render();
+}
+// Prefills from the client's profile, but only overwrites what's in the box
+// if it's empty or still exactly the previous client's prefill — switching
+// clients shouldn't wipe out access notes someone already hand-edited.
+function clientHomeAccess(clientId){
+  const c = state.clients.find(x=>x.id===clientId);
+  return ((c && c.profile && c.profile.homeAccess) || "").trim();
+}
+function prefillVendorTicketAccess(clientId){
+  const d = state.modal.draft;
+  if(!(d.accessInstructions||"").trim() || d.accessInstructions===clientHomeAccess(d.clientId)) d.accessInstructions = clientHomeAccess(clientId);
+  d.clientId = clientId;
+}
+const MISSING_HOME_ACCESS_MSG = "This client has no Home access information on file, so the vendor won't know how to get into the home.\n\nGet the home access information from the client and add it to their client profile (Details tab → 2. Home Onboarding → Home access) first, then submit this request.";
+// Jumps straight to the empty Home access box so the assistant can fill it in.
+function openClientHomeAccess(clientId){
+  closeModal();
+  state.activeTab = "clients";
+  state.selectedClientId = clientId;
+  state.crmSubTab = "profileDetails";
+  state.profileOpenSections = new Set(["home"]);
+  render();
+  setTimeout(()=>{ const el = document.getElementById("prof_homeAccess_"+clientId); if(el){ el.scrollIntoView({block:"center"}); el.focus(); } }, 0);
 }
 function renderNewVendorTicketModal(){
   const d = state.modal.draft;
   const vendorsWithPortal = (state.vendors||[]).filter(v=>v.portalAccessCode);
+  const missingAccess = d.clientId && !clientHomeAccess(d.clientId);
+  // Profile may have been filled in (by someone else) after the client was
+  // picked — pick it up rather than leaving the box empty.
+  if(d.clientId && !missingAccess && !(d.accessInstructions||"").trim()) d.accessInstructions = clientHomeAccess(d.clientId);
   return `
     <div class="modal">
       <h3>New vendor request</h3>
@@ -4894,11 +4964,19 @@ function renderNewVendorTicketModal(){
           </select>
         </div>
         <div><label class="small">Client</label>
-          ${renderSearchablePicker('nvt_client', state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>({value:c.id,label:c.name})), d.clientId, v=>{ state.modal.draft.clientId=v; render(); }, '— Select —')}
+          ${renderSearchablePicker('nvt_client', state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).map(c=>({value:c.id,label:c.name})), d.clientId, v=>{ prefillVendorTicketAccess(v); render(); if(v && !clientHomeAccess(v)) setTimeout(()=>alert(MISSING_HOME_ACCESS_MSG), 0); }, '— Select —')}
         </div>
       </div>
       <div style="margin-top:8px;"><label class="small">What's needed?</label><input id="nvt_title" value="${escHtml(d.title||'')}" oninput="state.modal.draft.title=this.value" placeholder="e.g. Change light bulbs, assemble furniture, swap AC filter"></div>
       <div style="margin-top:8px;"><label class="small">Details (optional)</label><textarea id="nvt_description" oninput="state.modal.draft.description=this.value">${escHtml(d.description||'')}</textarea></div>
+      <div style="margin-top:8px;"><label class="small">How to get into the home (the vendor sees this — pulled from the client's Details tab, Home Onboarding → Home access; edit it down to just what he needs)</label>
+        ${missingAccess ? `
+        <div class="alert danger" style="margin-top:4px;">
+          <strong>Home access info needed.</strong> This client's profile has nothing in the Home access box, so the vendor won't know how to get in. Get the home access information from the client and update their profile first, then submit this request.
+          <div style="margin-top:6px;"><button class="secondary" onclick="openClientHomeAccess('${d.clientId}')">Go to client profile → Home access</button></div>
+        </div>` : d.clientId ? `<textarea id="nvt_access" oninput="state.modal.draft.accessInstructions=this.value">${escHtml(d.accessInstructions||'')}</textarea>`
+        : `<div class="small">Pick a client to pull in their home access info.</div>`}
+      </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
         <button onclick="saveNewVendorTicket()">Send request</button>
@@ -4911,7 +4989,9 @@ function saveNewVendorTicket(){
   if(!d.vendorId){ alert("Pick a vendor."); return; }
   if(!d.clientId){ alert("Pick a client."); return; }
   if(!(d.title||"").trim()){ alert("Describe what's needed."); return; }
-  createVendorTicket(d.vendorId, d.clientId, d.title.trim(), (d.description||"").trim());
+  if(!clientHomeAccess(d.clientId)){ alert(MISSING_HOME_ACCESS_MSG); return; }
+  if(!(d.accessInstructions||"").trim()){ alert("The \"How to get into the home\" box is empty — the vendor needs this to get in. Fill it in before sending."); return; }
+  createVendorTicket(d.vendorId, d.clientId, d.title.trim(), (d.description||"").trim(), (d.accessInstructions||"").trim());
   closeModal();
 }
 function openVendorTicketDetail(vendorId, ticketId){
@@ -4934,10 +5014,14 @@ function renderVendorTicketDetailModal(vendorId, ticketId){
       </div>
       <div class="small" style="margin:6px 0;">${client?client.name:'—'} · ${escHtml(vendor.name||'')} · requested by ${ticket.requestedByName||'—'} on ${new Date(ticket.requestedAt).toLocaleDateString()}</div>
       ${ticket.description ? `<p>${escHtml(ticket.description)}</p>` : ''}
+      <label class="small" style="font-weight:600;margin-top:10px;display:block;">How to get into the home <span style="font-weight:400;">(the vendor sees this)</span></label>
+      <textarea id="vt_access_${ticket.id}" onchange="updateVendorTicketField('${vendor.id}','${ticket.id}','accessInstructions',this.value.trim())" placeholder="e.g. Lockbox on back door, code 1234. Alarm is off. Park in driveway.">${escHtml(ticket.accessInstructions||'')}</textarea>
       <div class="small" style="font-weight:600;margin-top:10px;">Scheduling</div>
       <div class="small">${ticket.scheduledAt ? 'Scheduled for '+new Date(ticket.scheduledAt).toLocaleString() : ticket.availableTimesNote ? 'He offered: &ldquo;'+escHtml(ticket.availableTimesNote)+'&rdquo; — check with the client which works' : 'Not yet scheduled'}</div>
+      ${isAdmin ? `
       <div class="small" style="font-weight:600;margin-top:10px;">His cost</div>
       <div class="small">${ticket.vendorCost!=null ? '$'+ticket.vendorCost.toFixed(2)+' (submitted '+new Date(ticket.vendorCostSubmittedAt).toLocaleDateString()+')' : 'Not submitted yet'}</div>
+      ` : ''}
       ${isAdmin ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Amount to charge the client</label>
@@ -5029,13 +5113,33 @@ function renderVendorPortalTicket(vendor, ticket){
     : stage==="chargedAwaitingPayout" ? "Approved — included in the next Friday payout"
     : ticket.vendorCost!=null ? "Submitted, awaiting approval"
     : "Submit your cost below first";
+  const requester = vendorTicketRequester(ticket);
+  const address = client && client.profile && client.profile.homeAddress ? client.profile.homeAddress.trim() : "";
   return `
     <div class="card">
       <div class="flex-between">
         <h3 style="margin:0;">${escHtml(ticket.title||'(untitled)')}</h3>
-        <span class="small">${client?client.name:'—'}</span>
+        <span class="small">${escHtml(client?client.name:'—')}</span>
       </div>
       ${ticket.description ? `<p style="margin-top:8px;">${escHtml(ticket.description)}</p>` : ''}
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <div class="row">
+          <div>
+            <label class="small" style="font-weight:600;">Client</label>
+            <div>${escHtml(client?client.name:'—')}</div>
+            <div class="small">${address ? `<a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}" target="_blank" rel="noopener">${escHtml(address)}</a>` : 'No address on file — ask the assistant below'}</div>
+          </div>
+          <div>
+            <label class="small" style="font-weight:600;">Requested by</label>
+            <div>${escHtml(requester.name||'—')}</div>
+            <div class="small">${requester.phone ? `<a href="tel:${escHtml(requester.phone.replace(/[^\d+]/g,''))}">${escHtml(requester.phone)}</a>` : 'No phone on file'}</div>
+          </div>
+        </div>
+        <div style="margin-top:8px;">
+          <label class="small" style="font-weight:600;">How to get into the home</label>
+          <div class="small" style="white-space:pre-wrap;">${ticket.accessInstructions ? escHtml(ticket.accessInstructions) : 'Not provided — call or message the assistant before heading over.'}</div>
+        </div>
+      </div>
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">When can you get to this?</label>
         <div class="row" style="margin-top:4px;">
@@ -8655,7 +8759,7 @@ function renderReportsTab(){
           </div>
           <div class="row">
             <div>
-              <div class="small" style="margin-bottom:4px;">Weekly &middot; ${weekReport.inProgress.length} in progress · ${weekReport.completed.length} completed this week</div>
+              <div class="small" style="margin-bottom:4px;">Weekly &middot; ${formatHoursMinutes(weekReport.hoursThisWindow)} logged · ${weekReport.completed.length} completed · ${weekReport.workedOn.length} worked on · ${weekReport.inProgress.length} other in progress</div>
               <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
               <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
             </div>
@@ -8680,7 +8784,7 @@ function renderReportsTab(){
           ${state.reportsExpanded && state.reportsExpanded.has(client.id) ? `
           <div style="border-top:1px solid var(--cream-dark);padding-top:10px;">
             <div class="small" style="margin-bottom:6px;">These are exactly the tasks this week's report will include. Wrong status, wrong completed date, or shouldn't exist at all? Fix or remove it right here.</div>
-            ${[...weekReport.inProgress.map(t=>({t,label:'In progress'})), ...weekReport.completed.map(t=>({t,label:'Completed '+(t.completedAt?new Date(t.completedAt).toLocaleDateString():'')}))].map(({t,label})=>`
+            ${[...weekReport.workedOn.map(t=>({t,label:'Worked on — '+formatHoursMinutes(weekReport.windowHoursByTask.get(t.id)||0)+' this week ('+t.status+')'})), ...weekReport.inProgress.map(t=>({t,label:'In progress'})), ...weekReport.completed.map(t=>({t,label:'Completed '+(t.completedAt?new Date(t.completedAt).toLocaleDateString():'')}))].map(({t,label})=>`
               <div class="list-item">
                 <div>${t.title} <span class="small">· ${label}</span></div>
                 <div style="display:flex;gap:6px;">
@@ -9137,6 +9241,31 @@ function renderTeamAdmin(){
     </div>
   `;
 }
+// Team-member view of the Team tab: a contact list only. Deliberately reads
+// just name/email/phone off each assistant record — everything else on it
+// (access codes, pay, agreements, roles, onboarding) is admin-only and must
+// never be rendered here.
+function renderTeamDirectory(){
+  const people = (state.settings.assistants||[])
+    .filter(a=>a.active!==false)
+    .map(a=>({ name: a.name||"", email: (a.email||"").trim(), phone: (a.phone||"").trim() }))
+    .sort((a,b)=>a.name.localeCompare(b.name));
+  return `
+    <h2>Team</h2>
+    <div class="small" style="margin-bottom:14px;">Contact info for everyone on the team.</div>
+    <div class="card">
+      ${people.length ? `
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Name</th><th>Email</th><th>Phone</th></tr></thead>
+        <tbody>${people.map(p=>`<tr>
+          <td>${escHtml(p.name)}</td>
+          <td>${p.email ? `<a href="mailto:${escHtml(p.email)}">${escHtml(p.email)}</a>` : '—'}</td>
+          <td>${p.phone ? `<a href="tel:${escHtml(p.phone.replace(/[^\d+]/g,''))}">${escHtml(p.phone)}</a>` : '—'}</td>
+        </tr>`).join("")}</tbody>
+      </table></div>` : `<div class="small">No team members yet.</div>`}
+    </div>
+  `;
+}
 function renderAssistantRow(a){
   const onboarding = a.onboarding || [];
   const doneCount = onboarding.filter(i=>i.done).length;
@@ -9174,7 +9303,8 @@ function renderAssistantRow(a){
         <div><label class="small">Hourly rate ($)</label><input id="asst_hourlyrate_${a.id}" type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
         `}
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
-        <div><label class="small">Email (for payroll reports)</label><input id="asst_email_${a.id}" type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
+        <div><label class="small">Email (for payroll reports; shown to teammates)</label><input id="asst_email_${a.id}" type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
+        <div><label class="small">Phone (shown to teammates, and to vendors on requests they submit)</label><input id="asst_phone_${a.id}" type="tel" value="${escHtml(a.phone||'')}" onchange="updateAssistantField('${a.id}','phone',this.value.trim())"></div>
         <div><label class="small">Market</label>
           <select onchange="updateAssistantField('${a.id}','market',this.value)">
             ${MARKETS.map(m=>`<option value="${m}" ${(a.market||'Lafayette')===m?'selected':''}>${m}</option>`).join("")}
@@ -10174,6 +10304,7 @@ function renderClientPortal(){
         <div class="card">
           <h3>This week's update</h3>
           <div class="small" style="margin-bottom:8px;">${formatPeriodRange(weekReport.week)}</div>
+          <div class="small" style="margin-bottom:8px;">Time logged this week: <strong>${formatHoursMinutes(weekReport.hoursThisWindow)}</strong></div>
           <div class="small" style="font-weight:600;margin-bottom:4px;">Completed this week</div>
           ${weekReport.completed.map(t=>`
             <div class="list-item">
@@ -10181,6 +10312,14 @@ function renderClientPortal(){
               <span class="small">${hoursForTask(t.id).toFixed(1)} hrs</span>
             </div>
           `).join("") || `<div class="small">Nothing completed this week.</div>`}
+          ${weekReport.workedOn.length ? `
+          <div class="small" style="font-weight:600;margin:12px 0 4px;">Worked on this week</div>
+          ${weekReport.workedOn.map(t=>`
+            <div class="list-item">
+              <div>${t.description||t.title}</div>
+              <span class="small">${(weekReport.windowHoursByTask.get(t.id)||0).toFixed(1)} hrs this week</span>
+            </div>
+          `).join("")}` : ""}
           <div class="small" style="font-weight:600;margin:12px 0 4px;">In progress</div>
           ${weekReport.inProgress.map(t=>`
             <div class="list-item">
