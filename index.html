@@ -4391,7 +4391,7 @@ function renderScorecardTab(){
         <div class="stat-tile">
           <div class="stat-label">Sales (from app, incl. overage)</div>
           <div class="stat-value">$${Math.round(appRevenue).toLocaleString()}</div>
-          <div class="stat-sub">$${Math.round(membershipRevenue).toLocaleString()} membership + $${Math.round(addOnRevenue).toLocaleString()} add-on/build · QuickBooks shows ${ps?'$'+Math.round(ps.income).toLocaleString():'—'}</div>
+          <div class="stat-sub">$${Math.round(membershipRevenue).toLocaleString()} membership + $${Math.round(addOnRevenue).toLocaleString()} add-on/build · QuickBooks "Services" account shows ${ps&&ps.servicesIncome!=null?'$'+Math.round(ps.servicesIncome).toLocaleString():'—'}</div>
         </div>
         <div class="stat-tile">
           <div class="stat-label">Payroll (from app, hours &times; rate)</div>

@@ -503,6 +503,17 @@ exports.getQuickBooksSummary = onCall(async (request) => {
     }));
     const rows = (report.Rows && report.Rows.Row) || [];
     const income = qbReportFind(rows, "Income") || 0;
+    // The "Income" total above is every account combined — Kaylan's own
+    // membership/service revenue, tracked under an account literally named
+    // "Services", is only one piece of it (there may be others: one-time
+    // builds, misc income, etc., depending what's been categorized where).
+    // The app's own Payroll Margin "Sales" figure (membership price +
+    // overage + paid add-on/build invoices) is specifically trying to mirror
+    // THIS account, not total Income — comparing it against total Income
+    // was comparing two different scopes and never going to reconcile.
+    // null (not 0) if QuickBooks has no account by this exact name, so the
+    // UI can show "—" instead of a misleading $0.
+    const servicesIncome = qbReportFind(rows, "Services");
     const expenses = qbReportFind(rows, "Expenses") || 0;
     // Only present in a period with actual COGS activity (client service
     // costs, subcontractor expenses) — absent entirely in a period with
@@ -519,7 +530,7 @@ exports.getQuickBooksSummary = onCall(async (request) => {
     // "payroll" line under Other Expenses, when present — per Kaylan's own
     // account structure, both count as payroll.
     const payroll = (qbReportFind(rows, "Payroll expenses") || 0) + (qbReportFind(rows, "payroll") || 0);
-    return { connected: true, income, expenses, cogs, grossProfit, payroll, startDate, endDate };
+    return { connected: true, income, servicesIncome, expenses, cogs, grossProfit, payroll, startDate, endDate };
   } catch (err) {
     console.error("getQuickBooksSummary failed:", err);
     if (isQuickBooksAuthError(err)) {
