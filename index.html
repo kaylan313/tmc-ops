@@ -4406,8 +4406,9 @@ function renderScorecardTab(){
           <div class="stat-sub">all income accounts combined</div>
         </div>
         <div class="stat-tile">
-          <div class="stat-label">Cost of Goods Sold</div>
+          <div class="stat-label">Vendor/Contractor Costs</div>
           <div class="stat-value">${ps?'$'+Math.round(ps.cogs).toLocaleString():'—'}</div>
+          <div class="stat-sub">what you pay vendors for client jobs, before your markup</div>
         </div>
         <div class="stat-tile">
           <div class="stat-label">Gross Profit</div>
@@ -4427,7 +4428,7 @@ function renderScorecardTab(){
         <div class="stat-tile ${ps && ps.netProfit<0?'status-danger':''}">
           <div class="stat-label">Net Profit</div>
           <div class="stat-value">${ps?'$'+Math.round(ps.netProfit).toLocaleString():'—'}</div>
-          <div class="stat-sub">revenue &minus; COGS &minus; operating expenses &minus; other expenses</div>
+          <div class="stat-sub">revenue &minus; vendor/contractor costs &minus; operating expenses &minus; other expenses</div>
         </div>
       </div>
       <div class="stat-row" style="margin-top:10px;">
