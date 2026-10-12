@@ -496,41 +496,67 @@ exports.getQuickBooksSummary = onCall(async (request) => {
     // transaction records — per Intuit's "QuickBooks data usage"
     // requirement that an app not store/export data beyond its own
     // functional use.
+    // Cash, not Accrual — confirmed directly against a real exported report
+    // (Sept 2026 "Profit and Loss Detail," printed "Cash Basis" on every
+    // page): this app was requesting Accrual this whole time, which is a
+    // genuinely different set of numbers than what Kaylan's own QuickBooks
+    // reports show for the same date range. That mismatch alone explains a
+    // meaningful chunk of every "why doesn't this match QuickBooks" gap
+    // reported against this function — nothing about the math below was
+    // wrong, it was asking QuickBooks the wrong question.
     const report = await withOneRetry(() => qbReport(tokenData.accessToken, tokenData.realmId, "ProfitAndLoss", {
       start_date: startDate,
       end_date: endDate,
-      accounting_method: "Accrual",
+      accounting_method: "Cash",
     }));
     const rows = (report.Rows && report.Rows.Row) || [];
+    // Total Income — every income account combined (Services, Client
+    // Service Revenue, Billable Expense Income, etc.). This is THE revenue
+    // figure to show as "Revenue" — it's already deduplicated and
+    // transfer-free by construction, since a real P&L report only ever
+    // reflects Income/Expense accounts: a Sales Receipt is recognized once,
+    // right here, whether it initially lands in Undeposited Funds or a bank
+    // account, and moving money BETWEEN those two is an Asset-to-Asset
+    // transfer that never touches the P&L at all. Nothing extra to filter.
     const income = qbReportFind(rows, "Income") || 0;
-    // The "Income" total above is every account combined — Kaylan's own
-    // membership/service revenue, tracked under an account literally named
-    // "Services", is only one piece of it (there may be others: one-time
-    // builds, misc income, etc., depending what's been categorized where).
-    // The app's own Payroll Margin "Sales" figure (membership price +
-    // overage + paid add-on/build invoices) is specifically trying to mirror
-    // THIS account, not total Income — comparing it against total Income
-    // was comparing two different scopes and never going to reconcile.
-    // null (not 0) if QuickBooks has no account by this exact name, so the
-    // UI can show "—" instead of a misleading $0.
+    // One specific income account within the total above (membership/
+    // service revenue, specifically) — kept for anyone wanting that
+    // narrower breakdown, but Total Income is the real "Revenue" figure.
+    // null (not 0) if QuickBooks has no account by this exact name.
     const servicesIncome = qbReportFind(rows, "Services");
+    // QuickBooks' "Expenses" section = Operating Expenses in the P&L
+    // waterfall (COGS already broken out separately, below). Same
+    // Asset-transfer/Equity-draw reasoning as Income above means owner
+    // draws and account-to-account transfers are already excluded here —
+    // they're Equity/Asset entries, never Expense accounts, so a real P&L
+    // report never includes them to begin with.
     const expenses = qbReportFind(rows, "Expenses") || 0;
     // Only present in a period with actual COGS activity (client service
     // costs, subcontractor expenses) — absent entirely in a period with
     // none, same shape-varies-by-period caveat as qbReportFind's own doc
     // comment above. grossProfit is Income minus this, matching exactly
-    // what QuickBooks' own P&L prints as its "Gross Profit" line — the
-    // Scorecard's old income-only figure didn't account for COGS at all,
-    // which is why it didn't reconcile with a printed P&L once COGS showed
-    // up on one.
+    // what QuickBooks' own P&L prints as its "Gross Profit" line.
     const cogs = qbReportFind(rows, "Cost of Goods Sold") || 0;
     const grossProfit = income - cogs;
-    // "Payroll expenses" (inside Expenses — may or may not have a nested
-    // Wages sub-account depending on the period) plus the standalone
-    // "payroll" line under Other Expenses, when present — per Kaylan's own
-    // account structure, both count as payroll.
+    // "Other Income"/"Other Expense" — QuickBooks' own separate section
+    // below Net Ordinary Income (things outside normal day-to-day
+    // operations). Needed to compute netProfit the same way QuickBooks'
+    // own P&L does: Net Ordinary Income (Gross Profit − Expenses) + Net
+    // Other Income (Other Income − Other Expense) = Net Income.
+    const otherIncome = qbReportFind(rows, "Other Income") || 0;
+    const otherExpense = qbReportFind(rows, "Other Expense") || 0;
+    const netOrdinaryIncome = grossProfit - expenses;
+    const netProfit = netOrdinaryIncome + (otherIncome - otherExpense);
+    // QuickBooks' own actual payroll figure — informational only (to compare
+    // against the app's separately-tracked estimated labor cost), NOT used
+    // to derive expenses/netProfit above. It's already inside "expenses"
+    // (Operating Expenses) by definition, so subtracting it again anywhere
+    // would double-count it. "Payroll expenses" (inside Expenses — may or
+    // may not have a nested Wages sub-account depending on the period) plus
+    // the standalone "payroll" line under Other Expenses, when present —
+    // per Kaylan's own account structure, both count as payroll.
     const payroll = (qbReportFind(rows, "Payroll expenses") || 0) + (qbReportFind(rows, "payroll") || 0);
-    return { connected: true, income, servicesIncome, expenses, cogs, grossProfit, payroll, startDate, endDate };
+    return { connected: true, income, servicesIncome, expenses, cogs, grossProfit, otherIncome, otherExpense, netProfit, payroll, startDate, endDate };
   } catch (err) {
     console.error("getQuickBooksSummary failed:", err);
     if (isQuickBooksAuthError(err)) {

@@ -4265,7 +4265,7 @@ function scorecardGoalActualValue(metricKey){
   if(metricKey==="qbGrossProfit") return ms ? ms.grossProfit : null;
   if(metricKey==="qbExpenses") return ms ? ms.expenses : null;
   if(metricKey==="qbPayroll") return ms ? ms.payroll : null;
-  if(metricKey==="qbPayrollMarginPct") return appPayrollMarginForLastMonth().marginPct;
+  if(metricKey==="qbPayrollMarginPct") return payrollMarginPct(state.qbLastMonthSummary && state.qbLastMonthSummary.income, state.qbLastMonthSummary && state.qbLastMonthSummary.payroll);
   if(metricKey==="vendorServicesMargin") return vendorServicesMarginForLastMonth().margin;
   return computeScorecardMetrics()[metricKey];
 }
@@ -4353,21 +4353,16 @@ function renderScorecardTab(){
     ${(()=>{
       const ms = state.qbMonthSummary;
       const ps = state.qbLastMonthSummary;
-      const { period, revenue:appRevenue, membershipRevenue, addOnRevenue, payroll:appPayroll, marginPct:margin } = appPayrollMarginForLastMonth();
-      const overTarget = margin!=null && margin>=PAYROLL_MARGIN_TARGET;
+      const { period, revenue:appRevenue, membershipRevenue, addOnRevenue, payroll:appPayroll } = appPayrollMarginForLastMonth();
+      const qbMargin = ps ? payrollMarginPct(ps.income, ps.payroll) : null;
+      const overTarget = qbMargin!=null && qbMargin>=PAYROLL_MARGIN_TARGET;
       const monthLabel = new Date().toLocaleDateString('en-US',{month:'long',year:'numeric'});
       const periodLabel = formatPeriodRange(period);
-      // "Other expenses" — rent, insurance, software, anything with no
-      // equivalent in the app's own data — QuickBooks is the only place
-      // that knows these, so this is the one QB number that actually
-      // belongs in the margin picture rather than just a sanity-check.
-      const otherExpenses = ps ? Math.max(0, ps.expenses - appPayroll) : null;
-      const netProfit = otherExpenses!=null ? appRevenue - appPayroll - otherExpenses : null;
       const goals = (state.settings.scorecardGoals||[]).filter(g=>g.monthKey===currentMonthKey());
       return `
     <div class="card">
       <h3 style="margin:0;">This Month — ${monthLabel}</h3>
-      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open. Payroll Margin below uses the app's own sales/payroll numbers instead (more accurate — see why below), scoped to the most recently completed full month so it's stable no matter what day you check it.</div>
+      <div class="small" style="margin:4px 0 10px;">QuickBooks month-to-date — separate from the weekly columns above, refreshed automatically while this tab is open.</div>
       <div class="stat-row">
         <div class="stat-tile">
           <div class="stat-label">Income</div>
@@ -4385,38 +4380,62 @@ function renderScorecardTab(){
       ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this month's real numbers.</div>` : ""}
     </div>
     <div class="card">
-      <h3 style="margin:0;">Payroll Margin — Last Month</h3>
-      <div class="small" style="margin:4px 0 10px;">${periodLabel} — Sales and Payroll are computed straight from this app (every client's monthly package price + overage + paid add-on/build invoices, every assistant's actual clocked hours × rate — a full month rather than a pay period, since clients renew on all kinds of different days that don't line up with the 1st/15th payroll cutoffs). QuickBooks is shown alongside each for a sanity check, and its Expenses line fills in the costs the app has no way to know about (rent, insurance, software, etc.).</div>
+      <h3 style="margin:0;">Last Month — Matches QuickBooks</h3>
+      <div class="small" style="margin:4px 0 10px;">${periodLabel} — pulled directly from your QuickBooks Profit &amp; Loss, same cash-basis accounting method and date range you'd get printing it yourself. This is the official number — not an app estimate.</div>
       <div class="stat-row">
         <div class="stat-tile">
-          <div class="stat-label">Sales (from app, incl. overage)</div>
-          <div class="stat-value">$${Math.round(appRevenue).toLocaleString()}</div>
-          <div class="stat-sub">$${Math.round(membershipRevenue).toLocaleString()} membership + $${Math.round(addOnRevenue).toLocaleString()} add-on/build · QuickBooks "Services" account shows ${ps&&ps.servicesIncome!=null?'$'+Math.round(ps.servicesIncome).toLocaleString():'—'}</div>
+          <div class="stat-label">Revenue</div>
+          <div class="stat-value">${ps?'$'+Math.round(ps.income).toLocaleString():'—'}</div>
+          <div class="stat-sub">all income accounts combined</div>
         </div>
         <div class="stat-tile">
-          <div class="stat-label">Payroll (from app, hours &times; rate)</div>
-          <div class="stat-value">$${Math.round(appPayroll).toLocaleString()}</div>
-          <div class="stat-sub">QuickBooks shows ${ps?'$'+Math.round(ps.payroll).toLocaleString():'—'} for this month</div>
+          <div class="stat-label">Cost of Goods Sold</div>
+          <div class="stat-value">${ps?'$'+Math.round(ps.cogs).toLocaleString():'—'}</div>
         </div>
-        <div class="stat-tile ${overTarget?'status-danger':margin!=null && margin>=PAYROLL_MARGIN_TARGET-5?'status-warn':''}">
-          <div class="stat-label">Payroll Margin</div>
-          <div class="stat-value">${margin!=null?margin.toFixed(1)+'%':'—'}</div>
-          <div class="stat-sub">target: stay under ${PAYROLL_MARGIN_TARGET}%${overTarget?' — over target':''}</div>
+        <div class="stat-tile">
+          <div class="stat-label">Gross Profit</div>
+          <div class="stat-value">${ps?'$'+Math.round(ps.grossProfit).toLocaleString():'—'}</div>
         </div>
       </div>
       <div class="stat-row" style="margin-top:10px;">
         <div class="stat-tile">
-          <div class="stat-label">Other expenses (QuickBooks, not tracked in-app)</div>
-          <div class="stat-value">${otherExpenses!=null?'$'+Math.round(otherExpenses).toLocaleString():'—'}</div>
-          <div class="stat-sub">QuickBooks Expenses for this month, minus payroll (already counted above)</div>
+          <div class="stat-label">Operating Expenses</div>
+          <div class="stat-value">${ps?'$'+Math.round(ps.expenses).toLocaleString():'—'}</div>
+          <div class="stat-sub">includes payroll of ${ps?'$'+Math.round(ps.payroll).toLocaleString():'—'} — not subtracted again below</div>
         </div>
-        <div class="stat-tile ${netProfit!=null && netProfit<0?'status-danger':''}">
-          <div class="stat-label">Net profit</div>
-          <div class="stat-value">${netProfit!=null?'$'+Math.round(netProfit).toLocaleString():'—'}</div>
-          <div class="stat-sub">sales &minus; payroll &minus; other expenses</div>
+        <div class="stat-tile">
+          <div class="stat-label">Other Expenses</div>
+          <div class="stat-value">${ps?'$'+Math.round(ps.otherExpense).toLocaleString():'—'}</div>
+        </div>
+        <div class="stat-tile ${ps && ps.netProfit<0?'status-danger':''}">
+          <div class="stat-label">Net Profit</div>
+          <div class="stat-value">${ps?'$'+Math.round(ps.netProfit).toLocaleString():'—'}</div>
+          <div class="stat-sub">revenue &minus; COGS &minus; operating expenses &minus; other expenses</div>
         </div>
       </div>
-      ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see this period's Expenses and the QuickBooks comparison numbers.</div>` : ""}
+      <div class="stat-row" style="margin-top:10px;">
+        <div class="stat-tile ${overTarget?'status-danger':qbMargin!=null && qbMargin>=PAYROLL_MARGIN_TARGET-5?'status-warn':''}">
+          <div class="stat-label">Payroll Margin</div>
+          <div class="stat-value">${qbMargin!=null?qbMargin.toFixed(1)+'%':'—'}</div>
+          <div class="stat-sub">QuickBooks payroll ÷ QuickBooks revenue — target: stay under ${PAYROLL_MARGIN_TARGET}%${overTarget?' — over target':''}</div>
+        </div>
+      </div>
+      ${!state.qbConnected ? `<div class="small" style="margin-top:8px;">Connect QuickBooks above to see last month's real numbers.</div>` : ""}
+    </div>
+    <div class="card">
+      <h3 style="margin:0;">Operational Tracking — Last Month (estimates)</h3>
+      <div class="small" style="margin:4px 0 10px;">${periodLabel} — the app's own planning numbers: every client's current package price + overage + paid add-on/build invoices, and every assistant's clocked hours × rate. Useful for capacity/client-profitability planning, but these are estimates, not official financials — they won't always match the QuickBooks numbers above (e.g. a client's price changed since last month isn't reflected here) and are never added into Net Profit.</div>
+      <div class="stat-row">
+        <div class="stat-tile">
+          <div class="stat-label">Estimated sales (incl. overage)</div>
+          <div class="stat-value">$${Math.round(appRevenue).toLocaleString()}</div>
+          <div class="stat-sub">$${Math.round(membershipRevenue).toLocaleString()} membership + $${Math.round(addOnRevenue).toLocaleString()} add-on/build</div>
+        </div>
+        <div class="stat-tile">
+          <div class="stat-label">Estimated labor cost (hours &times; rate)</div>
+          <div class="stat-value">$${Math.round(appPayroll).toLocaleString()}</div>
+        </div>
+      </div>
     </div>
     ${(()=>{
       const vs = vendorServicesMarginForLastMonth();
