@@ -1170,6 +1170,11 @@ function overageForInPeriod(client, period){
 // cancelledDate recorded fails open (counts as active) rather than
 // silently dropping real revenue over a missing date.
 function wasClientActiveDuring(client, period){
+  // A client who signed up AFTER the period ended (e.g. started in October)
+  // has no business counting toward September's revenue — this check was
+  // missing entirely, so every brand-new client since the reported month
+  // was silently adding their full monthly price on top of real revenue.
+  if(client.termStartDate && parseYMD(client.termStartDate) >= period.end) return false;
   if(!client.clientStatus || client.clientStatus==="active") return true;
   if(!client.cancelledDate) return true;
   return parseYMD(client.cancelledDate) >= period.start;
