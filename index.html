@@ -1150,6 +1150,30 @@ function overageFor(client){
   const overHours = Math.max(0, used - pkg);
   return { overHours, amount: overHours * OVERAGE_RATE };
 }
+// Period-scoped version of overageFor() — that one always reads the
+// client's CURRENT billing period (via hoursUsed()/effectivePackageHours()
+// with no period arg), which is correct for live views but silently wrong
+// for a report about a past month once "today" has moved into a later
+// period: it would overage-charge based on THIS period's usage instead of
+// the one actually being reported on. Used by appPayrollMarginForLastMonth().
+function overageForInPeriod(client, period){
+  const used = hoursForClientInPeriod(client.id, period);
+  const pkg = effectivePackageHours(client, period);
+  const overHours = Math.max(0, used - pkg);
+  return { overHours, amount: overHours * OVERAGE_RATE };
+}
+// Was this client still active as of the GIVEN period, not just right now?
+// clientStatus/cancelledDate only ever reflect current reality, so a client
+// who cancelled sometime after a past period ended would otherwise silently
+// vanish from that period's revenue the moment they cancel — even though
+// they were paying throughout the actual month being reported on. No
+// cancelledDate recorded fails open (counts as active) rather than
+// silently dropping real revenue over a missing date.
+function wasClientActiveDuring(client, period){
+  if(!client.clientStatus || client.clientStatus==="active") return true;
+  if(!client.cancelledDate) return true;
+  return parseYMD(client.cancelledDate) >= period.start;
+}
 
 // ---- 8b. Payroll period + dashboard helpers ----
 // Payroll runs semi-monthly: the 1st–14th, and the 15th–end of month.
@@ -4170,8 +4194,8 @@ function addOnRevenueInRange(range){
 }
 function appPayrollMarginForLastMonth(){
   const period = previousCalendarMonthRange();
-  const activeClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"));
-  const membershipRevenue = activeClients.reduce((s,c)=>s+monthlyEquivalentPrice(c)+overageFor(c).amount,0);
+  const activeClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && wasClientActiveDuring(c, period));
+  const membershipRevenue = activeClients.reduce((s,c)=>s+monthlyEquivalentPrice(c)+overageForInPeriod(c, period).amount,0);
   const addOnRevenue = addOnRevenueInRange(period);
   const revenue = membershipRevenue + addOnRevenue;
   const payroll = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
