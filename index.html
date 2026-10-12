@@ -4087,7 +4087,12 @@ function fetchQuickBooksSummaryIfStale(){
   if(Date.now() - state.qbLastFetchAt < 5*60*1000) return;
   state.qbFetchInFlight = true;
   const weekStart = scorecardWeekStart();
-  const today = new Date().toISOString().slice(0,10);
+  // toLocalDateInputValue, not toISOString — "today" past roughly 6-7pm
+  // local (once UTC has crossed into the next calendar day) would otherwise
+  // ask QuickBooks for a day that hasn't happened yet. See the longer
+  // explanation on fetchQuickBooksLastMonthSummaryIfStale's endDate, where
+  // this same mistake actually pulled in real (wrong) data.
+  const today = toLocalDateInputValue(new Date());
   withTimeout(fns.httpsCallable("getQuickBooksSummary")({ startDate: weekStart, endDate: today }), 20000, "QuickBooks summary fetch")
     .then(({data})=>{
       state.qbConnected = !!data.connected;
@@ -4128,8 +4133,8 @@ function fetchQuickBooksMonthSummaryIfStale(){
   if(Date.now() - (state.qbMonthLastFetchAt||0) < 5*60*1000) return;
   state.qbMonthFetchInFlight = true;
   const { start } = monthToDateRange();
-  const today = new Date().toISOString().slice(0,10);
-  withTimeout(fns.httpsCallable("getQuickBooksSummary")({ startDate: start.toISOString().slice(0,10), endDate: today }), 20000, "QuickBooks month summary fetch")
+  const today = toLocalDateInputValue(new Date());
+  withTimeout(fns.httpsCallable("getQuickBooksSummary")({ startDate: toLocalDateInputValue(start), endDate: today }), 20000, "QuickBooks month summary fetch")
     .then(({data})=>{
       state.qbMonthSummary = data.connected ? data : null;
       state.qbMonthLastFetchAt = Date.now();
@@ -4165,9 +4170,21 @@ function fetchQuickBooksLastMonthSummaryIfStale(){
   if(Date.now() - (state.qbLastMonthFetchAt||0) < 5*60*1000) return;
   state.qbLastMonthFetchInFlight = true;
   const period = previousCalendarMonthRange();
+  // toISOString() converts to UTC first — for any negative UTC offset (all
+  // of the US), local midnight on the 1st minus 1ms is still "the 1st" once
+  // converted to UTC, not "the last day of the previous month" as intended.
+  // This sent QuickBooks an end_date one day too late, and since its
+  // Reports API treats end_date as inclusive, that pulled an entire extra
+  // day — the 1st of the NEW month, which happens to be a payroll run day —
+  // into what was supposed to be last month's totals. Confirmed directly
+  // against a raw Cloud Function log: September's query went out as
+  // 2026-09-01..2026-10-01 instead of 2026-09-01..2026-09-30, and Payroll
+  // expenses for that wrong range came back $30,151.69 vs the real
+  // September total of $19,966.95. toLocalDateInputValue formats off the
+  // LOCAL calendar date instead, avoiding the UTC round-trip entirely.
   withTimeout(fns.httpsCallable("getQuickBooksSummary")({
-    startDate: period.start.toISOString().slice(0,10),
-    endDate: new Date(period.end.getTime()-1).toISOString().slice(0,10)
+    startDate: toLocalDateInputValue(period.start),
+    endDate: toLocalDateInputValue(new Date(period.end.getTime()-1))
   }), 20000, "QuickBooks last-month summary fetch")
     .then(({data})=>{
       state.qbLastMonthSummary = data.connected ? { ...data, period } : null;
