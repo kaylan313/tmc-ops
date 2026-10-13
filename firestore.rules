@@ -59,5 +59,8 @@ service cloud.firestore {
     // system, not just one client's data, until explicitly revoked. Never
     // add a rule here that any client-side code could satisfy.
     match /qbTokens/{document=**} { allow read, write: if false; }
+    // Same reasoning as qbTokens above — a Gmail refresh token can send
+    // email as support@themodernconcierge.co indefinitely until revoked.
+    match /gmailTokens/{document=**} { allow read, write: if false; }
   }
 }

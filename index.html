@@ -432,7 +432,14 @@ let state = {
   // fetchQuickBooksLastMonthSummaryIfStale).
   qbLastMonthSummary: null,
   qbLastMonthFetchAt: 0,
-  qbLastMonthFetchInFlight: false
+  qbLastMonthFetchInFlight: false,
+  // Email notifications (support@ Gmail connection) — same
+  // unknown-until-first-check/throttle pattern as QuickBooks above. The
+  // actual sending happens server-side (Cloud Function Firestore triggers);
+  // this is only ever used to show Connect/Disconnect on the Scorecard.
+  gmailConnected: null,
+  gmailLastCheckAt: 0,
+  gmailCheckInFlight: false
 };
 
 // ---- 4. Firestore helpers ----
@@ -4066,6 +4073,60 @@ async function disconnectQuickBooksAccount(){
     alert("Couldn't disconnect — check the console for details.");
   }
 }
+// Automatic email notifications (support@ sends them, not a human clicking
+// a button) — same connect-via-OAuth pattern as QuickBooks above, but
+// Google's endpoint/scope instead of Intuit's. access_type=offline +
+// prompt=consent are both required for Google to actually include a
+// refresh_token in the response — without them, a second connect attempt
+// (even a legitimate reconnect) can silently come back with no refresh
+// token at all, since Google only issues one on first consent by default.
+async function connectGmailNotifications(){
+  if(!fns){ alert("This isn't available right now — try reloading the page."); return; }
+  try{
+    const { data } = await fns.httpsCallable("getGmailAuthConfig")();
+    const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
+      + "?client_id=" + encodeURIComponent(data.clientId)
+      + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
+      + "&response_type=code"
+      + "&scope=" + encodeURIComponent("https://www.googleapis.com/auth/gmail.send")
+      + "&access_type=offline"
+      + "&prompt=consent"
+      + "&login_hint=support@themodernconcierge.co"
+      + "&state=" + encodeURIComponent(data.state);
+    window.open(authUrl, "_blank");
+  }catch(err){
+    console.error(err);
+    alert("Couldn't start the email connection — check the console for details.");
+  }
+}
+async function disconnectGmailNotificationsAccount(){
+  if(!confirm("Disconnect email notifications? Assistants will stop getting automatic emails until you reconnect.")) return;
+  if(!fns) return;
+  try{
+    await fns.httpsCallable("disconnectGmailNotifications")();
+    state.gmailConnected = false;
+    render();
+  }catch(err){
+    console.error(err);
+    alert("Couldn't disconnect — check the console for details.");
+  }
+}
+function fetchGmailConnectionStatusIfStale(){
+  if(!fns || state.gmailCheckInFlight) return;
+  if(Date.now() - (state.gmailLastCheckAt||0) < 5*60*1000) return;
+  state.gmailCheckInFlight = true;
+  withTimeout(fns.httpsCallable("getGmailConnectionStatus")(), 20000, "Email connection status check")
+    .then(({data})=>{
+      state.gmailConnected = !!data.connected;
+      state.gmailLastCheckAt = Date.now();
+      state.gmailCheckInFlight = false;
+      render();
+    })
+    .catch(err=>{
+      console.warn("Email connection status check failed:", err);
+      state.gmailCheckInFlight = false;
+    });
+}
 // Races any promise against a plain timeout — a Cloud Function call that
 // hangs (cold start, flaky connection) rather than rejecting used to leave
 // each QuickBooks fetch's in-flight flag stuck true forever, since it's
@@ -4329,6 +4390,7 @@ function renderScorecardTab(){
   fetchQuickBooksSummaryIfStale();
   fetchQuickBooksMonthSummaryIfStale();
   fetchQuickBooksLastMonthSummaryIfStale();
+  fetchGmailConnectionStatusIfStale();
   const history = (state.settings.scorecardHistory||[]).slice().sort((a,b)=> b.weekStart < a.weekStart ? -1 : 1).slice(0,12);
   const groups = ["Growth","Operations"];
   return `
@@ -4347,6 +4409,19 @@ function renderScorecardTab(){
             : state.qbConnected===false
               ? "Not connected — Income/Expenses/Payroll rows will show \"—\" until you connect. Everything else on this Scorecard works either way."
               : "Checking connection…"
+      }</div>
+    </div>
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Email Notifications</h3>
+        ${state.gmailConnected ? `<button class="secondary" onclick="disconnectGmailNotificationsAccount()">Disconnect</button>` : `<button onclick="connectGmailNotifications()">Connect support@ email</button>`}
+      </div>
+      <div class="small" style="margin-top:6px;">${
+        state.gmailConnected
+          ? "✓ Connected — an assistant now gets an automatic email from support@themodernconcierge.co the moment a client submits a request, or a vendor gives a schedule/availability on their ticket. No phone/push notifications exist in the app, so this is the one thing that reaches them without checking the Dashboard."
+          : state.gmailConnected===false
+            ? "Not connected — those notifications won't send until you connect support@themodernconcierge.co here (one-time Google sign-in, same idea as QuickBooks)."
+            : "Checking connection…"
       }</div>
     </div>
     ${groups.map(group=>`

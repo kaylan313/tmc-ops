@@ -28,7 +28,7 @@
  * That service account's email needs Editor access on both Drive folders
  * (see README notes in the project root for the exact setup steps).
  */
-const { onDocumentUpdated } = require("firebase-functions/v2/firestore");
+const { onDocumentUpdated, onDocumentCreated } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
@@ -60,6 +60,16 @@ const QB_ENVIRONMENT = defineString("QB_ENVIRONMENT", { default: "sandbox" }); /
 // access tokens too) must be encrypted at rest with the key kept in a
 // separate configuration file, not alongside the encrypted data itself.
 const QB_TOKEN_ENCRYPTION_KEY = defineString("QB_TOKEN_ENCRYPTION_KEY", { default: "" });
+
+// Gmail OAuth (separate Google OAuth client from the Drive integration
+// above, which uses the Cloud Function's own service account via
+// Application Default Credentials and can't send mail "as" a real mailbox).
+// Same encryption key/pattern as the QuickBooks tokens above — reused for
+// consistency, not because Google requires it the way Intuit's security
+// review does.
+const GMAIL_CLIENT_ID = defineString("GMAIL_CLIENT_ID", { default: "" });
+const GMAIL_CLIENT_SECRET = defineString("GMAIL_CLIENT_SECRET", { default: "" });
+const GMAIL_REDIRECT_URI = defineString("GMAIL_REDIRECT_URI", { default: "https://us-central1-modern-co-dashboard.cloudfunctions.net/gmailOAuthCallback" });
 
 async function getDrive() {
   const auth = new google.auth.GoogleAuth({
@@ -688,4 +698,212 @@ exports.quickBooksDisconnectWebhook = onRequest(async (req, res) => {
     console.error("quickBooksDisconnectWebhook error:", err);
   }
   res.status(200).send("OK");
+});
+
+/**
+ * Automatic email notifications — the app has no other way to reach an
+ * assistant outside the browser (no push/SMS), so this sends real email
+ * from support@themodernconcierge.co the moment something happens that
+ * shouldn't wait for someone to notice it on the Dashboard:
+ *  - a client submits a request through the portal (notifyAssistantOnClientRequest)
+ *  - a vendor gives a schedule/availability on a ticket an assistant
+ *    submitted (notifyAssistantOnVendorScheduled)
+ *
+ * Uses the googleapis OAuth2 client (already a dependency, for Drive
+ * above) rather than hand-rolling the token exchange/refresh the way the
+ * QuickBooks integration does — google.auth.OAuth2 already knows how to
+ * refresh an expired access token given a stored refresh_token, so none of
+ * that needs reimplementing here.
+ */
+async function getValidGmailOAuth2Client() {
+  const tokenRef = admin.firestore().collection("gmailTokens").doc("main");
+  const tokenDoc = await tokenRef.get();
+  if (!tokenDoc.exists) return null;
+  const data = tokenDoc.data();
+  const oauth2Client = new google.auth.OAuth2(
+    GMAIL_CLIENT_ID.value(),
+    GMAIL_CLIENT_SECRET.value(),
+    GMAIL_REDIRECT_URI.value()
+  );
+  oauth2Client.setCredentials({
+    refresh_token: decryptSecret(data.refreshToken),
+    access_token: data.accessToken ? decryptSecret(data.accessToken) : undefined,
+    expiry_date: data.accessTokenExpiresAt || undefined,
+  });
+  // Fires whenever the library actually refreshes the access token (and,
+  // rarely, if Google rotates the refresh token too) — persist it back so
+  // the NEXT send doesn't have to hit the refresh endpoint again
+  // unnecessarily. Fire-and-forget: a failure here just means one extra
+  // refresh call next time, not a failed send.
+  oauth2Client.on("tokens", (tokens) => {
+    const update = {};
+    if (tokens.access_token) update.accessToken = encryptSecret(tokens.access_token);
+    if (tokens.expiry_date) update.accessTokenExpiresAt = tokens.expiry_date;
+    if (tokens.refresh_token) update.refreshToken = encryptSecret(tokens.refresh_token);
+    if (Object.keys(update).length) {
+      tokenRef.set(update, { merge: true }).catch((e) => console.warn("Failed to persist refreshed Gmail token:", e));
+    }
+  });
+  return oauth2Client;
+}
+function encodeMimeHeader(text) {
+  return `=?UTF-8?B?${Buffer.from(String(text || ""), "utf8").toString("base64")}?=`;
+}
+function buildRawEmail(to, subject, bodyText) {
+  const message = [
+    `To: ${to}`,
+    `Subject: ${encodeMimeHeader(subject)}`,
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    bodyText,
+  ].join("\r\n");
+  return Buffer.from(message).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+// Never throws — a failed/unconfigured notification shouldn't break
+// whatever Firestore write triggered it. Returns true/false for whether it
+// actually sent, purely for the caller's own logging.
+async function sendEmailViaGmail(to, subject, bodyText) {
+  if (!to) return false;
+  let oauth2Client;
+  try {
+    oauth2Client = await getValidGmailOAuth2Client();
+  } catch (err) {
+    console.error("sendEmailViaGmail: couldn't load Gmail credentials:", err);
+    return false;
+  }
+  if (!oauth2Client) {
+    console.warn("sendEmailViaGmail: no Gmail connection configured yet — skipped notification to", to);
+    return false;
+  }
+  try {
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+    await gmail.users.messages.send({ userId: "me", requestBody: { raw: buildRawEmail(to, subject, bodyText) } });
+    return true;
+  } catch (err) {
+    console.error("sendEmailViaGmail failed for", to, err);
+    return false;
+  }
+}
+
+exports.getGmailAuthConfig = onCall(async () => {
+  const state = crypto.randomBytes(24).toString("base64url");
+  await admin.firestore().collection("gmailTokens").doc("pendingState").set({
+    state,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  });
+  return { clientId: GMAIL_CLIENT_ID.value(), redirectUri: GMAIL_REDIRECT_URI.value(), state };
+});
+exports.getGmailConnectionStatus = onCall(async () => {
+  const doc = await admin.firestore().collection("gmailTokens").doc("main").get();
+  return { connected: doc.exists };
+});
+exports.disconnectGmailNotifications = onCall(async () => {
+  await admin.firestore().collection("gmailTokens").doc("main").delete();
+  return { connected: false };
+});
+// Same "redirect to a clean page with no sensitive params" pattern as
+// quickBooksOAuthCallback above, for the same reason (an auth code sitting
+// in a URL that could be bookmarked/cached/sent in a Referer header).
+exports.gmailOAuthCallback = onRequest(async (req, res) => {
+  const { code, state, error } = req.query;
+  const redirectTo = (ok) => res.redirect(302, `https://modern-co-dashboard.web.app/gmail-connected.html?ok=${ok ? "1" : "0"}`);
+
+  if (error) {
+    console.warn("Gmail OAuth callback received an error param:", error);
+    return redirectTo(false);
+  }
+  if (!code || !state) {
+    console.warn("Gmail OAuth callback missing code/state.");
+    return redirectTo(false);
+  }
+  const pendingRef = admin.firestore().collection("gmailTokens").doc("pendingState");
+  const pendingSnap = await pendingRef.get();
+  const pending = pendingSnap.exists ? pendingSnap.data() : null;
+  await pendingRef.delete().catch(() => {});
+  if (!pending || pending.state !== state || pending.expiresAt < Date.now()) {
+    console.warn("Gmail OAuth callback: state mismatch or expired — possible CSRF attempt or stale link.");
+    return redirectTo(false);
+  }
+  try {
+    const oauth2Client = new google.auth.OAuth2(GMAIL_CLIENT_ID.value(), GMAIL_CLIENT_SECRET.value(), GMAIL_REDIRECT_URI.value());
+    const { tokens } = await oauth2Client.getToken(code);
+    if (!tokens.refresh_token) {
+      // Google only issues a refresh_token on first consent, or when the
+      // request includes prompt=consent — if this ever comes back missing,
+      // the connect button is sending the wrong params, not a one-off fluke.
+      console.error("Gmail OAuth callback: no refresh_token in response — connect flow must include access_type=offline&prompt=consent.");
+      return redirectTo(false);
+    }
+    await admin.firestore().collection("gmailTokens").doc("main").set({
+      refreshToken: encryptSecret(tokens.refresh_token),
+      accessToken: tokens.access_token ? encryptSecret(tokens.access_token) : null,
+      accessTokenExpiresAt: tokens.expiry_date || null,
+      connectedAt: new Date().toISOString(),
+    });
+    return redirectTo(true);
+  } catch (err) {
+    console.error("gmailOAuthCallback token exchange failed:", err);
+    return redirectTo(false);
+  }
+});
+
+// Fires the moment a vendor gives a schedule or availability window on a
+// ticket for the FIRST time (requested -> scheduled, see vendorTicketStage
+// in index.html) — the earliest real sign they've seen and accepted the
+// job, and exactly the moment the assistant needs to know to follow up
+// with the client.
+exports.notifyAssistantOnVendorScheduled = onDocumentUpdated("vendors/{vendorId}", async (event) => {
+  const before = event.data.before.data() || {};
+  const after = event.data.after.data() || {};
+  const beforeById = new Map((before.tickets || []).map((t) => [t.id, t]));
+  const newlyScheduled = (after.tickets || []).filter((t) => {
+    const prev = beforeById.get(t.id);
+    const wasScheduled = !!(prev && (prev.scheduledAt || prev.availableTimesNote));
+    const nowScheduled = !!(t.scheduledAt || t.availableTimesNote);
+    return !wasScheduled && nowScheduled && t.requestedByAssistantId;
+  });
+  if (!newlyScheduled.length) return;
+  const settingsDoc = await admin.firestore().collection("settings").doc("access").get();
+  const assistants = (settingsDoc.exists && settingsDoc.data().assistants) || [];
+  for (const ticket of newlyScheduled) {
+    const assistant = assistants.find((a) => a.id === ticket.requestedByAssistantId);
+    if (!assistant || !assistant.email) continue;
+    const when = ticket.scheduledAt
+      ? `scheduled for ${new Date(ticket.scheduledAt).toLocaleString("en-US")}`
+      : `available: "${ticket.availableTimesNote}"`;
+    const sent = await sendEmailViaGmail(
+      assistant.email,
+      `${after.name || "A vendor"} responded: ${ticket.title || "vendor request"}`,
+      `${after.name || "The vendor"} is ${when} for "${ticket.title || "this request"}".\n\nOpen TMC Ops -> Vendor Requests to follow up with the client.`
+    );
+    console.log(`notifyAssistantOnVendorScheduled: ticket ${ticket.id} -> ${assistant.email} -> ${sent ? "sent" : "not sent"}`);
+  }
+});
+
+// Fires the moment a client submits a new request through the portal
+// (requestedByClient, status "Pending approval") — previously surfaced
+// ONLY on the Dashboard's "Client requests awaiting review" card, with
+// nothing pushing it to anyone until they happened to check that tab.
+exports.notifyAssistantOnClientRequest = onDocumentCreated("tasks/{taskId}", async (event) => {
+  const task = event.data.data();
+  if (!task || !task.requestedByClient || task.status !== "Pending approval") return;
+  const assigneeIds = task.assignees || [];
+  if (!assigneeIds.length) return;
+  const [settingsDoc, clientDoc] = await Promise.all([
+    admin.firestore().collection("settings").doc("access").get(),
+    task.clientId ? admin.firestore().collection("clients").doc(task.clientId).get() : Promise.resolve(null),
+  ]);
+  const assistants = (settingsDoc.exists && settingsDoc.data().assistants) || [];
+  const clientName = (clientDoc && clientDoc.exists && clientDoc.data().name) || "A client";
+  const toNotify = assistants.filter((a) => assigneeIds.includes(a.id) && a.email);
+  for (const assistant of toNotify) {
+    const sent = await sendEmailViaGmail(
+      assistant.email,
+      `New request from ${clientName}: ${task.title || "(no title)"}`,
+      `${clientName} submitted a new request: "${task.title || "(no title)"}"` +
+        (task.clientRequestNote ? `\n\n"${task.clientRequestNote}"` : "") +
+        `\n\nOpen TMC Ops -> Task Board to accept or decline it.`
+    );
+    console.log(`notifyAssistantOnClientRequest: task ${event.params.taskId} -> ${assistant.email} -> ${sent ? "sent" : "not sent"}`);
+  }
 });
