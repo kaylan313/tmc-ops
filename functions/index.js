@@ -116,6 +116,7 @@ exports.fileClientContractToDrive = onDocumentUpdated("clients/{clientId}", asyn
   const after = event.data.after.data() || {};
   if (!after.contractHtml || after.contractHtml === before.contractHtml) return;
 
+  let driveLink = null;
   try {
     const drive = await getDrive();
     const folderId = await findOrCreateFolder(drive, CLIENTS_FOLDER_ID.value(), after.name || "Unnamed client");
@@ -131,10 +132,28 @@ exports.fileClientContractToDrive = onDocumentUpdated("clients/{clientId}", asyn
       contractSignatureDataUrl: admin.firestore.FieldValue.delete(),
       driveContractUrl: file.webViewLink,
     });
+    driveLink = file.webViewLink;
     console.log(`Filed contract for ${after.name} to Drive: ${file.webViewLink}`);
   } catch (err) {
     console.error(`Drive upload failed for client ${event.params.clientId} (${after.name}):`, err);
   }
+
+  // Heidi needs to know a signature just happened so she can download it
+  // and charge the client — a separate manual step from the Drive filing
+  // above, so this fires regardless of whether that succeeded. Uses
+  // sendEmailViaGmail, defined further down in this file alongside the rest
+  // of the Gmail notification setup — function declarations are hoisted,
+  // so the earlier position of this trigger doesn't matter.
+  const sent = await sendEmailViaGmail(
+    "heidi@themodernconcierge.co",
+    `${after.name || "A client"} signed their Service Agreement`,
+    `${after.name || "A client"} just signed their Service Agreement in TMC Ops.\n\n` +
+      (driveLink
+        ? `Signed copy: ${driveLink}`
+        : `It didn't get auto-filed to Drive this time — open their profile in TMC Ops to download it directly.`) +
+      `\n\nDon't forget to charge them.`
+  );
+  console.log(`fileClientContractToDrive: signature notification for ${after.name} -> heidi@themodernconcierge.co -> ${sent ? "sent" : "not sent"}`);
 });
 
 exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", async (event) => {
