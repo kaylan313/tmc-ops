@@ -2008,13 +2008,22 @@ async function downloadClientReport(clientId, kind){
   if(!client) return;
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
+  // Opened synchronously, before the save below — same popup-blocking issue
+  // as connectQuickBooks()/connectGmailNotifications(): window.open() after
+  // an await can get silently blocked once the browser no longer counts it
+  // as a direct result of the click, and a bigger report (more tasks/
+  // receipts to save — base64 photos especially) just takes long enough to
+  // tip over that line. That's exactly what made "View" silently do nothing
+  // for one specific client's report while smaller/faster ones kept working.
+  const reportTab = window.open("", "_blank");
   const report = buildClientReport(client, reportWindow, kind);
   const html = clientReportHtml(report);
   const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
   const url = await saveReportAndGetLink(html, "clientRecap", client.name + " — " + kindSlug + " report");
   if(url){
-    window.open(url, "_blank");
+    if(reportTab) reportTab.location.href = url; else window.open(url, "_blank");
   }else{
+    if(reportTab) reportTab.close();
     downloadHtmlFileFallback(html, client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html");
   }
 }
@@ -2158,13 +2167,17 @@ function payrollReportPlainText(report){
 async function downloadPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
+  // Same popup-blocking fix as downloadClientReport() above — open the tab
+  // before the save, not after.
+  const reportTab = window.open("", "_blank");
   const period = resolvedPayrollReportPeriod();
   const report = buildPayrollReport(assistant, period);
   const html = payrollReportHtml(report);
   const url = await saveReportAndGetLink(html, "payrollRecap", assistant.name + " — payroll recap");
   if(url){
-    window.open(url, "_blank");
+    if(reportTab) reportTab.location.href = url; else window.open(url, "_blank");
   }else{
+    if(reportTab) reportTab.close();
     downloadHtmlFileFallback(html, assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html");
   }
 }
