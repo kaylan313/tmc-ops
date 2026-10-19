@@ -1435,6 +1435,31 @@ function buildClientReport(client, window, kind){
     receipts: client.includeReceiptsInReport ? receiptsInWindow(client, window) : []
   };
 }
+// Firestore caps a single document field at ~1,048,487 bytes. Receipts are
+// task attachments and a task can carry up to ~900KB of them (see
+// MAX_ATTACHMENTS_TOTAL_BYTES) — a report spanning several receipt-heavy
+// tasks can aggregate well past that limit, which made the whole report
+// (including the non-receipt parts a client actually needs) fail to save at
+// all, silently until the error-handling fix. Capping the embedded-receipt
+// budget keeps the report saveable no matter how many receipts pile up;
+// anything that doesn't fit gets a text note instead of being embedded.
+const MAX_REPORT_RECEIPT_BYTES = 650000;
+function renderReportReceipts(receipts){
+  if(!receipts || !receipts.length) return "";
+  let usedBytes = 0;
+  const rows = receipts.map(r=>{
+    const size = r.dataUrl ? r.dataUrl.length : 0;
+    const meta = `<div class="item-hours" style="margin-bottom:6px;">${r.taskTitle} &middot; ${new Date(r.uploadedAt).toLocaleDateString()}</div>`;
+    if(usedBytes + size > MAX_REPORT_RECEIPT_BYTES){
+      return `<div style="margin-bottom:14px;">${meta}<div class="small">${escHtml(r.name||'Receipt')} — too large to include inline; ask your assistant for a copy if you need it.</div></div>`;
+    }
+    usedBytes += size;
+    return `<div style="margin-bottom:14px;">${meta}${r.type && r.type.startsWith('image/')
+      ? `<img src="${r.dataUrl}" style="max-width:100%;border-radius:6px;display:block;">`
+      : `<a href="${r.dataUrl}" download="${r.name}" style="color:var(--rose-dark);">${r.name}</a>`}</div>`;
+  }).join("");
+  return `<hr><div class="section-label">Receipts (${receipts.length})</div>${rows}`;
+}
 function clientReportHtml(report){
   const { client, week, inProgress, todo, completed, workedOn } = report;
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
@@ -1549,16 +1574,7 @@ function clientReportHtml(report){
       <div class="section-label">On Our List</div>
       ${todo.map(t=>item(t,'todo')).join("")}` : ""}
 
-      ${report.receipts && report.receipts.length ? `
-      <hr>
-      <div class="section-label">Receipts (${report.receipts.length})</div>
-      ${report.receipts.map(r=>`
-        <div style="margin-bottom:14px;">
-          <div class="item-hours" style="margin-bottom:6px;">${r.taskTitle} &middot; ${new Date(r.uploadedAt).toLocaleDateString()}</div>
-          ${r.type && r.type.startsWith('image/')
-            ? `<img src="${r.dataUrl}" style="max-width:100%;border-radius:6px;display:block;">`
-            : `<a href="${r.dataUrl}" download="${r.name}" style="color:var(--rose-dark);">${r.name}</a>`}
-        </div>`).join("")}` : ""}
+      ${renderReportReceipts(report.receipts)}
 
       <hr>
 
