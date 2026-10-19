@@ -4065,6 +4065,14 @@ function ensureCurrentScorecardPeriodSnapshot(){
 // goes through the three callable functions.
 async function connectQuickBooks(){
   if(!fns){ alert("QuickBooks isn't available right now — try reloading the page."); return; }
+  // Opened synchronously, BEFORE the await below — a window.open() that
+  // happens only after an await has already lost the "direct result of a
+  // click" status most browsers require, so it gets silently blocked with
+  // no error at all (this is exactly what "nothing happens when I click
+  // connect" turned out to be). Opening a blank tab right now, then
+  // navigating it once the real URL is ready, keeps it inside the original
+  // click so it's never blocked.
+  const authTab = window.open("", "_blank");
   try{
     // The state value comes from the server (getQuickBooksAuthConfig mints
     // and stores it), not generated here — a client-side-only state is
@@ -4078,9 +4086,10 @@ async function connectQuickBooks(){
       + "&response_type=code"
       + "&scope=com.intuit.quickbooks.accounting"
       + "&state=" + encodeURIComponent(data.state);
-    window.open(authUrl, "_blank");
+    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
   }catch(err){
     console.error(err);
+    if(authTab) authTab.close();
     alert("Couldn't start the QuickBooks connection — check the console for details.");
   }
 }
@@ -4107,6 +4116,10 @@ async function disconnectQuickBooksAccount(){
 // token at all, since Google only issues one on first consent by default.
 async function connectGmailNotifications(){
   if(!fns){ alert("This isn't available right now — try reloading the page."); return; }
+  // Same reasoning as connectQuickBooks() above — open the tab synchronously
+  // now, navigate it once the real URL is ready, so it can't get silently
+  // popup-blocked by waiting on the network call first.
+  const authTab = window.open("", "_blank");
   try{
     const { data } = await fns.httpsCallable("getGmailAuthConfig")();
     const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -4118,9 +4131,10 @@ async function connectGmailNotifications(){
       + "&prompt=consent"
       + "&login_hint=support@themodernconcierge.co"
       + "&state=" + encodeURIComponent(data.state);
-    window.open(authUrl, "_blank");
+    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
   }catch(err){
     console.error(err);
+    if(authTab) authTab.close();
     alert("Couldn't start the email connection — check the console for details.");
   }
 }
