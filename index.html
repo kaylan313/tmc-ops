@@ -304,7 +304,8 @@ const SEED_SETTINGS = {
   socialLogins: [],
   contentInsights: [],
   contentGoals: [],
-  scorecardHistory: []
+  scorecardHistory: [],
+  scorecardPeriodHistory: []
 };
 
 const INTERNAL_CLIENT_ID = "internal";
@@ -4034,6 +4035,30 @@ function ensureCurrentScorecardSnapshot(){
   state.settings.scorecardHistory = updated;
   upsert("settings","access", { scorecardHistory: updated });
 }
+// Same idea as ensureCurrentScorecardSnapshot() above, but keyed by pay
+// period (1st-14th, 15th-end of month) instead of by week — the Operations
+// group is payroll/capacity metrics, which this company actually tracks
+// and acts on twice a month, not weekly. Reuses the exact same
+// computeScorecardMetrics() snapshot (it already computes every metric
+// regardless of cadence); this just files a second copy of it under a
+// period key instead of a week key, so the two tables can each show their
+// own natural cadence from the same underlying numbers.
+function ensureCurrentScorecardPeriodSnapshot(){
+  const period = currentPayrollPeriod();
+  const periodStart = period.start.toISOString().slice(0,10);
+  const metrics = computeScorecardMetrics();
+  const history = state.settings.scorecardPeriodHistory || [];
+  const idx = history.findIndex(h=>h.periodStart===periodStart);
+  let updated;
+  if(idx>=0){
+    updated = history.slice();
+    updated[idx] = { periodStart, periodEnd: period.end.toISOString().slice(0,10), capturedAt: new Date().toISOString(), metrics };
+  } else {
+    updated = [...history, { periodStart, periodEnd: period.end.toISOString().slice(0,10), capturedAt: new Date().toISOString(), metrics }];
+  }
+  state.settings.scorecardPeriodHistory = updated;
+  upsert("settings","access", { scorecardPeriodHistory: updated });
+}
 // Read-only QuickBooks connection — see functions/index.js for the full
 // explanation of why tokens live server-side only. This app never touches
 // qbTokens directly (Firestore Rules block it entirely); everything here
@@ -4387,15 +4412,20 @@ function renderScorecardGoalRow(goal){
 }
 function renderScorecardTab(){
   ensureCurrentScorecardSnapshot();
+  ensureCurrentScorecardPeriodSnapshot();
   fetchQuickBooksSummaryIfStale();
   fetchQuickBooksMonthSummaryIfStale();
   fetchQuickBooksLastMonthSummaryIfStale();
   fetchGmailConnectionStatusIfStale();
   const history = (state.settings.scorecardHistory||[]).slice().sort((a,b)=> b.weekStart < a.weekStart ? -1 : 1).slice(0,12);
-  const groups = ["Growth","Operations"];
+  // Operations is payroll/capacity work this company actually runs on a
+  // 1st/15th cadence, not weekly — its own history, keyed and captured by
+  // pay period instead of by week, same underlying computeScorecardMetrics()
+  // numbers either way. 12 periods = about 6 months back.
+  const periodHistory = (state.settings.scorecardPeriodHistory||[]).slice().sort((a,b)=> b.periodStart < a.periodStart ? -1 : 1).slice(0,12);
   return `
     <h2>Scorecard</h2>
-    <div class="small" style="margin-bottom:14px;">Weekly numbers for your Level 10 / leadership meeting — computed live from the app, no manual entry. This week's column updates every time this tab is opened; past weeks are frozen once the calendar moves on.</div>
+    <div class="small" style="margin-bottom:14px;">Growth below is weekly, for your Level 10 / leadership meeting. Operations is by pay period (1st–14th, 15th–end of month), matching how payroll/capacity actually gets reviewed. Both are computed live from the app, no manual entry — the current column updates every time this tab is opened; past ones are frozen once the calendar moves on.</div>
     <div class="card">
       <div class="flex-between">
         <h3 style="margin:0;">QuickBooks</h3>
@@ -4424,13 +4454,12 @@ function renderScorecardTab(){
             : "Checking connection…"
       }</div>
     </div>
-    ${groups.map(group=>`
     <div class="card">
-      <h3>${group}</h3>
+      <h3>Growth</h3>
       <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Metric</th>${history.map(h=>`<th>${parseYMD(h.weekStart).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</th>`).join("")}</tr></thead>
         <tbody>
-          ${SCORECARD_METRIC_DEFS.filter(m=>m.group===group).map(m=>`
+          ${SCORECARD_METRIC_DEFS.filter(m=>m.group==="Growth").map(m=>`
             <tr>
               <td>${m.label}</td>
               ${history.map(h=>{
@@ -4441,7 +4470,24 @@ function renderScorecardTab(){
             </tr>`).join("")}
         </tbody>
       </table></div>
-    </div>`).join("")}
+    </div>
+    <div class="card">
+      <h3>Operations</h3>
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Metric</th>${periodHistory.map(h=>`<th>${parseYMD(h.periodStart).toLocaleDateString('en-US',{month:'short',day:'numeric'})}&ndash;${new Date(parseYMD(h.periodEnd).getTime()-86400000).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</th>`).join("")}</tr></thead>
+        <tbody>
+          ${SCORECARD_METRIC_DEFS.filter(m=>m.group==="Operations").map(m=>`
+            <tr>
+              <td>${m.label}</td>
+              ${periodHistory.map(h=>{
+                const v = h.metrics[m.key];
+                const display = v==null ? "—" : (m.fmt ? m.fmt(v) : v);
+                return `<td>${display}</td>`;
+              }).join("")}
+            </tr>`).join("")}
+        </tbody>
+      </table></div>
+    </div>
     ${(()=>{
       const ms = state.qbMonthSummary;
       const ps = state.qbLastMonthSummary;
