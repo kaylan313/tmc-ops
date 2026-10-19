@@ -1624,7 +1624,18 @@ async function copyReportCoverNote(clientId, kind, btnEl){
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
   const report = buildClientReport(client, reportWindow, kind);
   const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
-  const url = await saveReportAndGetLink(clientReportHtml(report), "clientRecap", client.name + " — " + kindSlug + " report");
+  let url;
+  try{
+    url = await saveReportAndGetLink(clientReportHtml(report), "clientRecap", client.name + " — " + kindSlug + " report");
+  }catch(err){
+    // Previously this failure was completely silent — nothing visible
+    // happened at all if the save itself failed, which is exactly what
+    // made "Copy message isn't even working" impossible to diagnose
+    // without seeing the browser console.
+    console.error("copyReportCoverNote: saving the report failed:", err);
+    alert("Couldn't prepare that report — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
+    return;
+  }
   const text = clientReportCoverNote(report, url);
   navigator.clipboard.writeText(text).then(()=>{
     if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
@@ -1975,22 +1986,52 @@ function reportWindowFor(client, kind){
   return currentReportWeek();
 }
 // Stores a generated report's HTML in Firestore and returns a link that
-// renders it via the viewReport Cloud Function (see REPORT_VIEWER_URL
-// above). Opening a link always renders identically everywhere — unlike a
-// raw downloaded .html file, which most desktop mail clients preview as
-// source text instead of rendering (the "works on phone, shows code on
-// desktop" bug this replaced). Returns null if Firestore isn't reachable
-// (e.g. local-only demo mode), so callers can fall back to a download.
-async function saveReportAndGetLink(html, type, title){
-  if(!FIREBASE_AVAILABLE){
-    console.warn("Firebase unavailable — can't generate a report link.");
-    return null;
-  }
-  const doc = await db.collection("reports").add({
+// renders it via report.html (see REPORT_VIEWER_URL above). Opening a link
+// always renders identically everywhere — unlike a raw downloaded .html
+// file, which most desktop mail clients preview as source text instead of
+// rendering (the "works on phone, shows code on desktop" bug this replaced).
+//
+// Split into pieces instead of one combined call: reserveReportDoc()
+// generates the Firestore document reference (and therefore the final URL)
+// SYNCHRONOUSLY — a Firestore auto-ID is generated client-side, no network
+// round-trip needed to know it. That lets a caller that needs to open a new
+// tab (downloadClientReport, downloadPayrollReport) open it with the REAL
+// final URL immediately, inside the original click, instead of opening a
+// blank tab and navigating it later once the save finishes. That
+// "navigate later" approach looked like it fixed the popup-blocking issue
+// (something visibly opened instead of nothing), but some browsers simply
+// never apply a .location.href set outside the original click's synchronous
+// execution — which showed up as a tab that opens and stays permanently
+// blank. saveReportToDoc() does the actual (async) write to the reserved
+// doc; report.html retries its own fetch a few times before giving up,
+// specifically to cover the brief gap between the new tab opening and this
+// write actually landing in Firestore.
+function reserveReportDoc(){
+  if(!FIREBASE_AVAILABLE) return null;
+  return db.collection("reports").doc();
+}
+function reportLinkFor(docRef){
+  return docRef ? REPORT_VIEWER_URL + "?id=" + docRef.id : null;
+}
+async function saveReportToDoc(docRef, html, type, title){
+  if(!docRef) throw new Error("Firebase isn't connected — can't save a report link.");
+  await docRef.set({
     html, type, title,
     createdAt: firebase.firestore.FieldValue.serverTimestamp()
   });
-  return REPORT_VIEWER_URL + "?id=" + doc.id;
+}
+// One-step "save and get the link" for callers with no tab to pre-open —
+// copyReportCoverNote only copies text, so there's no popup-timing issue to
+// work around there. Returns null if Firestore isn't reachable (e.g.
+// local-only demo mode), so callers can fall back to a download.
+async function saveReportAndGetLink(html, type, title){
+  const docRef = reserveReportDoc();
+  if(!docRef){
+    console.warn("Firebase unavailable — can't generate a report link.");
+    return null;
+  }
+  await saveReportToDoc(docRef, html, type, title);
+  return reportLinkFor(docRef);
 }
 function downloadHtmlFileFallback(html, filename){
   const blob = new Blob([html], { type: "text/html" });
@@ -2008,23 +2049,33 @@ async function downloadClientReport(clientId, kind){
   if(!client) return;
   const reportWindow = reportWindowFor(client, kind);
   if(!reportWindow){ alert(client.name + " doesn't have a renewal date set yet — add one on their Membership tab first."); return; }
-  // Opened synchronously, before the save below — same popup-blocking issue
-  // as connectQuickBooks()/connectGmailNotifications(): window.open() after
-  // an await can get silently blocked once the browser no longer counts it
-  // as a direct result of the click, and a bigger report (more tasks/
-  // receipts to save — base64 photos especially) just takes long enough to
-  // tip over that line. That's exactly what made "View" silently do nothing
-  // for one specific client's report while smaller/faster ones kept working.
-  const reportTab = window.open("", "_blank");
-  const report = buildClientReport(client, reportWindow, kind);
-  const html = clientReportHtml(report);
-  const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
-  const url = await saveReportAndGetLink(html, "clientRecap", client.name + " — " + kindSlug + " report");
-  if(url){
-    if(reportTab) reportTab.location.href = url; else window.open(url, "_blank");
-  }else{
+  // Reserve the doc + open the REAL final URL immediately, synchronously,
+  // inside this click — see reserveReportDoc()'s comment for why this
+  // replaced "open a blank tab, navigate it once the save finishes" (some
+  // browsers never actually apply that later navigation, which looked like
+  // a fix — a tab visibly opened — but actually just left it permanently
+  // blank instead of outright blocked).
+  const docRef = reserveReportDoc();
+  const url = reportLinkFor(docRef);
+  const reportTab = url ? window.open(url, "_blank") : null;
+  try{
+    const report = buildClientReport(client, reportWindow, kind);
+    const html = clientReportHtml(report);
+    const kindSlug = kind === "lastPeriod" ? "last-period" : kind;
+    if(docRef){
+      await saveReportToDoc(docRef, html, "clientRecap", client.name + " — " + kindSlug + " report");
+    }else{
+      if(reportTab) reportTab.close();
+      downloadHtmlFileFallback(html, client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html");
+    }
+  }catch(err){
+    // Previously this failure was completely silent — nothing visible
+    // happened at all if the save itself failed (e.g. a Firestore error),
+    // which is exactly what made "it's broken" impossible to diagnose from
+    // here without seeing the browser console.
+    console.error("downloadClientReport failed:", err);
     if(reportTab) reportTab.close();
-    downloadHtmlFileFallback(html, client.name.replace(/[^a-z0-9]+/gi,"-") + "-" + kindSlug + "-report-" + new Date().toISOString().slice(0,10) + ".html");
+    alert("Couldn't prepare that report — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
   }
 }
 // A period/lastPeriod recap counts as "sent" once emailed or copied — tracked
@@ -2167,18 +2218,26 @@ function payrollReportPlainText(report){
 async function downloadPayrollReport(assistantId){
   const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   if(!assistant) return;
-  // Same popup-blocking fix as downloadClientReport() above — open the tab
-  // before the save, not after.
-  const reportTab = window.open("", "_blank");
-  const period = resolvedPayrollReportPeriod();
-  const report = buildPayrollReport(assistant, period);
-  const html = payrollReportHtml(report);
-  const url = await saveReportAndGetLink(html, "payrollRecap", assistant.name + " — payroll recap");
-  if(url){
-    if(reportTab) reportTab.location.href = url; else window.open(url, "_blank");
-  }else{
+  // Same fix as downloadClientReport() above — reserve the doc + open the
+  // real final URL immediately, synchronously, instead of opening a blank
+  // tab and navigating it later (which some browsers never actually apply).
+  const docRef = reserveReportDoc();
+  const url = reportLinkFor(docRef);
+  const reportTab = url ? window.open(url, "_blank") : null;
+  try{
+    const period = resolvedPayrollReportPeriod();
+    const report = buildPayrollReport(assistant, period);
+    const html = payrollReportHtml(report);
+    if(docRef){
+      await saveReportToDoc(docRef, html, "payrollRecap", assistant.name + " — payroll recap");
+    }else{
+      if(reportTab) reportTab.close();
+      downloadHtmlFileFallback(html, assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html");
+    }
+  }catch(err){
+    console.error("downloadPayrollReport failed:", err);
     if(reportTab) reportTab.close();
-    downloadHtmlFileFallback(html, assistant.name.replace(/[^a-z0-9]+/gi,"-") + "-payroll-" + new Date().toISOString().slice(0,10) + ".html");
+    alert("Couldn't prepare that report — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
   }
 }
 function downloadPayrollReportFile(assistantId){
@@ -2195,7 +2254,17 @@ async function emailPayrollReport(assistantId){
   if(!assistant.email){ alert(assistant.name + " doesn't have an email on file yet — add one on the Team tab first."); return; }
   const period = resolvedPayrollReportPeriod();
   const report = buildPayrollReport(assistant, period);
-  const url = await saveReportAndGetLink(payrollReportHtml(report), "payrollRecap", assistant.name + " — payroll recap");
+  let url;
+  try{
+    url = await saveReportAndGetLink(payrollReportHtml(report), "payrollRecap", assistant.name + " — payroll recap");
+  }catch(err){
+    // Without this, a failed save meant window.location.href below never
+    // ran at all — the mailto: link just silently never opened, with
+    // nothing to tell you why.
+    console.error("emailPayrollReport: saving the report failed:", err);
+    alert("Couldn't prepare that report — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
+    return;
+  }
   const subject = encodeURIComponent("Your Payroll Recap — " + formatPeriodRange(period));
   const linkLine = url ? "\n\nView the full formatted recap here: " + url : "";
   const body = encodeURIComponent(payrollReportPlainText(report) + linkLine);

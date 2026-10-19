@@ -58,18 +58,41 @@ const frameEl = document.getElementById("reportFrame");
 if (!id) {
   statusEl.textContent = "Missing report id.";
 } else {
+  // The URL is now opened the instant a new tab is requested (see
+  // reserveReportDoc() in index.html) — before the matching write has
+  // necessarily finished landing in Firestore, so this document may not
+  // exist yet the moment this page first checks. A live listener (instead
+  // of a one-shot .get()) picks up the write the moment it actually lands,
+  // with no polling/guessed delay needed — it only gives up and shows "no
+  // longer valid" if NOTHING shows up within a generous window, which
+  // means it's a genuinely bad/expired link rather than just early.
+  let settled = false;
+  const notFoundTimer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    statusEl.textContent = "This report link is no longer valid.";
+  }, 8000);
   firebase.auth().signInAnonymously()
-    .then(() => firebase.firestore().collection("reports").doc(id).get())
-    .then((snap) => {
-      if (!snap.exists) {
-        statusEl.textContent = "This report link is no longer valid.";
-        return;
-      }
-      frameEl.srcdoc = snap.data().html;
-      frameEl.style.display = "block";
-      statusEl.style.display = "none";
+    .then(() => {
+      firebase.firestore().collection("reports").doc(id).onSnapshot((snap) => {
+        if (!snap.exists || settled) return;
+        settled = true;
+        clearTimeout(notFoundTimer);
+        frameEl.srcdoc = snap.data().html;
+        frameEl.style.display = "block";
+        statusEl.style.display = "none";
+      }, (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(notFoundTimer);
+        console.error(err);
+        statusEl.textContent = "Something went wrong loading this report.";
+      });
     })
     .catch((err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(notFoundTimer);
       console.error(err);
       statusEl.textContent = "Something went wrong loading this report.";
     });
