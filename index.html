@@ -9516,6 +9516,24 @@ function renderTeamAdmin(){
     </div>
   `;
 }
+// Mirrors DEFAULT_NOTIFY_PREFS in functions/index.js — keep both in sync.
+// Missing keys fall back to "on" so existing assistants keep getting the
+// client-request/vendor-scheduled emails they were already getting before
+// this toggle existed; "comments" is new behavior but defaults on too since
+// that's what was actually requested, with the toggle there for whoever
+// finds it too noisy.
+const DEFAULT_NOTIFY_PREFS = { clientRequest:true, vendorScheduled:true, comments:true };
+function assistantNotifyPrefs(a){
+  return { ...DEFAULT_NOTIFY_PREFS, ...(a && a.notifyPrefs || {}) };
+}
+function updateMyNotifyPref(key, checked){
+  if(!state.currentAssistant) return;
+  const prefs = { ...assistantNotifyPrefs(state.currentAssistant), [key]: checked };
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===state.currentAssistant.id?{...a,notifyPrefs:prefs}:a);
+  state.currentAssistant = state.settings.assistants.find(a=>a.id===state.currentAssistant.id);
+  upsert("settings","access", { assistants: state.settings.assistants });
+  render();
+}
 // Team-member view of the Team tab: a contact list only. Deliberately reads
 // just name/email/phone off each assistant record — everything else on it
 // (access codes, pay, agreements, roles, onboarding) is admin-only and must
@@ -9525,8 +9543,28 @@ function renderTeamDirectory(){
     .filter(a=>a.active!==false)
     .map(a=>({ name: a.name||"", email: (a.email||"").trim(), phone: (a.phone||"").trim() }))
     .sort((a,b)=>a.name.localeCompare(b.name));
+  const prefs = state.currentAssistant ? assistantNotifyPrefs(state.currentAssistant) : null;
   return `
     <h2>Team</h2>
+    ${prefs ? `
+    <div class="card">
+      <h3>My email notifications</h3>
+      <div class="small" style="margin-bottom:10px;">Sent to ${escHtml(state.currentAssistant.email||'(no email on file — add one so these can reach you)')}. Turn off any you don't need.</div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${prefs.clientRequest?'checked':''} onchange="updateMyNotifyPref('clientRequest',this.checked)">
+          A client submits a new request
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${prefs.vendorScheduled?'checked':''} onchange="updateMyNotifyPref('vendorScheduled',this.checked)">
+          A vendor schedules a request you submitted
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${prefs.comments?'checked':''} onchange="updateMyNotifyPref('comments',this.checked)">
+          Someone comments on one of your tasks
+        </label>
+      </div>
+    </div>` : ""}
     <div class="small" style="margin-bottom:14px;">Contact info for everyone on the team.</div>
     <div class="card">
       ${people.length ? `
@@ -10518,6 +10556,22 @@ function renderClientPortal(){
           <h3>Service Agreement</h3>
           ${renderContractSectionBody(client)}
         </div>
+        ${isSigned && (client.assistantIds||[]).length ? `
+        <div class="card">
+          <h3>Your assistant${(client.assistantIds||[]).length>1?'s':''}</h3>
+          ${(client.assistantIds||[]).map(id=>{
+            const a = state.settings.assistants.find(x=>x.id===id);
+            if(!a) return "";
+            return `<div class="list-item">
+              <div><strong>${escHtml(a.name||'')}</strong></div>
+              <div style="text-align:right;">
+                ${a.email ? `<div class="small"><a href="mailto:${escHtml(a.email)}">${escHtml(a.email)}</a></div>` : ""}
+                ${a.phone ? `<div class="small"><a href="tel:${escHtml(a.phone.replace(/[^\d+]/g,''))}">${escHtml(a.phone)}</a></div>` : ""}
+              </div>
+            </div>`;
+          }).join("") || `<div class="small">No contact info on file yet.</div>`}
+        </div>
+        ` : ""}
         ${isSigned ? `
         <div class="card">
           <h3>Your membership</h3>
@@ -10996,7 +11050,7 @@ function addTaskComment(taskId){
   // shows up right away for whoever else is on the task.
   const author = state.currentAssistant ? state.currentAssistant.name : "Admin";
   const task = state.modal.task;
-  const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
+  const discussion = [...(task.discussion||[]), { id:newId("comment"), author, authorAssistantId: state.currentAssistant ? state.currentAssistant.id : null, text, date:new Date().toISOString() }];
   task.discussion = discussion;
   upsert("tasks", taskId, { discussion });
   if(state.commentDrafts) delete state.commentDrafts[taskId];
@@ -11080,7 +11134,7 @@ function addContentTaskComment(taskId){
   const task = state.tasks.find(t=>t.id===taskId);
   if(!task) return;
   const author = state.currentAssistant ? state.currentAssistant.name : "Admin";
-  const discussion = [...(task.discussion||[]), { id:newId("comment"), author, text, date:new Date().toISOString() }];
+  const discussion = [...(task.discussion||[]), { id:newId("comment"), author, authorAssistantId: state.currentAssistant ? state.currentAssistant.id : null, text, date:new Date().toISOString() }];
   task.discussion = discussion;
   upsert("tasks", taskId, { discussion });
   if(state.commentDrafts) delete state.commentDrafts[taskId];

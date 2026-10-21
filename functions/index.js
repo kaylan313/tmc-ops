@@ -804,6 +804,16 @@ async function sendEmailViaGmail(to, subject, bodyText) {
   }
 }
 
+// Mirrors DEFAULT_NOTIFY_PREFS in index.html — keep both in sync. An
+// assistant who has never touched the toggle has no notifyPrefs field at
+// all, so every key here defaults to "on" (preserves the always-on behavior
+// these notifications had before the toggle existed).
+const DEFAULT_NOTIFY_PREFS = { clientRequest: true, vendorScheduled: true, comments: true };
+function assistantWantsNotification(assistant, key) {
+  const prefs = (assistant && assistant.notifyPrefs) || {};
+  return prefs[key] !== undefined ? !!prefs[key] : DEFAULT_NOTIFY_PREFS[key];
+}
+
 exports.getGmailAuthConfig = onCall(async () => {
   const state = crypto.randomBytes(24).toString("base64url");
   await admin.firestore().collection("gmailTokens").doc("pendingState").set({
@@ -886,7 +896,7 @@ exports.notifyAssistantOnVendorScheduled = onDocumentUpdated("vendors/{vendorId}
   const assistants = (settingsDoc.exists && settingsDoc.data().assistants) || [];
   for (const ticket of newlyScheduled) {
     const assistant = assistants.find((a) => a.id === ticket.requestedByAssistantId);
-    if (!assistant || !assistant.email) continue;
+    if (!assistant || !assistant.email || !assistantWantsNotification(assistant, "vendorScheduled")) continue;
     const when = ticket.scheduledAt
       ? `scheduled for ${new Date(ticket.scheduledAt).toLocaleString("en-US")}`
       : `available: "${ticket.availableTimesNote}"`;
@@ -914,7 +924,7 @@ exports.notifyAssistantOnClientRequest = onDocumentCreated("tasks/{taskId}", asy
   ]);
   const assistants = (settingsDoc.exists && settingsDoc.data().assistants) || [];
   const clientName = (clientDoc && clientDoc.exists && clientDoc.data().name) || "A client";
-  const toNotify = assistants.filter((a) => assigneeIds.includes(a.id) && a.email);
+  const toNotify = assistants.filter((a) => assigneeIds.includes(a.id) && a.email && assistantWantsNotification(a, "clientRequest"));
   for (const assistant of toNotify) {
     const sent = await sendEmailViaGmail(
       assistant.email,
@@ -924,5 +934,40 @@ exports.notifyAssistantOnClientRequest = onDocumentCreated("tasks/{taskId}", asy
         `\n\nOpen TMC Ops -> Task Board to accept or decline it.`
     );
     console.log(`notifyAssistantOnClientRequest: task ${event.params.taskId} -> ${assistant.email} -> ${sent ? "sent" : "not sent"}`);
+  }
+});
+
+// Fires whenever a NEW comment lands on a task's discussion thread (another
+// assistant, a client, or the content creator) — previously the only way to
+// notice was happening to see "Recent comments on your tasks" on the
+// Dashboard. discussion entries are only ever appended, never edited or
+// reordered (see addTaskComment/addClientTaskComment in index.html), so any
+// length increase is exactly the set of new comments, in order.
+exports.notifyAssistantsOnTaskComment = onDocumentUpdated("tasks/{taskId}", async (event) => {
+  const before = event.data.before.data() || {};
+  const after = event.data.after.data() || {};
+  const beforeDiscussion = before.discussion || [];
+  const afterDiscussion = after.discussion || [];
+  if (afterDiscussion.length <= beforeDiscussion.length) return;
+  const newComments = afterDiscussion.slice(beforeDiscussion.length);
+  const assigneeIds = after.assignees || [];
+  if (!assigneeIds.length) return;
+  const settingsDoc = await admin.firestore().collection("settings").doc("access").get();
+  const assistants = (settingsDoc.exists && settingsDoc.data().assistants) || [];
+  for (const comment of newComments) {
+    // Never notify someone about their own comment. Client/content-creator
+    // comments have no authorAssistantId, so this only ever excludes the
+    // assistant who actually wrote it.
+    const recipients = assistants.filter(
+      (a) => assigneeIds.includes(a.id) && a.email && a.id !== comment.authorAssistantId && assistantWantsNotification(a, "comments")
+    );
+    for (const assistant of recipients) {
+      const sent = await sendEmailViaGmail(
+        assistant.email,
+        `${comment.author || "Someone"} commented on: ${after.title || "(no title)"}`,
+        `${comment.author || "Someone"} commented on "${after.title || "this task"}":\n\n"${comment.text || ""}"\n\nOpen TMC Ops -> Task Board to reply.`
+      );
+      console.log(`notifyAssistantsOnTaskComment: task ${event.params.taskId} -> ${assistant.email} -> ${sent ? "sent" : "not sent"}`);
+    }
   }
 });
