@@ -8370,7 +8370,9 @@ function renderKanban(){
       <div>
         <label class="small">Client</label>
         ${renderSearchablePicker('kanbanClientFilter',
-          [{value:'all',label:'All clients'}, {value:INTERNAL_CLIENT_ID,label:'Internal / Modern Co.'}, ...state.clients.map(c=>({value:c.id,label:c.name}))],
+          [{value:'all',label:'All clients'},
+           ...((f.market||'all')==='all' ? [{value:INTERNAL_CLIENT_ID,label:'Internal / Modern Co.'}] : []),
+           ...state.clients.filter(c=>(f.market||'all')==='all' || (c.market||'Lafayette')===f.market).map(c=>({value:c.id,label:c.name}))],
           f.clientId, v=>setKanbanFilter('clientId', v), 'All clients')}
       </div>
       <div>
@@ -8414,6 +8416,18 @@ function renderKanban(){
 }
 function setKanbanFilter(field, value){
   state.kanbanFilter[field] = value;
+  // Switching territory can orphan whatever client was already selected (the
+  // Client dropdown's options are filtered to that territory) — leaving the
+  // stale clientId in place would keep filtering the board by a client that
+  // no longer even appears as an option, which looks like the filter is
+  // broken. Reset to "All clients" instead whenever that happens.
+  if(field==="market" && state.kanbanFilter.clientId!=="all" && state.kanbanFilter.clientId!==INTERNAL_CLIENT_ID){
+    const stillValid = value==="all" || state.clients.some(c=>c.id===state.kanbanFilter.clientId && (c.market||"Lafayette")===value);
+    if(!stillValid) state.kanbanFilter.clientId = "all";
+  }
+  if(field==="market" && value!=="all" && state.kanbanFilter.clientId===INTERNAL_CLIENT_ID){
+    state.kanbanFilter.clientId = "all";
+  }
   render();
 }
 // The search box re-renders every column of the whole Task Board on every
