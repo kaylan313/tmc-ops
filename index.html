@@ -3284,6 +3284,11 @@ function renderOpsLeadColumn(assistant, d){
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Employee tasks needing attention</div>
     <div class="small">${d.overdue.length} open 7+ days, ${d.pastDue.length} past their due date — see Open Tasks below for the full list.</div>
   `);
+  const myRecentComments = recentCommentsFor(assistant.id);
+  if(myRecentComments.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Recent comments on your tasks</div>
+    ${renderRecentCommentsList(assistant.id)}
+  `);
   return `
     <div class="card">
       <h3 style="margin:0;">Attention: ${assistant.name}</h3>
@@ -3367,6 +3372,11 @@ function renderDocsLeadColumn(assistant, d){
         </div>
       </div>`;
       }).join("")}
+  `);
+  const myRecentComments = recentCommentsFor(assistant.id);
+  if(myRecentComments.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Recent comments on your tasks</div>
+    ${renderRecentCommentsList(assistant.id)}
   `);
   return `
     <div class="card">
@@ -5841,6 +5851,40 @@ function renderRenewalsTab(){
   `;
 }
 
+// Shared by renderTeamDashboard (an assistant viewing their own dashboard)
+// and the Ops/Docs Lead columns on the Admin Dashboard (Heidi/Tori, who
+// mostly log in with the shared Admin passcode — so there's no
+// state.currentAssistant to read "my comments" from there; they need to be
+// told explicitly whose inbox this is instead of assuming "whoever's logged
+// in right now").
+function recentCommentsFor(assistantId){
+  const myTasks = state.tasks.filter(t=>t.status!=="Done" && (t.assignees||[]).includes(assistantId));
+  return myTasks
+    .flatMap(t => (t.discussion||[]).map(d => ({ ...d, task: t })))
+    .sort((a,b)=> new Date(b.date) - new Date(a.date))
+    .slice(0,6);
+}
+function renderRecentCommentsList(assistantId){
+  const recentComments = recentCommentsFor(assistantId);
+  if(!recentComments.length) return `<div class="small">No comments yet.</div>`;
+  return recentComments.map(d=>{
+    const seenBy = d.seenBy || [];
+    const iSeenIt = seenBy.some(s=>s.assistantId===assistantId);
+    const isMine = d.authorAssistantId===assistantId;
+    return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
+      <div class="flex-between" style="cursor:pointer;" onclick="openTaskEditor('${d.task.id}',null)">
+        <div><strong>${d.author}</strong> on ${d.task.title}: ${d.text.length>90 ? d.text.slice(0,90)+"…" : d.text}</div>
+        <span class="small">${new Date(d.date).toLocaleString()}</span>
+      </div>
+      ${!isMine ? `
+      <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>${iSeenIt ? "✓ Seen" : "Not seen yet"}</span>
+        ${!iSeenIt ? `<button class="secondary" style="padding:2px 8px;" onclick="markCommentSeenAs('${d.task.id}','${d.id}','${assistantId}')">Mark as seen</button>` : ""}
+      </div>` : ""}
+    </div>`;
+  }).join("");
+}
 function renderTeamDashboard(){
   const myClientIds = new Set(state.clients.filter(c=>(c.assistantIds||[]).includes(state.currentAssistant?.id)).map(c=>c.id));
   const alerts = state.clients.filter(c=>myClientIds.has(c.id)).map(tierAlert).filter(Boolean);
@@ -5862,12 +5906,6 @@ function renderTeamDashboard(){
     if(!b.dueDate) return -1;
     return new Date(a.dueDate) - new Date(b.dueDate);
   });
-
-  // Recent comments across everything assigned to me, newest first.
-  const recentComments = myOpenTasks
-    .flatMap(t => (t.discussion||[]).map(d => ({ ...d, task: t })))
-    .sort((a,b)=> new Date(b.date) - new Date(a.date))
-    .slice(0,6);
 
   return `
     <div class="flex-between"><h2 style="margin:0;">Dashboard</h2><button class="secondary" onclick="openCardPurchaseEntry()">Log a Client Card Purchase</button></div>
@@ -5904,23 +5942,7 @@ function renderTeamDashboard(){
     </div>
     <div class="card">
       <h3>Recent comments on your tasks</h3>
-      ${recentComments.length===0 ? `<div class="small">No comments yet.</div>` : recentComments.map(d=>{
-        const seenBy = d.seenBy || [];
-        const iSeenIt = state.currentAssistant && seenBy.some(s=>s.assistantId===state.currentAssistant.id);
-        const isMine = state.currentAssistant && d.author===state.currentAssistant.name;
-        return `
-        <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
-          <div class="flex-between" style="cursor:pointer;" onclick="openTaskEditor('${d.task.id}',null)">
-            <div><strong>${d.author}</strong> on ${d.task.title}: ${d.text.length>90 ? d.text.slice(0,90)+"…" : d.text}</div>
-            <span class="small">${new Date(d.date).toLocaleString()}</span>
-          </div>
-          ${!isMine ? `
-          <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
-            <span>${iSeenIt ? "✓ You saw this" : "Not seen yet"}</span>
-            ${!iSeenIt ? `<button class="secondary" style="padding:2px 8px;" onclick="markCommentSeen('${d.task.id}','${d.id}')">Mark as seen</button>` : ""}
-          </div>` : ""}
-        </div>`;
-      }).join("")}
+      ${renderRecentCommentsList(state.currentAssistant.id)}
     </div>
     <div class="card">
       <h3>My open tasks</h3>
@@ -9528,6 +9550,11 @@ function renderTeamAdmin(){
       <h3>Admin passcode</h3>
       <input id="admin_passcode" value="${state.settings.adminPasscode}" onchange="updateAdminPasscode(this.value)">
     </div>
+    <div class="card">
+      <h3>Your email (comment reply notifications)</h3>
+      <div class="small" style="margin-bottom:8px;">The Admin login is shared, so there's no "you" the app can email automatically the way it does for assistants. Add your email here and you'll get a note whenever someone replies on a task you've commented on.</div>
+      <input id="admin_notify_email" type="email" value="${escHtml(state.settings.adminNotifyEmail||'')}" onchange="updateAdminNotifyEmail(this.value.trim())">
+    </div>
   `;
 }
 // Mirrors DEFAULT_NOTIFY_PREFS in functions/index.js — keep both in sync.
@@ -9705,6 +9732,10 @@ function setExclusiveAssistantFlag(id, field, checked){
 function updateAdminPasscode(pass){
   state.settings.adminPasscode = pass;
   upsert("settings","access", { adminPasscode: pass });
+}
+function updateAdminNotifyEmail(email){
+  state.settings.adminNotifyEmail = email;
+  upsert("settings","access", { adminNotifyEmail: email });
 }
 function setAssistantActive(id, active){
   state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,active}:a);
@@ -11072,13 +11103,21 @@ function addTaskComment(taskId){
 }
 function markCommentSeen(taskId, commentId){
   if(!state.currentAssistant) return;
+  markCommentSeenAs(taskId, commentId, state.currentAssistant.id);
+}
+// Takes an explicit assistantId rather than reading state.currentAssistant,
+// so the Ops/Docs Lead Admin Dashboard columns (Heidi/Tori, logged in via
+// the shared Admin passcode) can mark a comment seen on their own behalf
+// even though the app has no logged-in identity to infer it from there.
+function markCommentSeenAs(taskId, commentId, assistantId){
+  const assistant = state.settings.assistants.find(a=>a.id===assistantId);
   const task = (state.modal && state.modal.task && state.modal.task.id===taskId) ? state.modal.task : state.tasks.find(t=>t.id===taskId);
   if(!task) return;
   const discussion = (task.discussion||[]).map(d=>{
     if(d.id!==commentId) return d;
     const seenBy = d.seenBy||[];
-    if(seenBy.some(s=>s.assistantId===state.currentAssistant.id)) return d;
-    return { ...d, seenBy: [...seenBy, { assistantId: state.currentAssistant.id, name: state.currentAssistant.name, seenAt: new Date().toISOString() }] };
+    if(seenBy.some(s=>s.assistantId===assistantId)) return d;
+    return { ...d, seenBy: [...seenBy, { assistantId, name: assistant?assistant.name:assistantId, seenAt: new Date().toISOString() }] };
   });
   task.discussion = discussion;
   upsert("tasks", taskId, { discussion });

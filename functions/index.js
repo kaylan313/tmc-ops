@@ -951,9 +951,16 @@ exports.notifyAssistantsOnTaskComment = onDocumentUpdated("tasks/{taskId}", asyn
   if (afterDiscussion.length <= beforeDiscussion.length) return;
   const newComments = afterDiscussion.slice(beforeDiscussion.length);
   const assigneeIds = after.assignees || [];
-  if (!assigneeIds.length) return;
   const settingsDoc = await admin.firestore().collection("settings").doc("access").get();
-  const assistants = (settingsDoc.exists && settingsDoc.data().assistants) || [];
+  const settingsData = settingsDoc.exists ? settingsDoc.data() : {};
+  const assistants = settingsData.assistants || [];
+  // The Admin login is shared (Kaylan, and whoever else uses that passcode),
+  // so there's no per-person identity to notify the way assistants get —
+  // every Admin-authored comment is literally author:"Admin". Tracked here
+  // so a reply to a thread Kaylan (or whoever) commented in still reaches
+  // her, via a separate email address set on the Team tab, without emailing
+  // her on every single comment company-wide.
+  let threadHasAdminComment = beforeDiscussion.some((d) => d.author === "Admin");
   for (const comment of newComments) {
     // Never notify someone about their own comment. Client/content-creator
     // comments have no authorAssistantId, so this only ever excludes the
@@ -969,5 +976,14 @@ exports.notifyAssistantsOnTaskComment = onDocumentUpdated("tasks/{taskId}", asyn
       );
       console.log(`notifyAssistantsOnTaskComment: task ${event.params.taskId} -> ${assistant.email} -> ${sent ? "sent" : "not sent"}`);
     }
+    if (comment.author !== "Admin" && threadHasAdminComment && settingsData.adminNotifyEmail) {
+      const sent = await sendEmailViaGmail(
+        settingsData.adminNotifyEmail,
+        `${comment.author || "Someone"} replied on: ${after.title || "(no title)"}`,
+        `${comment.author || "Someone"} replied on a task you commented on, "${after.title || "this task"}":\n\n"${comment.text || ""}"\n\nOpen TMC Ops -> Task Board to reply.`
+      );
+      console.log(`notifyAssistantsOnTaskComment (admin): task ${event.params.taskId} -> ${settingsData.adminNotifyEmail} -> ${sent ? "sent" : "not sent"}`);
+    }
+    if (comment.author === "Admin") threadHasAdminComment = true;
   }
 });
