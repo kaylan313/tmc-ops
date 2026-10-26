@@ -405,7 +405,7 @@ let state = {
   payrollReportPeriod: "period", // "period" (current) or "lastPeriod" — which payroll period the per-assistant report/email download covers
   clientHoursFilter: { preset: "week" },
   kanbanFilter: { clientId: "all", category: "all", market: "all", onlyMine: false, hideDone: true, sort: "priority", search: "" },
-  clientTaskListFilter: { sort: "newest", search: "" },
+  clientTaskListFilter: { sort: "newest", search: "", status: "all" },
   clientMarketFilter: "all",
   // The client request form's fields used to be uncontrolled (no value=
   // binding), so a background render() — from any other client/assistant's
@@ -7405,6 +7405,9 @@ function renderClientTasks(client){
   const f = state.clientTaskListFilter;
   const search = (f.search||"").trim().toLowerCase();
   let tasks = state.tasks.filter(t=>t.clientId===client.id);
+  if(f.status && f.status!=="all"){
+    tasks = tasks.filter(t=>t.status===f.status);
+  }
   if(search){
     tasks = tasks.filter(t=>{
       const hay = (t.title||"").toLowerCase() + " #" + (t.taskNumber||"");
@@ -7420,6 +7423,13 @@ function renderClientTasks(client){
         <div>
           <label class="small">Search</label>
           <input id="clientTaskSearch" type="text" style="width:180px;" placeholder="Title or #number..." value="${(f.search||'').replace(/"/g,'&quot;')}" oninput="setClientTaskSearchDebounced(this.value)">
+        </div>
+        <div>
+          <label class="small">Status</label>
+          <select onchange="setClientTaskListFilter('status',this.value)">
+            <option value="all" ${(f.status||'all')==='all'?'selected':''}>All statuses</option>
+            ${STATUSES.map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${s}</option>`).join("")}
+          </select>
         </div>
         <div>
           <label class="small">Sort</label>
