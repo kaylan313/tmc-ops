@@ -1433,13 +1433,14 @@ function buildClientReport(client, window, kind){
   const taskIds = new Set(tasks.map(t=>t.id));
   const otherHours = windowEntries.filter(e=>!taskIds.has(e.taskId)).reduce((s,e)=>s+entryDurationHours(e), 0);
   const inProgress = tasks.filter(t=>t.status==="In progress" && !workedOnIds.has(t.id));
+  const researching = tasks.filter(t=>t.status==="Researching" && !workedOnIds.has(t.id));
   const todo = tasks.filter(t=>t.status==="To do" && !workedOnIds.has(t.id));
   const isPeriodKind = kind==="period" || kind==="lastPeriod";
   const used = isPeriodKind ? hoursForClientInPeriod(client.id, window) : hoursUsed(client.id);
   const pkg = isPeriodKind ? effectivePackageHours(client, window) : effectivePackageHours(client);
   const overHours = Math.max(0, used - pkg);
   return {
-    kind, client, week: window, inProgress, todo, completed, workedOn,
+    kind, client, week: window, inProgress, researching, todo, completed, workedOn,
     windowHoursByTask, hoursThisWindow, otherHours,
     hoursUsed: used, packageHours: pkg,
     hoursRemaining: Math.max(0, pkg - used),
@@ -1491,7 +1492,7 @@ function clientReportHtml(report){
   const pct = pkg ? Math.min(100, Math.round((report.hoursUsed/pkg)*100)) : 0;
 
   const item = (t, itemKind) => `
-    <div class="item ${itemKind==='progress'?'progress':''}${itemKind==='todo'?'todo':''}">
+    <div class="item ${itemKind==='progress'?'progress':''}${itemKind==='researching'?'researching':''}${itemKind==='todo'?'todo':''}">
       <div class="item-label">${(t.title||'').toUpperCase()}</div>
       <div class="item-body">${(t.description||t.title||'').trim()}</div>
       ${itemKind!=='todo' && report.windowHoursByTask.get(t.id) ? `<div class="item-hours">${formatHoursMinutes(report.windowHoursByTask.get(t.id))} logged ${span}</div>` : ""}
@@ -1526,9 +1527,11 @@ function clientReportHtml(report){
     .section-label{font-size:11px;letter-spacing:2px;color:var(--rose-dark);font-weight:600;margin-bottom:12px;text-transform:uppercase;}
     .item{background:var(--cream);border-left:4px solid var(--ok);padding:14px 16px;margin-bottom:10px;}
     .item.progress{border-left-color:var(--rose-dark);}
+    .item.researching{border-left-color:#8a6d9c;}
     .item.todo{border-left-color:#8a7a72;}
     .item-label{font-size:12px;letter-spacing:1px;font-weight:600;color:var(--ok);margin-bottom:4px;}
     .item.progress .item-label{color:var(--rose-dark);}
+    .item.researching .item-label{color:#8a6d9c;}
     .item.todo .item-label{color:#8a7a72;}
     .item-body{font-size:15px;color:var(--text);}
     .item-hours{font-size:12px;color:#8a7a72;margin-top:6px;letter-spacing:0.5px;}
@@ -1582,6 +1585,11 @@ function clientReportHtml(report){
 
       <div class="section-label">In Progress</div>
       ${inProgress.length ? inProgress.map(t=>item(t,'progress')).join("") : `<div class="item-body" style="margin-bottom:16px;">Nothing in progress right now.</div>`}
+
+      ${report.researching && report.researching.length ? `
+      <hr>
+      <div class="section-label">Researching</div>
+      ${report.researching.map(t=>item(t,'researching')).join("")}` : ""}
 
       ${todo && todo.length ? `
       <hr>
