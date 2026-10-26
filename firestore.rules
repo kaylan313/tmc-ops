@@ -62,5 +62,12 @@ service cloud.firestore {
     // Same reasoning as qbTokens above — a Gmail refresh token can send
     // email as support@themodernconcierge.co indefinitely until revoked.
     match /gmailTokens/{document=**} { allow read, write: if false; }
+    // Auto-written by logSettingsHistory (functions/index.js) after every
+    // change to settings/access — a full snapshot trail for recovering from
+    // exactly the kind of incident that made this collection necessary in
+    // the first place. Only ever written by the Admin SDK; a client being
+    // able to read or, worse, write here would defeat the point of having a
+    // trustworthy history to restore from.
+    match /settingsHistory/{document=**} { allow read, write: if false; }
   }
 }

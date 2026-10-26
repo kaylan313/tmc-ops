@@ -190,6 +190,32 @@ exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", asyn
   }
 });
 
+// A full copy of settings/access after every single change -- the team
+// roster, passcodes, roles, Scorecard/content history, all of it. Built
+// after an Oct 2026 incident where a client-side bug overwrote that entire
+// document with blank defaults; there was no backup and no way to tell what
+// it looked like before, so diagnosing and rebuilding it took hours of
+// cross-referencing other collections. With this in place, the same
+// incident is a one-query fix: find the last good snapshot and restore it.
+// Capped at 30 days of history (pruned on every write) since settings/access
+// changes often (every roster edit) and anything older isn't worth the
+// storage -- 30 days is far more than enough to catch and roll back a
+// mistake like this one.
+exports.logSettingsHistory = onDocumentUpdated("settings/access", async (event) => {
+  const after = event.data.after.data() || {};
+  const db = admin.firestore();
+  await db.collection("settingsHistory").add({
+    snapshot: after,
+    changedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+  const old = await db.collection("settingsHistory").where("changedAt", "<", cutoff).limit(50).get();
+  if (old.empty) return;
+  const batch = db.batch();
+  old.forEach((doc) => batch.delete(doc.ref));
+  await batch.commit();
+});
+
 /**
  * Server-side login. The app used to compare passcodes against data it had
  * already loaded client-side — which only works safely if Firestore itself
