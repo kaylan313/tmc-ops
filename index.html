@@ -455,19 +455,33 @@ function col(name){
 // login stuck on "still connecting" forever (nothing was ever going to
 // retry it). A live subscription gets the same auto-retry-with-backoff
 // resilience subscribe() below already has for every other collection.
-let settingsDocBootstrapped = false;
 function subscribeSettingsDoc(onChange, attempt){
   attempt = attempt || 0;
   return col("settings").doc("access").onSnapshot(snap=>{
     if(state.firebaseError){ state.firebaseError = null; }
     if(snap.exists){
       onChange(snap.data());
-    } else if(!settingsDocBootstrapped){
-      // First-ever boot of a fresh project only — create the doc once, then
-      // let this same listener pick up the write it just made.
-      settingsDocBootstrapped = true;
-      col("settings").doc("access").set(SEED_SETTINGS).catch(err=>console.warn("Could not create default settings doc:", err));
-      onChange(SEED_SETTINGS);
+    } else {
+      // THIS USED TO auto-create the doc with SEED_SETTINGS the first time
+      // a snapshot reported exists:false, guarded by an in-memory flag that
+      // reset on every page load — meaning it wasn't actually "once ever,"
+      // it was "once per page load that happens to see a false exists." A
+      // flaky connection or an auth race during boot reporting the real
+      // document as transiently missing was enough to fire this for real
+      // against a project that already had months of live data, and
+      // col(...).set(SEED_SETTINGS) with no {merge:true} fully overwrote
+      // it — every assistant's access code/email/phone/roles, the admin
+      // passcode, and all Scorecard/content history, gone in one write.
+      // That's exactly what happened in production. Auto-seeding is not
+      // worth that risk for an app this far past its first-ever boot: a
+      // genuinely missing settings/access doc should never happen again,
+      // so this now fails safely (logs + surfaces a connection error)
+      // instead of guessing and potentially destroying real data. A truly
+      // fresh project needs the doc created manually once — see the setup
+      // notes near SEED_SETTINGS above.
+      console.error("settings/access reports as missing — NOT auto-creating it (this used to silently wipe real settings data in production). If this is a genuinely brand-new project, create the doc manually using SEED_SETTINGS as a starting point.");
+      state.firebaseError = "Couldn't load team settings — reload the page once you have a stable connection.";
+      render();
     }
   }, err=>{
     console.warn("Firestore subscription failed for 'settings':", err);
