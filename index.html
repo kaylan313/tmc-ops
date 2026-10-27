@@ -2824,14 +2824,32 @@ function tryAdminLogin(code){
     subscribeAppData(); render();
   } else alert("Incorrect passcode.");
 }
+// Single source of truth for "what onboarding step comes next," checked at
+// login and again after completing each step — the priority order only
+// lives here. Order matters: change your code first (securing the account
+// you were just handed), then the legal agreement, then the handbook, then
+// ID upload, then the one-time app tour. W9 is deliberately NOT here — it
+// gets a 30-day grace period and a dashboard nag instead of blocking login
+// (see renderTeamDashboard's W9 reminder card). Current-team assistants are
+// grandfathered past handbookSigned/idUploadSubmittedAt/mustChangeCode via a
+// one-time backfill done when this flow shipped — only brand-new hires
+// created afterward start those fields unset and actually see these gates.
+function nextOnboardingGateFor(assistant){
+  if(!assistant) return null;
+  if(assistant.mustChangeCode) return { type:"changeCodeGate", assistant };
+  if(!assistant.agreementSigned) return { type:"agreementGate", assistant };
+  if(!assistant.handbookSigned) return { type:"handbookGate", assistant };
+  if(!assistant.idUploadSubmittedAt) return { type:"idUploadGate", assistant };
+  if(!assistant.hasSeenAppGuide) return { type:"appGuide", assistant };
+  return null;
+}
 function tryTeamLogin(code){
   if(FIREBASE_AVAILABLE && FIREBASE_CONFIGURED && !state.settingsReady){ alert(notReadyMessage()); return; }
   const match = state.settings.assistants.find(a=>a.active!==false && a.accessCode && a.accessCode===code);
   if(match){
     state.role = "team"; state.currentAssistant = match; state.view="app";
     state.activeTab = match.isContentCreator ? "content" : "dashboard";
-    if(!match.agreementSigned){ state.modal = { type:"agreementGate", assistant: match }; }
-    else if(!match.hasSeenAppGuide){ state.modal = { type:"appGuide", assistant: match }; }
+    state.modal = nextOnboardingGateFor(match);
     subscribeAppData(); render();
   } else alert("Access code not recognized.");
 }
@@ -5929,8 +5947,21 @@ function renderTeamDashboard(){
     return new Date(a.dueDate) - new Date(b.dueDate);
   });
 
+  // 30-day W9 grace period, clocked from when the agreement was signed
+  // (always present by the time this matters) rather than hireDate (often
+  // blank on older/restored records) — a nag, not a login gate, per policy.
+  const w9DueDate = state.currentAssistant && !state.currentAssistant.w9UploadSubmittedAt && state.currentAssistant.agreementSignedAt
+    ? new Date(new Date(state.currentAssistant.agreementSignedAt).getTime() + 30*24*3600000) : null;
+  const w9DaysLeft = w9DueDate ? Math.ceil((w9DueDate - now) / 86400000) : null;
+
   return `
     <div class="flex-between"><h2 style="margin:0;">Dashboard</h2><button class="secondary" onclick="openCardPurchaseEntry()">Log a Client Card Purchase</button></div>
+    ${w9DueDate ? `
+    <div class="alert ${w9DaysLeft<0 ? 'danger' : w9DaysLeft<=7 ? 'warn' : ''}" style="cursor:pointer;" onclick="setTab('onboarding')">
+      ${w9DaysLeft<0
+        ? `Your signed W9 is overdue by ${Math.abs(w9DaysLeft)} day${Math.abs(w9DaysLeft)===1?'':'s'} — upload it from the Onboarding tab.`
+        : `Upload your signed W9 — ${w9DaysLeft} day${w9DaysLeft===1?'':'s'} left (Onboarding tab).`}
+    </div>` : ""}
     ${renderClientRequestsCard(myPending, { title: "Requests awaiting your review" })}
     ${myEntry ? `
       <div class="card">
@@ -9179,121 +9210,93 @@ function deleteTaskFromReports(taskId){
 
 // --- Onboarding ---
 // Verbatim (converted from the Drive doc) — keep both in sync when the policy book changes.
-const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIERGE</h2>
-<h3>Team Policy Book | Effective: April 2026 | Confidential — Internal Use Only</h3>
-<p><em>"Be the assistant you would want if you were the client."</em></p>
+const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">MC<br>THE MODERN CONCIERGE</h2>
+<h3 style="text-align:center;">Employee Handbook | Effective 2026 | Confidential — Internal Use Only</h3>
+<p style="text-align:center;"><em>"To Give our Clients back their time through trusted, exceptional support, delivered by assistants who hold themselves to the highest standard"</em></p>
 <h3 id="pb-welcome">Welcome</h3>
 <p>Welcome to The Modern Concierge. You are joining a team that holds itself to a higher standard — not because we have to, but because our clients deserve it and our reputation depends on it.</p>
-<p>This policy book is your guide to how we operate, communicate, and represent this brand every single day. Read it thoroughly. Refer back to it often. If something isn't covered here, ask Kaylan — never assume.</p>
+<p>This handbook is your guide to how we operate, communicate, and represent this brand every single day. Read it thoroughly. Refer back to it often. If something isn't covered here, ask Victoria Haas — never assume.</p>
 <p>Our clients pay a premium because they expect premium. Your job is to make sure they never question whether it's worth it.</p>
-<h3 id="pb-part-1">Part 1 — Our Mission & Standard</h3>
+<h3 id="pb-part-1">Part 1 — Our Mission &amp; Standard</h3>
 <h4>The Mission</h4>
-<p>Our job is to remove stress, save time, and anticipate needs for our clients. Every task should be handled in a way that feels efficient, thoughtful, and professional. Clients should feel like they have someone who is capable, organized, and already thinking three steps ahead.</p>
+<p>Our job is to remove stress, save time, and anticipate needs for our clients. Every task should be handled in a way that feels efficient, thoughtful, and professional.</p>
+<p>Clients should feel like they have someone who is capable, organized, and already thinking three steps ahead.</p>
 <h4>The Standard</h4>
 <p>At The Modern Concierge, we are not order-takers. We are proactive, professional, and present. Every client should feel like they have a dedicated assistant who is one step ahead of them — not waiting to be told what to do.</p>
-<p><strong>The Golden Rule:</strong> Before sending any message, ask yourself: "Does this make the client's life easier?" If yes, you're doing it right.</p>
+<p><br/>
+<b><i>The Golden Rule: Before sending any message, ask yourself — "Does this make the client's life easier?" If yes, you're doing it right.</i></b><br/>
+</p>
 <h3 id="pb-part-2">Part 2 — The Request System</h3>
-<p>Every client request should follow this five-step process.</p>
-<p><strong>Step 1 — Understand the Request</strong></p>
-<p>Before doing anything, make sure you clearly understand what the client needs. Ask yourself:</p>
-<ul>
-<li>What exactly are they asking for?</li>
-<li>When do they need it?</li>
-<li>Is there anything obvious they might also need?</li>
-</ul>
-<p><em>Example: If they ask for a dinner reservation, also think about transportation, best nearby options, and timing.</em></p>
-<p><strong>Step 2 — Research & Gather Options</strong></p>
+<p><i>Every client request should follow this five-step process.</i></p>
+<h4>Step 1 — Understand the Request</h4>
+<p>Before doing anything, make sure you clearly understand what the client needs. Ask yourself: What exactly are they asking for? When do they need it? Is there anything obvious they might also need?</p>
+<p><strong>EXAMPLE</strong><br/><em>If they ask for a dinner reservation, also think about transportation, best nearby options, and timing.</em></p>
+<h4>Step 2 — Research &amp; Gather Options</h4>
 <p>Never go back to the client empty-handed. Always bring solutions, not questions. Your goal is to find 2–3 solid options with pricing or availability and your recommendation.</p>
-<p><em>"I found three great restaurants within 10 minutes of your hotel. My recommendation would be ___ because of the reviews and availability. Would you like me to reserve a table for 7:30?"</em></p>
-<p><strong>Step 3 — Recommend the Best Option</strong></p>
+<p><strong>EXAMPLE</strong><br/><em>"I found three great restaurants within 10 minutes of your hotel. My recommendation would be ___ because of the reviews and availability. Would you like me to reserve a table for 7:30?"</em></p>
+<h4>Step 3 — Recommend the Best Option</h4>
 <p>Clients appreciate when you use your judgment. Do not just list options — give a recommendation.</p>
-<p><em>"I would recommend Option B — it's slightly higher in price but has an excellent reputation. Worth it to avoid any issues."</em></p>
-<p><strong>Step 4 — Execute Quickly</strong></p>
+<p><strong>EXAMPLE</strong><br/><em>"I would recommend Option B — it's slightly higher in price but has an excellent reputation. Worth it to avoid any issues."</em></p>
+<h4>Step 4 — Execute Quickly</h4>
 <p>Once the client approves, handle it immediately. Confirm reservations, appointments, bookings, vendors, and deliveries — then send a clear confirmation message.</p>
-<p><em>"Your dinner reservation at ___ is confirmed for Friday at 7:30 PM for 4 guests."</em></p>
-<p><strong>Step 5 — Follow Up</strong></p>
+<p><strong>EXAMPLE</strong><br/><em>"Your dinner reservation at ___ is confirmed for Friday at 7:30 PM for 4 guests."</em></p>
+<h4>Step 5 — Follow Up</h4>
 <p>Great service means making sure everything actually happened successfully. Follow up when necessary.</p>
-<p><em>"Just checking that everything went smoothly with the cleaning service today!"</em></p>
+<p><strong>EXAMPLE</strong><br/><em>"Just checking that everything went smoothly with the cleaning service today!"</em></p>
 <h3 id="pb-part-3">Part 3 — Weekly Client Rhythm</h3>
-<p>Every client on your roster requires a weekly touchpoint. This is non-negotiable.</p>
-<p><strong>Monday — Weekly Check-In</strong></p>
+<p><i>Every client on your roster requires a weekly touchpoint. This is non-negotiable.</i></p>
+<h4>Monday — Weekly Check-In</h4>
 <p>Send every active client a brief, warm check-in before 10:00 AM.</p>
-<p><em>"Good morning [First Name]! 😊 Hope you have a great week ahead. I'm ready to hit the ground running for you. Any priorities or tasks you'd like me to tackle this week? I'll also be working on [reference something specific] in the meantime!"</em></p>
-<p>Rules:</p>
+<p><strong>TEMPLATE</strong><br/><em>"Good morning [First Name]! 🤍 Hope you have a great week ahead. I'm ready to hit the ground running for you. Any priorities or tasks you'd like me to tackle this week? I'll also be working on [reference something specific] in the meantime!"</em></p>
 <ul>
 <li>Keep it to 2–3 sentences max</li>
 <li>Always reference something specific to their situation</li>
-<li>Send via their preferred channel (text, email, or the TMC Ops app)</li>
+<li>Send via their preferred channel (text, email, or the TMC app)</li>
 <li>Do NOT send on holidays or if you already spoke with them that morning</li>
 <li>If no response by Tuesday afternoon — follow up once, then move forward with existing tasks</li>
 </ul>
-<p><strong>Friday — Weekly Report</strong></p>
-<p>Every client gets their official Weekly Report from TMC Ops — clients can also see their open tasks and hours live on their own dashboard at any time, so this is their formal end-of-week recap, not their only visibility into their account.</p>
+<h4>Wednesday / Thursday — Mid-Week Progress Update</h4>
+<p>If you are working on an ongoing or multi-day task, send a brief update so the client knows where things stand. Use judgment — but if something is taking longer than expected or you've hit a roadblock, communicate proactively. Do not go silent.</p>
+<p><strong>TEMPLATE</strong><br/><em>"Hey [First Name]! Quick update — I've been working on [task] and [brief status]. I expect to have it wrapped up by [date/time]. Let me know if you need anything else in the meantime!"</em></p>
+<h4>Friday — Wrap-Up Summary</h4>
+<p>Every client gets a client report sent through the TMC app by 4:00 PM every Friday, without exception. The report covers the week's completed tasks along with hours and time used — this is how they see their membership is well spent.</p>
 <ul>
-<li>Weekly Reports must be sent by 5:00 PM every Friday. No exceptions.</li>
-<li>If something is taking longer than expected or you've hit a roadblock on an ongoing task, communicate that to the client directly and proactively as it happens — do not wait until Friday to surface a problem.</li>
-</ul>
-<p><strong>Hours Usage Alerts</strong></p>
-<p>TMC Ops automatically tracks each client's hours and flags you when they cross 75% and 90% of their package — you don't have to calculate this yourself. When you see the alert, it's on you to pass it along to the client:</p>
-<ul>
-<li>At 75% — let the client know: "You're getting close to your hours for this period — just a heads up!"</li>
-<li>At 90% or over — tell them immediately. Do not wait for Friday.</li>
+<li>Send the client report through the TMC app by 4:00 PM every Friday — no exceptions</li>
+<li>Double-check that hours used and remaining are accurate before sending, especially for membership clients</li>
+<li>At 75% of hours used — flag it: "You're getting close to your hours for this period — just a heads up!"</li>
+<li>At 90% or over — flag it immediately; don't wait until Friday. You're responsible for tracking your client's remaining hours without being asked — flag it as soon as it's getting close, and include hours used/remaining in every weekly report.</li>
 </ul>
 <h3 id="pb-part-4">Part 4 — How to Handle a New Task</h3>
-<p><strong>Step 1 — Log the Task in TMC Ops (Immediately)</strong></p>
-<ul>
-<li>Open the client in the TMC Ops app (Clients → select the client → Tasks tab)</li>
-<li>Click "+ New task"</li>
-<li>Name it clearly and specifically (not "call" — use "Call Lexi re: CRM setup follow-up")</li>
-<li>Add a due date and description, and attach any relevant files</li>
-<li>Assign it to yourself under Assignees</li>
-</ul>
-<p><strong>Step 2 — Acknowledge the Task to the Client (Within 2 Hours)</strong></p>
-<p>Never let a task sit unacknowledged. Even if you can't start immediately, let them know you received it.</p>
-<p><em>"Got it! I'll take care of [task] and have it done by [realistic timeframe]. I'll keep you posted! 😊"</em></p>
-<p><strong>Step 3 — Clock In Before You Start</strong></p>
-<p>Every time you begin working on a task — no exceptions — clock in on that specific task in TMC Ops.</p>
-<p>How to clock in:</p>
-<ul>
-<li>Go to the Time Tracking tab (or open the task on the Task Board)</li>
-<li>Search for the task by its # or title in the Clock In box</li>
-<li>Hit Clock In — begin working</li>
-<li>Hit Clock Out when you finish or take a break</li>
-</ul>
-<p>⚠️ If you forget to clock in and do work — use "Log time manually" on the Time Tracking tab. Never let hours go untracked.</p>
-<p><strong>Clock-In Rules — When the Clock Starts</strong></p>
+<h4>Clock-In Rules — When the Clock Starts</h4>
 <p>This matters for both your payroll accuracy and client billing. Follow these guidelines exactly.</p>
-<p><em>Errand-Based / Out-of-Office Tasks</em></p>
+<p>Errand-Based / Out-of-Office Tasks</p>
 <ul>
 <li>If you are leaving your home specifically to complete a client task — clock in when you leave your house. Your drive time is billable.</li>
-<li>If you are already out in the city (running personal errands, shopping, etc.) and a client contacts you with a task while you're out — clock in when you begin the task itself, not from wherever you were. You were already going to be in town. The client is not billed for time that wasn't spent on their behalf.</li>
+<li>If you are already out in the city and a client contacts you with a task while you're out — clock in when you begin the task itself, not from wherever you were.</li>
 </ul>
-<p><em>Example: You're already at Target doing personal shopping when a client texts you to pick something up nearby. Clock in when you leave to go get their item — not from home, because you were never home.</em></p>
-<p><em>Example: A client asks you to pick up dry cleaning and you drive from home specifically for that task. Clock in when you pull out of your driveway.</em></p>
-<p><em>Office-Based Work</em></p>
+<p><strong>EXAMPLE</strong><br/><em>SYou're already at Target doing personal shopping when a client texts you to pick something up nearby. Clock in when you leave to go get their item — not from home.A client asks you to pick up dry cleaning and you drive from home specifically for that task. Clock in when you pull out of your driveway.</em></p>
+<p>Office-Based Work</p>
 <ul>
-<li>If you are coming into the office for any reason — working on client tasks, a team meeting, or a Kaylan to-do — clock in when you arrive at the office. Commute time to the office is not clocked.</li>
-<li>Once you're in the office and working, every task you work on should be tracked under the appropriate task in TMC Ops.</li>
+<li>Coming into the office for any reason — clock in when you arrive. Commute time to the office is not clocked.</li>
+<li>Once in the office, track every task under the appropriate task in the TMC app.</li>
 </ul>
-<p><em>Meetings & Tasks for Kaylan</em></p>
+<p>Meetings &amp; Tasks for Victoria</p>
 <ul>
-<li>Any meeting with Kaylan or any task assigned directly by Kaylan (not for a specific client) should be logged as a task under "Internal / Modern Co." in TMC Ops — or, for work that isn't tied to a specific task, use "Clock in for Admin Work" on the Time Tracking tab.</li>
-<li>Name the entry clearly: "Meeting — [Date]" or "To-Do — [brief description] — [Date]"</li>
-<li>Clock in for these the same way you would any client task — start the timer when the meeting begins or when you start working on the to-do.</li>
+<li>Any meeting with Victoria or task assigned directly by Victoria (not for a specific client) is logged under the "Victoria To-Dos" space in the TMC app.</li>
+<li>Name it clearly: "Meeting — [Date]" or "To-Do — [brief description] — [Date]"</li>
+<li>Clock in the same way — start the timer when the meeting begins or when you start the to-do.</li>
 </ul>
-<p><em>The Simple Rule: Clock in when your time genuinely becomes dedicated to TMC work. If you were already headed somewhere for personal reasons, the clock starts when the work starts — not before.</em></p>
-<p><strong>Step 4 — Complete the Task</strong></p>
+<p><br/>
+<b><i>The Simple Rule: Clock in when your time genuinely becomes dedicated to TMC work. If you were already headed somewhere for personal reasons, the clock starts when the work starts — not before.</i></b><br/>
+</p>
+<h4>Step 1 — Complete the Task</h4>
 <p>Work through the task. If you hit a problem, need access to something, or it's taking longer than expected — communicate with the client immediately. Never go silent.</p>
-<p><strong>Step 5 — Mark Complete & Notify the Client</strong></p>
-<p>When the task is done:</p>
-<ul>
-<li>Mark it Done in TMC Ops</li>
-<li>Send the client a quick completion message</li>
-</ul>
-<p><em>"Done! ✅ [Brief description of what was completed and any relevant outcome]. Let me know if you need anything adjusted or have questions!"</em></p>
+<h4>Step 2 — Mark Complete &amp; Notify the Client</h4>
+<p>When the task is done: mark it complete in the TMC app, and send the client a quick completion message.</p>
+<p><strong>TEMPLATE</strong><br/><em>"Done! ✅ [Brief description of what was completed and any relevant outcome]. Let me know if you need anything adjusted or have questions!"</em></p>
 <h3 id="pb-part-5">Part 5 — Proactive Service</h3>
-<p>This is what separates a good assistant from a great one. Don't wait for clients to tell you everything — look for opportunities to add value.</p>
-<p><strong>What Proactive Looks Like</strong></p>
+<p><i>This is what separates a good assistant from a great one.</i></p>
+<h4>What Proactive Looks Like</h4>
 <ul>
 <li>Noticing a client's listing or profile hasn't been updated → flag it or update it</li>
 <li>Seeing a deadline approaching on their calendar → send a reminder before they ask</li>
@@ -9301,188 +9304,132 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <li>Remembering something a client mentioned in passing → follow up unprompted</li>
 <li>Seeing a task that logically leads to another → complete both and report back</li>
 </ul>
-<p><strong>The Proactive Rule</strong></p>
+<h4>The Proactive Rule</h4>
 <p>If you identify a task that clearly falls within the client's scope and you have the access to do it — do it, then report it. Don't ask permission for small things. Use judgment for larger or unclear things.</p>
-<p><em>"Hey [First Name]! I noticed [observation] so I went ahead and [action taken]. Let me know if you'd like me to adjust anything! 😊"</em></p>
-<p><strong>Think Ahead — Always Ask Yourself: "What could they need next?"</strong></p>
+<p><strong>TEMPLATE</strong><br/><em>"Hey [First Name]! I noticed [observation] so I went ahead and [action taken]. Let me know if you'd like me to adjust anything! 🤍"</em></p>
+<h4>Think Ahead — Always Ask Yourself: "What could they need next?"</h4>
 <ul>
 <li>Travel → transportation, reservations, itinerary</li>
 <li>Events → vendors, timing, confirmations</li>
 <li>Home services → scheduling and follow-ups</li>
 </ul>
 <h3 id="pb-part-6">Part 6 — Client Communication Standards</h3>
-<p><strong>Tone — Adapt to Each Client</strong></p>
-<table style="width:100%;border-collapse:collapse;margin:10px 0;">
-<tr><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Client Type</th><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">How to Communicate</th></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Busy executive / professional</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Concise, bullet points, no fluff. Get to the point fast.</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Warm/personal client</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Friendly, conversational, personal touches matter.</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Detail-oriented client</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Give more info, not less. They want receipts.</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Laid-back client</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Keep it casual and easy. Don't over-formalize.</td></tr>
-</table>
-<p><em>How to read them: Pay attention to how THEY communicate with you. Match their energy. If they send short texts — keep yours short. If they write paragraphs — give them more detail.</em></p>
-<p><strong>Response Time Standards</strong></p>
-<table style="width:100%;border-collapse:collapse;margin:10px 0;">
-<tr><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Situation</th><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Response Time</th></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Client sends a message</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Within 2 hours during business hours</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Client submits a task</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Acknowledge within 2 hours</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Client asks a question you don't know</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Respond within 1 hour saying you'll find out</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Urgent task flagged</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Same-day response and start</td></tr>
-</table>
-<p><strong>Bundle Communication</strong></p>
+<h4>Tone — Adapt to Each Client</h4>
+<p>How to read them: Pay attention to how THEY communicate with you. Match their energy. If they send short texts — keep yours short. If they write paragraphs — give them more detail.</p>
+<h4>Response Time Standards</h4>
+<h4>Bundle Communication</h4>
 <p>Do not message clients repeatedly throughout the day. Send one organized update when possible.</p>
-<p><em>"Quick update for you today: • House cleaner confirmed for Tuesday • Dinner reservation booked for Friday • Waiting on a quote from the landscaper"</em></p>
-<p><strong>What NOT to Do</strong></p>
+<p><strong>EXAMPLE</strong><br/><em>"Quick update for you today: • House cleaner confirmed for Tuesday • Dinner reservation booked for Friday • Waiting on a quote from the landscaper"</em></p>
+<h4>What NOT to Do</h4>
+<p><b>✕  </b>Never leave a message unread and unanswered for more than 2 hours during business hours</p>
+<p><b>✕  </b>Never tell a client you don't know something without following up with an answer</p>
+<p><b>✕  </b>Never text a client more than once in the same day unless they initiated</p>
+<p><b>✕  </b>Never discuss other clients or their information — ever</p>
+<p><b>✕  </b>Never make a financial commitment on behalf of a client without pre-approval</p>
+<p><b>✕  </b>Never go silent on a task — always communicate delays proactively</p>
+<h3 id="pb-part-7">Part 7 — Hours Tracking &amp; Accountability</h3>
+<h4>Membership Client Hour Tracking</h4>
+<p>These clients pay for a set number of hours per month. Every minute worked must be logged accurately.</p>
+<p><br/>
+<b>A REMINDER</b><br/>
+<i>Overage is billed at $50/hr. Clients must be notified before going over. This is non-negotiable.</i><br/>
+</p>
+<h4>Internal Hour Tracking Only</h4>
+<p>Caroline Viator and John Walker are flat-rate clients. Log your time for Heidi's payroll records but do not share hour counts with these clients.</p>
+<h4>End of Pay Period</h4>
+<p>Every 1st and 15th — ensure all time entries are logged and accurate before Heidi runs payroll. No late additions after the period closes.</p>
+<h3 id="pb-part-8">Part 8 — TMC App Workflow</h3>
+<h4>Task Statuses — Use These Correctly</h4>
 <ul>
-<li>❌ Never leave a message unread and unanswered for more than 2 hours during business hours</li>
-<li>❌ Never tell a client you don't know something without following up with an answer</li>
-<li>❌ Never text a client more than once in the same day unless they initiated</li>
-<li>❌ Never discuss other clients or their information — ever</li>
-<li>❌ Never make a financial commitment on behalf of a client without pre-approval</li>
-<li>❌ Never go silent on a task — always communicate delays proactively</li>
+<li>To Do — task logged, not started</li>
+<li>In Progress — actively working on it</li>
+<li>Waiting — waiting on client response or external party</li>
+<li>Complete — done and communicated to client</li>
 </ul>
-<h3 id="pb-part-7">Part 7 — Hours Tracking & Accountability</h3>
-<p><strong>Membership Client Hour Tracking</strong></p>
-<p>These clients pay for a set number of hours per month, regardless of package size (20/40/60/80 hrs). Every minute worked must be logged accurately in TMC Ops so the system's tracking stays accurate. TMC Ops automatically flags each client's usage at 50%, 75%, 90%, and 100% — you don't have to calculate this yourself, just watch for the alert and act on it:</p>
-<ul>
-<li>50% / 75% — a heads-up worth passing to the client</li>
-<li>90% or over — tell the client immediately, do not wait for Friday's report</li>
-<li>100% — client moves into overage</li>
-</ul>
-<p>Overage is billed at $50/hr. Clients must be notified before going over. This is non-negotiable.</p>
-<p><strong>Hours Utilization</strong></p>
-<p>If a client has given us tasks to do, their package hours should be used by the end of their billing period — don't sit on real, actionable work while a client's hours go unused. Look ahead each week and make sure there's enough queued up to use what they're paying for.</p>
-<p>That's different from a client who hasn't given us what we need to move forward. If a task is stalled because the client hasn't provided information, access, or a decision we need, and you're at a genuine roadblock — that's not a failure to use hours, that's the client holding things up. Document it, communicate it to the client, and let Kaylan know it's stalled on their end.</p>
-<p><strong>Internal Hour Tracking Only</strong></p>
-<p>Home Reset (flat-rate) clients pay a fixed price rather than an hourly package. Log your time on these clients' tasks as normal in TMC Ops for Kaylan's payroll records, but do not share hour counts with these clients — their billing isn't hours-based.</p>
-<p><strong>End of Pay Period</strong></p>
-<p>Every payroll period ends on the 14th and the last day of the month. All of your time entries must be entered in TMC Ops, correct, and clocked out — no still-running clocks, no missing entries — before the period end date. This is non-negotiable. Payroll is run off exactly what's in the system as of that cutoff, and entries added after the fact will not be included in that payroll run.</p>
-<h3 id="pb-part-8">Part 8 — TMC Ops Workflow</h3>
-<p><strong>Task Statuses — Use These Correctly</strong></p>
-<ul>
-<li>To do — task logged, not started</li>
-<li>Researching — gathering options/information before recommending or executing</li>
-<li>In progress — actively working on it</li>
-<li>Pending approval — a client submitted this themselves and it's awaiting your review (accept or decline it)</li>
-<li>Done — completed and communicated to client</li>
-</ul>
-<p><strong>End of Day Checklist</strong></p>
+<h4>End of Day Checklist</h4>
 <p>Before closing out for the day:</p>
-<ul>
-<li>☐ All tasks updated to the correct status in TMC Ops</li>
-<li>☐ All time entries logged accurately</li>
-<li>☐ Any unanswered client messages responded to</li>
-<li>☐ Tomorrow's priorities noted</li>
-</ul>
-<p><strong>Weekly Schedule at a Glance</strong></p>
-<table style="width:100%;border-collapse:collapse;margin:10px 0;">
-<tr><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Day</th><th style="text-align:left;border-bottom:1px solid #d8cabf;padding:4px 8px;">Action</th></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Monday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Send weekly check-in to ALL clients by 10am</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Tuesday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Review all open tasks, prioritize the week</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Wednesday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Continue task work; proactively flag any delays directly to affected clients</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Thursday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Proactive scan — any tasks to get ahead of?</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Friday</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Send Weekly Report to ALL clients by 5:00 PM</td></tr>
-<tr><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Daily</td><td style="border-bottom:1px solid #eee;padding:4px 8px;vertical-align:top;">Check messages, clock in on tasks, update TMC Ops</td></tr>
-</table>
-<h3 id="pb-part-9">Part 9 — Handling Mistakes & Issues</h3>
-<p>If something goes wrong:</p>
+<p><b>☐  </b>All tasks updated to correct status in the TMC app</p>
+<p><b>☐  </b>All time entries logged accurately</p>
+<p><b>☐  </b>Any unanswered client messages responded to</p>
+<p><b>☐  </b>Tomorrow's priorities noted</p>
+<h4>Weekly Schedule at a Glance</h4>
+<h3 id="pb-part-9">Part 9 — Handling Mistakes &amp; Issues</h3>
+<h4>If Something Goes Wrong</h4>
 <ul>
 <li>Fix the issue first if possible</li>
 <li>Then inform the client with a solution already in hand</li>
 </ul>
-<p><em>"The vendor had to reschedule due to weather, but I secured a new appointment for tomorrow morning."</em></p>
+<p><strong>EXAMPLE</strong><br/><em>"The vendor had to reschedule due to weather, but I secured a new appointment for tomorrow morning."</em></p>
 <p>Clients appreciate solutions, not problems.</p>
-<p>If you make a mistake:</p>
+<h4>If You Make a Mistake</h4>
 <ul>
 <li>Own it immediately</li>
 <li>Fix it</li>
-<li>Tell Kaylan</li>
+<li>Tell Victoria</li>
 </ul>
-<p>If you're unsure about something — ask Kaylan, not the client.</p>
-<h3 id="pb-part-10">Part 10 — Social Media & Personal Brand Policy</h3>
-<p><strong>Overview</strong></p>
+<p><br/>
+<b><i>If you're unsure about something — ask Victoria, not the client.</i></b><br/>
+</p>
+<h3 id="pb-part-10">Part 10 — Social Media &amp; Personal Brand Policy</h3>
+<h4>Overview</h4>
 <p>We understand that our team members have active personal social media lives, and we do not intend to control your personal presence. However, because you represent The Modern Concierge — a brand that professionals and executives trust with their personal lives — your online presence reflects on us whether you intend it to or not.</p>
 <p>This policy applies to all platforms including but not limited to: TikTok, Instagram, Facebook, Snapchat, X (Twitter), Threads, LinkedIn, and YouTube.</p>
-<p><strong>The Core Standard</strong></p>
-<p>Ask yourself before posting anything publicly: <em>"If a client who pays $50 an hour for our services saw this, would they still trust us with their home, their schedule, and their business?"</em></p>
-<p>If there is any doubt — don't post it.</p>
-<p><strong>What Is Acceptable</strong></p>
-<p>You are welcome to:</p>
+<h4>The Core Standard</h4>
+<p><br/>
+<b><i>Ask yourself before posting anything publicly: "If a client who pays $50 an hour for our services saw this, would they still trust us with their home, their schedule, and their business?" If there is any doubt — don't post it.</i></b><br/>
+</p>
+<h4>What Is Acceptable</h4>
 <ul>
 <li>Post personal content that is positive, neutral, or lifestyle-oriented</li>
 <li>Share general content about productivity, organization, or professional life</li>
-<li>Post about The Modern Concierge if approved by Kaylan in advance</li>
+<li><b><i>Post about The Modern Concierge if approved by </i></b>Cherish<b><i> in advance</i></b></li>
 <li>Engage authentically with your audience in a way that reflects well on you as a professional</li>
 </ul>
-<p><strong>What Is Not Acceptable</strong></p>
-<p>The following content is not permitted on any public-facing social media account while you are engaged with The Modern Concierge:</p>
-<ul>
-<li>❌ Complaining about being tired, burnt out, overwhelmed, or stressed in a work context</li>
-<li>❌ Vague or direct complaints about clients, tasks, or your job — even without naming names</li>
-<li>❌ Inappropriate, explicit, or reckless content of any kind</li>
-<li>❌ Content depicting excessive alcohol consumption or drug use</li>
-<li>❌ Anything that could be perceived as unprofessional by a current or prospective client</li>
-<li>❌ Sharing, referencing, or hinting at any client information, tasks, or details — this is a confidentiality violation</li>
-<li>❌ Tagging The Modern Concierge or mentioning us in connection with any content that does not reflect our brand standards</li>
-</ul>
-<p><strong>TikTok-Specific Guidelines</strong></p>
-<p>TikTok content has a high potential for virality and is particularly visible. Keep in mind:</p>
+<h4>What Is Not Acceptable</h4>
+<p><b>✕  </b>Complaining about being tired, burnt out, overwhelmed, or stressed in a work context</p>
+<p><b>✕  </b>Vague or direct complaints about clients, tasks, or your job — even without naming names</p>
+<p><b>✕  </b>Inappropriate, explicit, or reckless content of any kind</p>
+<p><b>✕  </b>Content depicting excessive alcohol consumption or drug use</p>
+<p><b>✕  </b>Anything that could be perceived as unprofessional by a current or prospective client</p>
+<p><b>✕  </b>Sharing, referencing, or hinting at any client information, tasks, or details — a confidentiality violation</p>
+<p><b>✕  </b>Tagging The Modern Concierge or mentioning us in connection with content that doesn't reflect our brand standards</p>
+<h4>TikTok-Specific Guidelines</h4>
 <ul>
 <li>Content created in your personal time can and will be seen by clients, their networks, and prospective clients</li>
 <li>Trending sounds, challenges, or humor that seem harmless in context can appear unprofessional when associated with our brand</li>
 <li>If you mention your work or profession in a TikTok, that content becomes a direct reflection of The Modern Concierge — hold it to that standard</li>
-<li>If you are ever unsure whether a TikTok is appropriate, check with Kaylan before posting</li>
+<li>If you are ever unsure whether a TikTok is appropriate, check with Victoria before posting</li>
 </ul>
-<p><strong>TMC Brand Content</strong></p>
-<p>If you wish to create content that promotes or references The Modern Concierge:</p>
+<h4>TMC Brand Content</h4>
 <ul>
-<li>You must receive written approval from Kaylan before posting</li>
+<li>You must receive written approval from Victoria before posting anything that promotes or references TMC</li>
 <li>All brand-related content must be reviewed for messaging, tone, and accuracy</li>
 <li>Do not use the TMC logo, name, or any client-related details in content without approval</li>
 </ul>
 <h3 id="pb-part-11">Part 11 — Company Apparel Policy</h3>
-<p><strong>Work Shirts & Branded Clothing</strong></p>
+<h4>Work Shirts &amp; Branded Clothing</h4>
 <p>The Modern Concierge work shirts and any other branded company apparel are professional uniforms, not casual wear. They represent our brand and our clients' trust in us.</p>
-<p><strong>Wearing Company Apparel Is NOT Permitted:</strong></p>
-<ul>
-<li>❌ After business hours — work shirts are not leisure wear</li>
-<li>❌ In any bar or nightlife setting — regardless of the time or occasion</li>
-<li>❌ Any time you are consuming alcohol — this is a firm policy with no exceptions</li>
-<li>❌ At events, gatherings, or venues where your behavior may not reflect TMC's professional standard</li>
-</ul>
-<p><strong>Why This Policy Exists</strong></p>
+<h4>Wearing Company Apparel Is NOT Permitted</h4>
+<p><b>✕  </b>After business hours — work shirts are not leisure wear</p>
+<p><b>✕  </b>In any bar or nightlife setting — regardless of the time or occasion</p>
+<p><b>✕  </b>Any time you are consuming alcohol — this is a firm policy with no exceptions</p>
+<p><b>✕  </b>At events, gatherings, or venues where your behavior may not reflect TMC's professional standard</p>
+<h4>Why This Policy Exists</h4>
 <p>Our clients are executives, professionals, and high-net-worth individuals. They move in networks. If someone sees a TMC team member in our branded apparel in an unprofessional setting, it directly damages the trust and reputation we have worked hard to build.</p>
 <p>You are always welcome to wear your shirt to and from work and during client-facing or work-related activities. Beyond that, change before you go out.</p>
-<p>When in doubt — take the shirt off.</p>
-<p><strong>Uniform Guidelines</strong></p>
-<p>What you wear depends on what you're doing that day:</p>
-<ul>
-<li><strong>Meeting with a client in person</strong> (orientation, errands out with them, any face-to-face client interaction): dress business casual.</li>
-<li><strong>Manual/physical work</strong> (home resets, organizing, moving boxes, that kind of thing): a put-together comfy-casual look is fine — plain, non-graphic shirts and shorts. Save the graphic tees and loungewear for your own time.</li>
-</ul>
-<p>When in doubt, dress a notch nicer than you think you need to — you can always roll up your sleeves.</p>
-<p><strong>Getting Your Shirt</strong></p>
-<p>The Modern Concierge does not provide work shirts directly. Here's how it works instead:</p>
-<ul>
-<li>You purchase your own shirt(s) — up to four (4).</li>
-<li>The Company covers embroidery on up to four (4) shirts with the TMC logo, done at our designated embroidery partner: <strong>Absolutely Embroidery</strong>, in Lafayette.</li>
-<li>In short: you pay for the shirt, TMC pays for the embroidery.</li>
-</ul>
-<p><strong>iPhone Contact Photo</strong></p>
-<p>The photo that shows up when a client saves you as a contact, or when you call or text them, should be a <strong>professional photo</strong> — a proper headshot, not a selfie, group photo, or casual snapshot. This is often a client's very first visual impression of you, so it should look the part.</p>
-<p><strong>Email Signature</strong></p>
-<p>You'll be sent a Modern Co email signature to apply to your Modern Co email account. Use it exactly as provided — don't modify the branding, layout, or wording.</p>
-<h3 id="pb-part-12">Part 12 — Professionalism & Conduct</h3>
-<p><strong>You Represent The Modern Concierge in Every Interaction</strong></p>
+<p><br/>
+<b><i>When in doubt — take the shirt off.</i></b><br/>
+</p>
+<h3 id="pb-part-12">Part 12 — Professionalism &amp; Conduct</h3>
+<h4>You Represent The Modern Concierge in Every Interaction</h4>
 <ul>
 <li>Your communication reflects the brand — warm, clean, and professional</li>
 <li>If you are having a hard personal day — the client never feels it</li>
 <li>Treat every client like they are your only client</li>
 <li>Never discuss one client's information with another client or with anyone outside of TMC</li>
-<li>Never make assumptions — ask Kaylan</li>
+<li>Never make assumptions — ask Victoria</li>
 </ul>
-<p><strong>Language</strong></p>
-<p>No foul or vulgar language while on the clock — this applies to how you speak in person, on the phone, and in any text/email, and it applies especially around clients and any time you're wearing a Modern Co shirt or otherwise visibly representing the brand. If you wouldn't say it in front of a client, don't say it at all while working.</p>
-<p><strong>Confidentiality</strong></p>
+<h4>Confidentiality</h4>
 <p>Client information is strictly confidential. This includes:</p>
 <ul>
 <li>Names, addresses, schedules, and preferences</li>
@@ -9490,17 +9437,76 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">THE MODERN CONCIER
 <li>Financial information or commitments</li>
 <li>Any personal details shared in the course of your work</li>
 </ul>
-<p>Violating client confidentiality is grounds for immediate termination of your engagement.</p>
-<p><strong>Financial Commitments</strong></p>
+<p><br/>
+<b>PLEASE NOTE</b><br/>
+<i>Violating client confidentiality is grounds for immediate termination.</i><br/>
+</p>
+<h4>Financial Commitments</h4>
 <p>You are never authorized to make a financial commitment on behalf of a client without explicit prior approval. This includes booking, purchasing, or agreeing to any service that involves the client's money.</p>
+<h3 id="pb-part-13">Part 13 — Employment Basics</h3>
+<h4>At-Will Employment</h4>
+<p>Employment with The Modern Concierge is at-will. This means either you or the company may end the employment relationship at any time, for any lawful reason, with or without notice. Nothing in this handbook creates a contract of employment or a guarantee of continued employment.</p>
+<h4>Employment Classification</h4>
+<ul>
+<li>Employment type: [full-time / part-time / independent contractor — specify per role]</li>
+<li>Wage classification: [exempt / non-exempt — determines overtime eligibility]</li>
+</ul>
+<h4>Introductory Period</h4>
+<p>The first [90] days of employment are an introductory period. This gives you time to learn the role and gives us a chance to make sure it's the right fit on both sides — though at-will employment applies at all times, including before and after this period.</p>
+<h4>Confidentiality &amp; Non-Disclosure</h4>
+<p>As outlined in Part 12, client information is strictly confidential. Depending on your role, you may also be asked to sign a separate confidentiality or non-disclosure agreement — the terms of that agreement apply in addition to this handbook.</p>
+<h3 id="pb-part-14">Part 14 — Compensation &amp; Payroll</h3>
+<h4>Pay Schedule</h4>
+<p>Employees are paid [semi-monthly, on the 1st and 15th]. As noted in Part 7, all time entries must be finalized before each pay period closes — no late additions after the period ends.</p>
+<h4>Expense Reimbursement</h4>
+<ul>
+<li>Approved, client-related out-of-pocket expenses are reimbursable — save your receipts</li>
+<li>Submit expenses in the TMC app within [X] days of purchase</li>
+<li>When in doubt about whether an expense is reimbursable, ask Victoria before spending</li>
+</ul>
+<h4>Direct Deposit (ACH)</h4>
+<p>Pay is issued via direct deposit (ACH). Timing depends on when the pay date falls:</p>
+<ul>
+<li>If the pay date falls on a weekend, it will be processed and should hit your account within 2 business days</li>
+<li>If the pay date falls on a weekday, it should hit your account the next business day</li>
+<li>Exact timing can vary slightly depending on your bank</li>
+</ul>
+<p>Reach out to Heidi with any payroll discrepancies right away.</p>
+<h3 id="pb-part-15">Part 15 — Time Off</h3>
+<h4>Requesting Time Off</h4>
+<p>As independent contractors, team members do not accrue paid time off, sick time, or paid holidays through The Modern Concierge. You're free to take time off as needed — it just needs to be coordinated in advance so client coverage never slips.</p>
+<ul>
+<li><b><i>Email </i></b>Victoria<b><i> to request time off and get it approved</i></b></li>
+<li>Once approved, it will be added to the Modern Co calendar so the team has visibility</li>
+<li>Request time off as far in advance as possible, especially during busy periods</li>
+</ul>
+<h4>Covering Your Client Roster While Out</h4>
+<p>Time off doesn't mean your clients go quiet. Before any planned time off:</p>
+<ul>
+<li><b><i>Loop </i></b>Victoria<b><i> in on coverage at least [X days] in advance</i></b></li>
+<li>Hand off active tasks clearly in the TMC app, with context, to whoever is covering</li>
+<li>Let your clients know you'll be out and who to expect updates from</li>
+</ul>
+<h3 id="pb-part-16">Part 16 — Resignation &amp; Termination</h3>
+<h4>Voluntary Resignation</h4>
+<p>If you decide to move on, we ask for at least [two weeks'] written notice so we can transition your client roster smoothly. This also helps preserve a strong reference and relationship going forward.</p>
+<h4>Involuntary Termination</h4>
+<p>Employment may be ended by The Modern Concierge at any time, consistent with at-will employment. Certain violations outlined in this handbook — such as breaching client confidentiality (Part 12) or misuse of client funds (Part 6) — are grounds for immediate termination.</p>
+<h4>Offboarding Checklist</h4>
+<p><b>☐  </b>Return all branded apparel and company property</p>
+<p><b>☐  </b>Transition all active client tasks and revoke TMC app access</p>
+<p><b>☐  </b>Final pay issued in accordance with applicable state law</p>
+<p><b>☐  </b>Access to client accounts, shared drives, and company tools revoked</p>
 <h3 id="pb-closing">Closing Note</h3>
 <p>Working at The Modern Concierge is a privilege. Our clients trust us with their time, their homes, their businesses, and their lives — and that is not something we take lightly.</p>
 <p>Hold yourself to the standard you would expect if you were the client. Show up with intention every single day. Be proactive, be professional, and be someone your clients can count on without question.</p>
-<p>We are not just assistants. We are the reason our clients can breathe easier.</p>
-<p><em>Questions about anything in this policy book? Ask Kaylan before assuming.</em></p>
-<p><em>This document is reviewed and updated regularly.</em></p>
-<p><em>The Modern Concierge — support@themodernconcierge.co</em></p>
-<p><em>Confidential — Internal</em></p>`;
+<p><br/>
+<b><i>We are not just assistants. We are the reason our clients can breathe easier.</i></b><br/>
+</p>
+<p>Questions about anything in this policy book? Ask Victoria before assuming.</p>
+<p>This document is reviewed and updated regularly.</p>
+<h4>The Modern Concierge  ·  support@themodernconcierge.co</h4>
+<p><i>Confidential — Internal Use Only</i></p>`;
 function renderOnboarding(){
   return `
     <h2>Onboarding</h2>
@@ -9526,14 +9532,7 @@ function renderOnboarding(){
       </div>
       <div class="small">Repeatable steps for opening a new city — when to appoint a local team lead, when growth/onboarding hands off from you, and when to reconsider the whole structure as markets multiply.</div>
     </div>` : ""}
-    ${state.role==="team" && state.currentAssistant ? `
-    <div class="card">
-      <h3>Upload Your License &amp; W9</h3>
-      <div class="small" style="margin-bottom:10px;">${state.currentAssistant.driveUploadFolderUrl
-        ? "Upload a copy of your license and a completed W9 to your folder below — Heidi pulls them from there. Nothing is stored in this app."
-        : "Your upload folder hasn't been set up yet — ask Kaylan or Heidi to add your Google Drive folder link, then check back here."}</div>
-      ${state.currentAssistant.driveUploadFolderUrl ? `<button onclick="window.open('${state.currentAssistant.driveUploadFolderUrl}','_blank')">Open my upload folder</button>` : ""}
-    </div>` : ""}
+    ${state.role==="team" && state.currentAssistant ? renderW9UploadCard(state.currentAssistant) : ""}
     ${state.role==="team" && state.currentAssistant ? (()=>{
       // Look up fresh rather than using state.currentAssistant directly —
       // toggleOnboardingItem() replaces this assistant's object (spread
@@ -9554,6 +9553,114 @@ function renderOnboarding(){
     </div>`;
     })() : ""}
   `;
+}
+// A W9 can carry a real SSN, so it never sits on the shared, broadly-readable
+// settings/access document the rest of an assistant's record lives on —
+// see employeeUploads in firestore.rules (write-only from the client, never
+// readable back) and processEmployeeUpload (Cloud Function) which files it
+// straight to Drive and deletes the Firestore copy the moment it lands.
+// w9UploadSubmittedAt itself (just a timestamp, nothing sensitive) stays on
+// the assistant record since that's what clears the dashboard nag.
+const MAX_W9_UPLOAD_BYTES = 900000;
+function renderW9UploadCard(assistant){
+  const submitted = !!assistant.w9UploadSubmittedAt;
+  const dueDate = !submitted && assistant.agreementSignedAt
+    ? new Date(new Date(assistant.agreementSignedAt).getTime() + 30*24*3600000) : null;
+  const daysLeft = dueDate ? Math.ceil((dueDate - new Date()) / 86400000) : null;
+  return `
+    <div class="card">
+      <h3>Signed W9</h3>
+      ${submitted ? `
+      <div class="small" style="color:var(--ok);">✓ Uploaded ${new Date(assistant.w9UploadSubmittedAt).toLocaleDateString()} — filed straight to your HR folder, nothing stored in this app.</div>
+      ` : `
+      <div class="small ${daysLeft!==null && daysLeft<0 ? 'alert danger' : daysLeft!==null && daysLeft<=7 ? 'alert warn' : ''}" style="margin-bottom:10px;">
+        ${dueDate
+          ? (daysLeft<0 ? `Overdue by ${Math.abs(daysLeft)} day${Math.abs(daysLeft)===1?'':'s'}.` : `Due within ${daysLeft} day${daysLeft===1?'':'s'}.`)
+          : "You have 30 days from signing your agreement to upload this."}
+        PDF or a clear photo — goes straight to your private HR folder, never stored in this app.
+      </div>
+      <input type="file" id="w9_upload_file" accept=".pdf,image/*">
+      <button style="margin-top:8px;" id="w9_upload_btn" onclick="submitW9Upload('${assistant.id}')">Upload W9</button>
+      `}
+    </div>
+  `;
+}
+async function submitW9Upload(assistantId){
+  const input = document.getElementById("w9_upload_file");
+  const file = input.files && input.files[0];
+  if(!file){ alert("Please choose your signed W9 first."); return; }
+  const btn = document.getElementById("w9_upload_btn");
+  if(btn){ btn.disabled = true; btn.textContent = "Uploading..."; }
+  const isImage = (file.type||"").startsWith("image/");
+  let dataUrl;
+  try{
+    dataUrl = isImage ? await readAndCompressImage(file, 1800, 0.8) : await readFileAsDataURL(file);
+  }catch(e){
+    alert("Couldn't read that file — try again.");
+    if(btn){ btn.disabled = false; btn.textContent = "Upload W9"; }
+    return;
+  }
+  if(dataUrl.length > MAX_W9_UPLOAD_BYTES){
+    alert("That file is too large (" + Math.round(dataUrl.length/1024) + "KB) — try a smaller-size scan or a plain photo instead of a scanned PDF.");
+    if(btn){ btn.disabled = false; btn.textContent = "Upload W9"; }
+    return;
+  }
+  const assistantName = state.currentAssistant ? state.currentAssistant.name : assistantId;
+  try{
+    await db.collection("employeeUploads").doc(assistantId).set({
+      w9DataUrl: dataUrl, w9FileName: file.name||"w9", assistantName
+    }, { merge:true });
+  }catch(err){
+    alert("Upload failed — " + err.message + ". Check your connection and try again.");
+    if(btn){ btn.disabled = false; btn.textContent = "Upload W9"; }
+    return;
+  }
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===assistantId ? { ...a, w9UploadSubmittedAt:new Date().toISOString() } : a);
+  state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
+  upsert("settings","access", { assistants: state.settings.assistants });
+  render();
+}
+function renderIdUploadGateModal(assistant){
+  return `
+    <div class="modal" style="width:420px;">
+      <h3>Upload your ID</h3>
+      <div class="small" style="margin-bottom:12px;">Welcome, ${assistant.name}. Upload a photo of a valid government-issued photo ID (driver's license, state ID, or passport) to finish setting up your account. This goes straight to your private HR folder — nobody on the team can see it in this app.</div>
+      <input type="file" id="id_upload_file" accept="image/*">
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button id="id_upload_btn" onclick="submitIdUpload('${assistant.id}')">Upload & continue</button>
+      </div>
+    </div>
+  `;
+}
+async function submitIdUpload(assistantId){
+  const input = document.getElementById("id_upload_file");
+  const file = input.files && input.files[0];
+  if(!file){ alert("Please choose a photo of your ID first."); return; }
+  const btn = document.getElementById("id_upload_btn");
+  if(btn){ btn.disabled = true; btn.textContent = "Uploading..."; }
+  let dataUrl;
+  try{
+    dataUrl = await readAndCompressImage(file, 1800, 0.8);
+  }catch(e){
+    alert("Couldn't read that photo — try again or take a new one.");
+    if(btn){ btn.disabled = false; btn.textContent = "Upload & continue"; }
+    return;
+  }
+  const assistantName = state.currentAssistant ? state.currentAssistant.name : assistantId;
+  try{
+    await db.collection("employeeUploads").doc(assistantId).set({
+      idPhotoDataUrl: dataUrl, idPhotoFileName: file.name||"id-photo.jpg", assistantName
+    }, { merge:true });
+  }catch(err){
+    alert("Upload failed — " + err.message + ". Check your connection and try again.");
+    if(btn){ btn.disabled = false; btn.textContent = "Upload & continue"; }
+    return;
+  }
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===assistantId ? { ...a, idUploadSubmittedAt:new Date().toISOString() } : a);
+  state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
+  upsert("settings","access", { assistants: state.settings.assistants });
+  state.modal = nextOnboardingGateFor(state.currentAssistant);
+  render();
 }
 
 // --- Team admin (admin only) ---
@@ -9889,6 +9996,7 @@ function saveNewEmployee(){
     accessCode: "",
     active: true,
     agreementSigned: false,
+    mustChangeCode: true,
     hourlyRate: 22,
     hireDate: new Date().toISOString().slice(0,10),
     onboarding: NEW_HIRE_ONBOARDING.map(i=>({ ...i, done:false }))
@@ -10201,136 +10309,341 @@ function renderOrgChartSeatModal(rowId, seat){
 function employmentAgreementHtml(assistant){
   const todayStr = new Date().toLocaleDateString('en-US', { month:'long', day:'numeric', year:'numeric' });
   return `
-    <p style="text-align:center;"><strong>THE MODERN CO, LLC</strong><br><strong>INDEPENDENT CONTRACTOR AGREEMENT</strong></p>
-    <p>This Independent Contractor Agreement (“Agreement”) is entered into as of ${todayStr}, by and between:</p>
-    <p>The Modern Co, LLC (“Company”)<br>and<br>${assistant.name} (“Contractor”).</p>
-
-    <p><strong>1. RELATIONSHIP</strong></p>
-    <ul>
-      <li>Contractor is engaged as an Independent Contractor (1099).</li>
-      <li>Nothing in this Agreement shall be construed to create an employer-employee relationship, partnership, or joint venture.</li>
-      <li>Contractor will be assigned clients by the Company and agrees to fulfill services in accordance with each client's selected membership package.</li>
-      <li>Contractor retains flexibility in scheduling the completion of assigned tasks; however, Contractor agrees to complete all client work within agreed deadlines and to accommodate reasonable time-sensitive or recurring in-person service needs.</li>
-      <li>Contractor is responsible for her own federal, state, and local taxes and will receive a Form 1099-NEC at year end.</li>
-    </ul>
-
-    <p><strong>2. TERM & REVIEW</strong></p>
-    <p>Contractor will begin as a 1099 Independent Contractor.<br>After six (6) to nine (9) months, the parties agree to review:</p>
-    <ul>
-      <li>Workload consistency</li>
-      <li>Average weekly hours</li>
-      <li>Operational structure</li>
-      <li>Business growth</li>
-    </ul>
-    <p>At that time, the Company may, at its discretion, transition Contractor to W-2 employee status if the role evolves into a more structured position.<br>This review does not guarantee reclassification.</p>
-
-    <p><strong>3. COMPENSATION</strong></p>
-    <p>Contractor shall be paid:</p>
-    <ul><li>${assistant.payType==="flat" ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+" per pay period (flat rate)" : "$"+(assistant.hourlyRate||0).toFixed(2)+" per hour"}</li></ul>
-    <p>Hours will vary based on client demand and assigned workload.</p>
-    <p>Payment Schedule:</p>
-    <ul><li>Semi-monthly (15th and 30th), based on submitted and approved hours.</li></ul>
-    <p>Contractor agrees to accurately track all time worked using the Company's designated system (ClickUp or other approved platform).</p>
-
-    <p><strong>4. DUTIES &amp; RESPONSIBILITIES</strong></p>
-    <p>Contractor agrees to provide personal assistant and concierge services, which may include:</p>
-    <ul>
-      <li>Administrative support</li>
-      <li>Home reset services</li>
-      <li>Client errands and scheduling</li>
-      <li>Task execution within ClickUp</li>
-      <li>Professional communication with clients</li>
-      <li>Maintaining Company service standards</li>
-    </ul>
-    <p>Contractor agrees to represent The Modern Co professionally at all times.</p>
-
-    <p><strong>5. PERFORMANCE &amp; RATE INCREASES</strong></p>
-    <p>Contractor may be eligible for rate increases based on:</p>
-    <ul>
-      <li>Client satisfaction</li>
-      <li>Reliability and professionalism</li>
-      <li>Ability to manage increased client volume</li>
-      <li>Initiative and operational contribution</li>
-    </ul>
-    <p>Compensation adjustments are at the sole discretion of the Company.</p>
-
-    <p><strong>6. CLIENT REFERRAL INCENTIVE</strong></p>
-    <p>If Contractor personally refers a new client to The Modern Co and that client signs a service agreement and submits payment, Contractor will receive:</p>
-    <ul><li>10% of the client's first month membership revenue</li></ul>
-    <p>This incentive applies to referrals made within Contractor's first four (4) months of engagement.<br>The Company reserves the right to modify or discontinue this incentive program at any time.</p>
-
-    <p><strong>7. CONFIDENTIALITY</strong></p>
-    <p>Contractor agrees to maintain strict confidentiality regarding:</p>
-    <ul>
-      <li>Client information</li>
-      <li>Company pricing</li>
-      <li>Systems and templates</li>
-      <li>Internal processes</li>
-    </ul>
-    <p>This obligation survives termination of this Agreement.</p>
-
-    <p><strong>8. NON-SOLICITATION</strong></p>
-    <p>During the term of this Agreement and for twelve (12) months following termination, Contractor shall not:</p>
-    <ul>
-      <li>Solicit Company clients</li>
-      <li>Use Company systems, templates, or client contacts to establish a competing concierge or assistant service</li>
-    </ul>
-
-    <p><strong>9. EXPENSES</strong></p>
-    <p>Contractor is responsible for:</p>
-    <ul>
-      <li>Transportation</li>
-      <li>Personal phone and equipment</li>
-      <li>Insurance (if applicable)</li>
-      <li>Any personal business expenses</li>
-    </ul>
-    <p>Unless otherwise agreed in writing.</p>
-
-    <p><strong>10. TERMINATION</strong></p>
-    <p>Either party may terminate this Agreement at any time with written notice.</p>
-
-    <p><strong>11. ENTIRE AGREEMENT</strong></p>
-    <p>This Agreement represents the entire understanding between the parties and supersedes prior discussions.<br>Any modifications must be in writing and signed by both parties.</p>
-
-    <p><strong>SIGNATURES</strong></p>
-    <p>The Modern Co, LLC<br>By: Kaylan Ogle<br>Name: Kaylan Ogle<br>Title: Founder</p>
-    <p>Contractor<br>Name: ${assistant.name}<br>Signature: (typed name below)<br>Date: ${todayStr}</p>
+    <p style="text-align:center;"><strong>THE MODERN CO</strong><br><strong>INDEPENDENT CONTRACTOR AGREEMENT</strong><br><em style="font-size:12px;">Personal Assistant &amp; Concierge Services</em></p>
+<p>This Independent Contractor Agreement ("Agreement") is made and entered into as of ${todayStr} ("Effective Date"), by and between:</p>
+<p><b>Company:  </b>The Modern Co, LLC, a Louisiana limited liability company (“Company”)</p>
+<p><i>and</i></p>
+<p><b>Contractor (Full Legal Name): </b>${assistant.name}</p>
+<p><b>Contractor Business Name (if applicable):  </b></p>
+<p><b>Contractor Address:  </b></p>
+<p><i>Company and Contractor may each be referred to individually as a “Party” and collectively as the “Parties.”</i></p>
+<p><strong>1.  RELATIONSHIP OF THE PARTIES</strong></p>
+<p>Contractor is engaged solely as an independent contractor and not as an employee, partner, joint venturer, or agent of Company. Nothing in this Agreement shall be construed to create an employer-employee relationship, partnership, or joint venture between the Parties.</p>
+<p>Consistent with independent contractor status, the Parties agree that:</p>
+<ul>
+<li>Contractor will be assigned clients by the Company and agree to perform services consistent with each client’s selected membership package.</li>
+<li>The contractor retains discretion over the methods and sequence used to complete assigned tasks, subject to agreed client deadlines and reasonable time-sensitive or recurring in-person service needs.</li>
+<li>Contractor may, subject to Company’s reasonable approval, engage qualified subcontractors or substitutes to perform services, provided Contractor remains responsible for the quality and timeliness of the work.</li>
+<li>Contractor is free to perform similar services for other businesses or clients, provided doing so does not conflict with Sections 8 (Client Privacy &amp; Confidentiality Policy) or 21 (Non-Solicitation &amp; Non-Competition) below.</li>
+<li>The company will not provide the Contractor with employee benefits, including health insurance, retirement contributions, paid time off, or workers’ compensation coverage.</li>
+</ul>
+<p>The contractor is solely responsible for all applicable federal, state, and local taxes, including self-employment tax, arising from payments under this Agreement, and will receive a Form 1099-NEC at year end. The company will not withhold income or payroll taxes from payments to the Contractor.</p>
+<p><strong>2.  TERM &amp; CLASSIFICATION REVIEW</strong></p>
+<p>This Agreement begins on the Effective Date and continues on a month-to-month basis until terminated in accordance with Section 13 (Term &amp; Termination).</p>
+<p>Between six (6) and nine (9) months after the Effective Date, the Parties agree to review the engagement, including:</p>
+<ul>
+<li>Workload consistency and average weekly hours</li>
+<li>Operational structure and degree of Company direction and control</li>
+<li>Business growth and long-term staffing needs</li>
+</ul>
+<p>Following this review, Company may, in its sole discretion, offer to transition Contractor to W-2 employee status if the role has evolved into a more structured, employee-like position. This review process is informational only and does not guarantee reclassification or continued engagement in any form.</p>
+<p><strong>3.  SCOPE OF SERVICES</strong></p>
+<p>Contractor agrees to provide personal assistant and concierge services (“Services”), which may include:</p>
+<ul>
+<li>Administrative support and correspondence</li>
+<li>Home reset and organizational services</li>
+<li>Client errands, scheduling, and calendar management</li>
+<li>Task execution and time logging within ClickUp or Company’s then-current designated platform</li>
+<li>Professional communication with clients on Company’s behalf</li>
+<li>Maintaining Company’s service standards and brand representation</li>
+</ul>
+<p>Contractor agrees to represent The Modern Co professionally at all times, including in dress, communication, and conduct while performing Services or interacting with clients.</p>
+<p>Any material change in the scope of Services, or engagement of Contractor for a new client type or service line, should be documented in a written addendum referencing this Agreement.</p>
+<p><strong>4.  COMPENSATION</strong></p>
+<p><b>Rate: </b>${assistant.payType==="flat" ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+" per pay period (flat rate)" : "$"+(assistant.hourlyRate||0).toFixed(2)+"/hr"}</p>
+<p>Hours will vary based on client demand and assigned workload. The company does not guarantee a minimum number of hours.</p>
+<p><b>Payment Schedule</b></p>
+<p>Contractor will be paid semi-monthly, on the 1st and 15th day of each month (or the preceding business day if either date falls on a weekend or holiday), for hours submitted and approved in the prior pay period.</p>
+<p>Pay periods are defined as the <b>1st through the 15th of each month</b> and the <b>16th through the last calendar day of each month</b>. </p>
+<p><b>Time Tracking</b></p>
+<p>Contractor agrees to accurately and contemporaneously track all time worked using The Modern Co platform or another Company-approved time-tracking platform. Companies may withhold payment for hours that are not submitted in accordance with this Section or that are not reasonably substantiated.</p>
+<p><strong>5.  EXPENSES &amp; EQUIPMENT</strong></p>
+<p>Except as otherwise agreed in writing, Contractor is solely responsible for expenses incurred in performing the Services, including:</p>
+<ul>
+<li>Transportation and mileage</li>
+<li>Personal phone, computer, and other equipment</li>
+<li>Applicable licenses, permits, and insurance</li>
+<li>Any other personal business expenses</li>
+</ul>
+<p>The Contractor is responsible for providing and maintaining the tools and equipment reasonably necessary to perform the Services, unless the Company agrees in writing to furnish specific equipment or reimburse specific costs.</p>
+<p><strong>6.  PERFORMANCE &amp; RATE REVIEWS</strong></p>
+<p>Contractor may become eligible for rate increases based on factors that may include:</p>
+<ul>
+<li>Client satisfaction and feedback</li>
+<li>Reliability and professionalism</li>
+<li>Ability to manage increased client volume</li>
+<li>Initiative and contribution to Company operations</li>
+</ul>
+<p>Any compensation adjustment is at the sole discretion of the Company and will be confirmed in writing before taking effect.</p>
+<p><strong>7.  CLIENT REFERRAL INCENTIVE</strong></p>
+<p>If Contractor personally refers a new client to Company, and that client signs a service agreement and submits payment, Contractor will receive an incentive equal to ten percent (10%) of the referred client’s first-month membership revenue.</p>
+<p>This incentive applies only to referrals made within Contractor’s first four (4) months of engagement under this Agreement. The company reserves the right to modify, suspend, or discontinue this incentive program at any time, with the change applying prospectively to future referrals.</p>
+<p><strong>8.  CLIENT PRIVACY &amp; CONFIDENTIALITY POLICY</strong></p>
+<p>Contractor acknowledges that, in the course of performing the Services, Contractor will regularly enter clients’ homes and have access to Company’s and clients’ confidential and proprietary information (“Confidential Information”), including but not limited to:</p>
+<ul>
+<li>Client names, contact details, family information, preferences, and account information</li>
+<li>Client home addresses, entry codes, alarm codes, keys, lockbox codes, and security information</li>
+<li>Client routines, schedules, health or personal circumstances, and household details observed while providing Services</li>
+<li>Company pricing, membership packages, and financial information</li>
+<li>Systems, templates, checklists, and standard operating procedures</li>
+<li>Internal processes, vendor relationships, and business strategy</li>
+</ul>
+<p>The contractor agrees to treat all client homes, belongings, and personal information with the highest degree of discretion. Contractor will not discuss one client’s home, family, habits, or personal details with another client, with other Contractors outside of a legitimate work purpose, or with any third party.</p>
+<p>Contractor agrees to use confidential Information solely to perform the Services, to protect it with at least the same degree of care Contractor uses for its own confidential information (and in no event less than reasonable care), and not to disclose it to any third party without Company’s prior written consent. Access codes, keys, and security information must never be shared, duplicated, or recorded outside Company-approved systems, and must be returned or securely deleted upon completion of the applicable assignment or termination of this Agreement, whichever comes first.</p>
+<p>This obligation survives termination of this Agreement indefinitely as to trade secrets and client personal information, and for a period of three (3) years as to other confidential Information.</p>
+<p>This Section does not restrict disclosures required by law or valid legal process, provided the Contractor gives Company prompt written notice (where legally permitted) before disclosing.</p>
+<p><strong>9.  PHOTO, VIDEO &amp; CONTENT CONSENT POLICY</strong></p>
+<p>Contractor shall not photograph, film, screen-record, or otherwise capture any client, client family member, pet, home interior or exterior, vehicle, or personal property for any purpose — including internal quality documentation, training, marketing, or personal use — unless Company has obtained prior written consent from the client specifically authorizing that content and its intended use, and Company has separately authorized Contractor in writing to capture it.</p>
+<p>Where consent has been obtained, Contractor agrees that:</p>
+<ul>
+<li>Content may only be captured using Company-approved devices, apps, or accounts — never stored on Contractor’s personal camera roll, cloud backup, or personal messaging apps</li>
+<li>Content must be limited to the specific scope the client consented to (for example, a specific room, task, or before/after comparison) and may not incidentally capture identifying details the client did not agree to share</li>
+<li>Content may only be used for the purpose stated in the client’s written consent, and any new or additional use requires new written consent</li>
+<li>Client faces, children, and any identifying personal details must be excluded unless the client’s consent expressly covers them</li>
+</ul>
+<p>Contractor must immediately delete any content that was captured in error, that exceeds the scope of consent given, or where consent is withdrawn, and must confirm deletion to Company in writing upon request.</p>
+<p><strong>10.  SOCIAL MEDIA POLICY</strong></p>
+<p>Contractor agrees not to post, share, or reference any client — including their name, address, neighborhood, home, belongings, routine, or any identifying detail — on any personal or professional social media account, group chat, or messaging platform, at any time, without both (a) the client’s prior written consent under Section 9, and (b) Company’s prior written approval of the specific content.</p>
+<p>Contractor further agrees that Contractor will not:</p>
+<ul>
+<li>Geotag or otherwise reveal the location of a client’s home in any post or story</li>
+<li>Post about a client's schedule, absence from home, or travel plans, which raises safety and security concerns</li>
+<li>Speak, post, or comment publicly on Company’s behalf, or represent any personal account as an official Company account, without written authorization</li>
+<li>Post content that disparages Company, its clients, or its other contractors, or that could reasonably embarrass Company or breach client trust</li>
+</ul>
+<p>Company-approved marketing or testimonial content will be shared only through Company’s official channels, using content obtained under Section 9. Contractor may be asked to appear in or contribute to such content and may decline without penalty.</p>
+<p><strong>11.  TECHNOLOGY, AI &amp; COMPANY MATERIALS USAGE POLICY</strong></p>
+<p>Contractor agrees to use Company-provided accounts, logins, templates, checklists, and software (including ClickUp or other designated platforms) solely for authorized Company business, and to keep all login credentials confidential and not shared with unauthorized individuals.</p>
+<p>Contractor may not input any Confidential Information — including client names, addresses, photos, schedules, or other identifying details — into public or consumer-facing artificial intelligence tools (such as general-purpose chatbots or image generators) that are not expressly approved by Company in writing, since doing so may expose that information to third parties outside Company’s control.</p>
+<p>Contractor may use Company-approved AI tools for drafting or administrative assistance only in a manner consistent with this Section, and any client-facing communication drafted with AI assistance remains subject to the same accuracy, professionalism, and confidentiality standards as if Contractor wrote it directly.</p>
+<p>All Company materials, templates, and system access remain Company property (see Section 20, Work Product &amp; Intellectual Property) and must be returned, revoked, or deleted upon Company’s request or termination of this Agreement.</p>
+<p><strong>12.  COMPANY SOP COMPLIANCE</strong></p>
+<p>Contractor agrees to review, understand, and follow Company’s Standard Operating Procedures (“SOPs”), checklists, and quality standards, as made available through ClickUp or other Company-designated systems and as updated by Company from time to time.</p>
+<p>Contractor is responsible for staying current on SOP updates and for asking Company for clarification where a client’s specific instructions appear to conflict with a standard SOP. Consistent or material failure to follow SOPs may affect Contractor’s eligibility for rate increases or referral incentives under Sections 6 and 7, and repeated or intentional non-compliance may constitute a material breach under Section 24 (Term &amp; Termination).</p>
+<p><strong>13.  TIME TRACKING ACCURACY POLICY</strong></p>
+<p>Building on the time-tracking obligations in Section 4, Contractor agrees to log actual time worked contemporaneously (at or near the time the work is performed), and not in bulk after the fact from memory.</p>
+<p>The contractor agrees not to round up, pad, estimate generously, or log time for tasks not actually performed. Time entries should reflect the actual start and stop times of client work, travel time only where Company’s policy expressly allows it, and breaks should be excluded unless otherwise agreed in writing.</p>
+<p>Companies may review submitted time against client feedback, task completion records, or platform activity logs. If a discrepancy is identified, the Company will discuss it with the Contractor before finalizing payment for the disputed hours. Intentional or repeated inaccurate time reporting is a material breach of this Agreement and may result in immediate termination under Section 24.</p>
+<p><strong>14.  CONFLICT OF INTEREST DISCLOSURE</strong></p>
+<p>Contractor agrees to promptly disclose to Company, in writing, any actual or potential conflict of interest that could reasonably affect Contractor’s judgment or performance of the Services, including but not limited to:</p>
+<ul>
+<li>A pre-existing personal, family, or business relationship with a client prior to assignment</li>
+<li>Any outside business, side venture, or other contractor role that provides services similar to or competitive with Company’s business</li>
+<li>Any financial interest in, or compensation from, a vendor, contractor, or service provider that Contractor recommends or introduces to a client</li>
+<li>Any circumstance in which Contractor stands to gain personally from a decision or recommendation made in the course of serving a Company client</li>
+</ul>
+<p>Disclosure must be made before the conflict affects any client engagement, or as soon as the Contractor becomes aware of it if it arises after assignment. Company may, in its discretion, reassign the affected client, modify Contractor’s responsibilities, or take other reasonable steps in response to a disclosed conflict. Failure to disclose a known conflict of interest is a material breach of this Agreement.</p>
+<p><strong>15.  COMMUNICATION STANDARDS POLICY</strong></p>
+<p>Contractor agrees to communicate with clients and Company in a prompt, professional, and courteous manner at all times, consistent with Company’s brand standards.</p>
+<p>Unless Company designates otherwise for a specific client, Contractor agrees to:</p>
+<ul>
+<li>Respond to Company messages regarding scheduling, tasks, or client needs within one (1) business day, and sooner for time-sensitive matters</li>
+<li>Conduct client-facing communication through Company-approved channels (such as ClickUp, a Company email address, or Company-provided phone line) rather than Contractor’s personal phone number, email, or social media, unless Company has approved an exception in writing</li>
+<li>Escalate client complaints, complications, or unusual requests to Company promptly rather than resolving them unilaterally</li>
+<li>Maintain a professional, respectful tone in all written and verbal communication, and refrain from disparaging remarks about clients, Company, or other Contractors</li>
+</ul>
+<p>Consistent failure to meet these communication standards may be addressed as part of the performance reviews described in Section 6, and material or repeated violations may constitute grounds for termination under Section 24.</p>
+<p><strong>16.  BACKGROUND CHECK &amp; ELIGIBILITY REPRESENTATION</strong></p>
+<p>Contractor represents that Contractor has no criminal conviction, pending charge, or other disqualifying history that would reasonably affect Contractor’s suitability to enter clients’ homes and provide personal assistant or concierge services, including but not limited to convictions involving theft, fraud, violence, or offenses against children or vulnerable adults.</p>
+<p>Contractor consents to Company obtaining a background check and, where applicable, a motor vehicle report, through a third-party consumer reporting agency before engagement and periodically thereafter (for example, annually), in accordance with the Fair Credit Reporting Act and applicable state law. The contractor agrees to complete any authorization forms reasonably requested by the Company to conduct such checks.</p>
+<p>Contractor agrees to promptly notify Company in writing if Contractor is charged with or convicted of any crime during the term of this Agreement that could reasonably affect Contractor’s suitability to provide the Services. Company may suspend or terminate this Agreement if a background check reveals disqualifying information, or if Contractor fails to make a disclosure required by this Section.</p>
+<p><strong>17.  VEHICLE &amp; DRIVING POLICY</strong></p>
+<p>If Contractor uses a personal vehicle to perform errands or other driving related to the Services, Contractor represents that Contractor holds a valid driver’s license and maintains automobile liability insurance meeting Louisiana’s minimum financial responsibility requirements, and agrees to provide proof of both upon Company’s reasonable request.</p>
+<p>Contractor agrees to operate any vehicle safely and in compliance with all applicable traffic laws while performing the Services, to avoid handheld phone use while driving, and not to transport any client or client family member without Company’s prior written approval.</p>
+<p>Contractor is solely responsible for any traffic violations, accidents, injuries, or vehicle damage arising from Contractor’s operation of a vehicle while performing the Services, except to the extent caused by Company’s negligence. This Section does not obligate the Company to reimburse mileage or vehicle expenses except as separately agreed under Section 5 (Expenses &amp; Equipment).</p>
+<p><strong>18.  HEALTH, SAFETY &amp; INCIDENT REPORTING POLICY</strong></p>
+<p>The contractor agrees to perform the Services in a safe manner, to follow reasonable safety precautions in each client’s home, and to exercise reasonable care around fragile, valuable, or hazardous items.</p>
+<p>In an emergency — including fire, medical emergency, or a break-in — Contractor must first contact 911 or other appropriate emergency services, and then notify Company as soon as reasonably possible afterward.</p>
+<p>In a non-emergency situation, Contractor must notify Company within twenty-four (24) hours of becoming aware of any workplace injury to Contractor, any safety hazard in a client’s home, or any incident involving property damage, a missing item, or a dispute with a client. The contractor agrees to report incidents honestly and promptly rather than concealing or delaying disclosure.</p>
+<p>Contractor acknowledges that, as an independent contractor, Contractor is not covered by any workers’ compensation insurance maintained by Company and is solely responsible for obtaining any health, disability, or accident insurance Contractor considers appropriate for Contractor’s own protection.</p>
+<p>19.  WORKPLACE CONDUCT &amp; NON-DISCRIMINATION POLICY</p>
+<p>The contractor agrees to perform the Services free from the influence of alcohol or illegal drugs and to arrive prepared to safely and professionally complete assigned tasks.</p>
+<p>Contractor agrees to treat all clients, client family members, other Contractors, and members of the public with courtesy and respect, and will not discriminate against or harass any individual on the basis of race, color, religion, sex, national origin, age, disability, sexual orientation, gender identity, or any other characteristic protected by applicable law while performing the Services.</p>
+<p>Contractor agrees to maintain a professional appearance and respectful demeanor consistent with Company’s brand standards at all times while representing Company, whether interacting with clients directly or otherwise performing the Services.</p>
+<p><strong>20.  WORK PRODUCT &amp; INTELLECTUAL PROPERTY</strong></p>
+<p>All documents, templates, client deliverables, processes, and other materials that Contractor creates, develops, or modifies specifically for Company in the course of performing the Services (“Work Product”) shall be deemed “works made for hire” to the extent permitted by law. To the extent any Work Product does not qualify as a work made for hire, Contractor hereby assigns to Company all right, title, and interest in and to such Work Product, including all associated intellectual property rights.</p>
+<p>Contractor retains ownership of any pre-existing tools, templates, or methodologies Contractor owned prior to this Agreement and that are incorporated into the Services, and hereby grants Company a non-exclusive, royalty-free, perpetual license to use such pre-existing materials solely in connection with Company’s business.</p>
+<p>At Company’s request, Contractor agrees to execute any documents reasonably necessary to confirm Company’s ownership of the Work Product.</p>
+<p>21.  NON-SOLICITATION &amp; NON-COMPETITION</p>
+<p>During the term of this Agreement and for twelve (12) months following its termination (the “Restricted Period”), Contractor agrees not to:</p>
+<ul>
+<li>Directly or indirectly solicit, service, or accept business from any Company client that Contractor performed Services for, or was introduced to, during the engagement;</li>
+<li>Use Company’s systems, templates, client lists, or Confidential Information to establish, operate, or assist a competing personal assistant or concierge business.</li>
+</ul>
+<p>Geographic Scope: This restriction applies within the following parish(es) in which Contractor provided Services or Company actively does business as of the Effective Date: [TMC HQ Parish — see note]</p>
+<p><strong>22.  INSURANCE &amp; INDEMNIFICATION</strong></p>
+<p>Contractor represents that Contractor will maintain any insurance coverage required by law for an independent business, including automobile liability coverage if Contractor uses a personal vehicle to perform the Services, and will provide proof of coverage upon Company’s reasonable request.</p>
+<p>Contractor agrees to indemnify, defend, and hold harmless Company, its members, officers, and employees from and against any third-party claims, losses, damages, or expenses (including reasonable attorneys’ fees) arising out of Contractor’s gross negligence, willful misconduct, or material breach of this Agreement in the performance of the Services.</p>
+<p>Company agrees to indemnify, defend, and hold harmless Contractor from and against any third-party claims arising solely out of Company’s gross negligence or willful misconduct.</p>
+<p><strong>23.  LIMITATION OF LIABILITY</strong></p>
+<p>To the fullest extent permitted by law, neither Party shall be liable to the other for indirect, incidental, consequential, special, or punitive damages arising out of or related to this Agreement, even if advised of the possibility of such damages. Company’s total aggregate liability to Contractor under this Agreement shall not exceed the total compensation paid to Contractor in the three (3) months preceding the event giving rise to the claim.</p>
+<p><strong>24.  TERM &amp; TERMINATION</strong></p>
+<p>Either Party may terminate this Agreement for any reason, or no reason, upon fourteen (14) days’ prior written notice to the other Party.</p>
+<p>Either Party may terminate this Agreement immediately upon written notice if the other Party materially breaches this Agreement and fails to cure such breach within five (5) business days of receiving written notice describing the breach.</p>
+<p>Notwithstanding the cure period above, Company may terminate this Agreement immediately, without prior notice or opportunity to cure, if Contractor:</p>
+<ul>
+<li>Steals from, or commits fraud against, Company or a client</li>
+<li>Engages in violence, threats, harassment, or discrimination toward a client, client family member, or another Contractor</li>
+<li>Materially breaches the Client Privacy &amp; Confidentiality Policy (Section 8) or the Photo, Video &amp; Content Consent Policy (Section 9)</li>
+<li>Reports to perform Services while impaired by alcohol or illegal drugs, in violation of Section 19</li>
+<li>Is convicted of a disqualifying crime described in Section 16, or is found to have concealed such a conviction</li>
+<li>Otherwise engages in conduct that creates an immediate risk to the safety, property, or well-being of a client or member of the public</li>
+</ul>
+<p>Upon termination, Contractor will be paid for all approved hours worked through the effective date of termination, and Contractor agrees to promptly return all Company property, Confidential Information, and client materials in Contractor’s possession.</p>
+<p>Sections 8 (Client Privacy &amp; Confidentiality Policy), 9 (Photo, Video &amp; Content Consent Policy), 10 (Social Media Policy), 11 (Technology, AI &amp; Company Materials Usage Policy), 14 (Conflict of Interest Disclosure), 20 (Work Product &amp; Intellectual Property), 21 (Non-Solicitation &amp; Non-Competition), 22 (Insurance &amp; Indemnification), 23 (Limitation of Liability), and 27 (Dispute Resolution &amp; Governing Law) survive termination of this Agreement.</p>
+<p><strong>25.  COMPLIANCE WITH LAWS</strong></p>
+<p>Contractor agrees to comply with all applicable federal, state, and local laws and regulations in the performance of the Services, including those relating to licensing, background checks, and workplace conduct where applicable to the nature of in-home or client-facing services.</p>
+<p><strong>26.  FORCE MAJEURE</strong></p>
+<p>Neither Party shall be liable for any delay or failure to perform resulting from causes beyond its reasonable control, including natural disaster, act of government, pandemic, or other similar event, provided the affected Party gives prompt notice and resumes performance as soon as reasonably practicable.</p>
+<p><strong>27.  DISPUTE RESOLUTION &amp; GOVERNING LAW</strong></p>
+<p>This Agreement shall be governed by and construed in accordance with the laws of the State of Louisiana, without regard to its conflict-of-laws principles.</p>
+<p>The Parties agree to first attempt to resolve any dispute arising out of or relating to this Agreement through good-faith negotiation. If the dispute is not resolved within thirty (30) days, the Parties agree that the exclusive venue for any action shall be the state or federal courts located in [TMC HQ Parish — see note] Parish, Louisiana, and each Party consents to personal jurisdiction there.</p>
+<p><strong>28.  GENERAL PROVISIONS</strong></p>
+<p><b>Notices</b></p>
+<p>All notices under this Agreement must be in writing and delivered by email (with confirmation of receipt), or by hand or certified mail to the address set forth above or such other address as a Party designates in writing.</p>
+<p><b>Assignment</b></p>
+<p>The Contractor may not assign this Agreement without the Company's prior written consent. The company may assign this Agreement in connection with a merger, acquisition, or sale of substantially all of its assets.</p>
+<p><b>Severability</b></p>
+<p>If any provision of this Agreement is found unenforceable, that provision will be modified to the minimum extent necessary to make it enforceable, or severed if it cannot be so modified, and the remainder of this Agreement will remain in full force and effect.</p>
+<p><b>Waiver</b></p>
+<p>A Party’s failure to enforce any provision of this Agreement shall not be construed as a waiver of that provision or any other provision.</p>
+<p><b>Counterparts &amp; Electronic Signatures</b></p>
+<p>This Agreement may be executed in counterparts, including by electronic or digital signature, each of which shall be deemed an original and all of which together constitute one instrument.</p>
+<p><b>Entire Agreement</b></p>
+<p>This Agreement constitutes the entire understanding between the Parties regarding its subject matter and supersedes all prior discussions, agreements, or understandings, whether written or oral. Any modification must be in writing and signed by both Parties.</p>
+<p><strong>29. SIGNATURES</strong></p>
+<p>IN WITNESS WHEREOF, the Parties have executed this Agreement as of the Effective Date first written above.</p>
+<p><b>THE MODERN CO, LLC</b><br>Name: Kaylan Ogle<br>Title: Founder</p>
+<p><b>CONTRACTOR</b><br>Name: ${assistant.name}<br>Signature: (typed name below)<br>Date: ${todayStr}</p>
+  `;
+}
+function renderChangeCodeGateModal(assistant){
+  return `
+    <div class="modal" style="width:420px;">
+      <h3>Choose your own access code</h3>
+      <div class="small" style="margin-bottom:12px;">Welcome, ${assistant.name}. The code you just used to log in was a temporary one — pick one only you know before continuing. 4+ digits, easy for you to remember.</div>
+      <div class="row"><div><label class="small">New access code</label><input id="cc_new_code" inputmode="numeric" placeholder="e.g. last 4 of your phone number"></div></div>
+      <div class="row" style="margin-top:8px;"><div><label class="small">Confirm new access code</label><input id="cc_confirm_code" inputmode="numeric"></div></div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button onclick="saveChangedAccessCode('${assistant.id}')">Save & continue</button>
+      </div>
+    </div>
+  `;
+}
+function saveChangedAccessCode(assistantId){
+  const code = document.getElementById("cc_new_code").value.trim();
+  const confirm_ = document.getElementById("cc_confirm_code").value.trim();
+  if(!code || code.length<4){ alert("Please enter a code at least 4 characters long."); return; }
+  if(code !== confirm_){ alert("Codes don't match — please re-enter both."); return; }
+  const taken = state.settings.assistants.some(a=>a.id!==assistantId && a.active!==false && a.accessCode===code);
+  if(taken){ alert("That code is already in use by someone else on the team — pick a different one."); return; }
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===assistantId ? { ...a, accessCode:code, mustChangeCode:false } : a);
+  state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
+  upsert("settings","access", { assistants: state.settings.assistants });
+  state.modal = nextOnboardingGateFor(state.currentAssistant);
+  render();
+}
+// Exhibit A asks for real bank routing/account numbers. Those never get
+// written to Firestore at all — see submitDirectDepositInfo() below, which
+// sends them straight to a Cloud Function over HTTPS that files them
+// directly to Drive. Only this descriptive text (no values) goes into
+// agreementHtml, which DOES sit in Firestore until fileEmployeeAgreementToDrive
+// picks it up.
+function exhibitADisclosureHtml(){
+  return `
+    <p><strong>EXHIBIT A — ACH / DIRECT DEPOSIT AUTHORIZATION FORM</strong></p>
+    <p>Contractor authorizes The Modern Co, LLC to initiate credit entries via Automated Clearing House (ACH) transfer to the bank account identified below for payment of compensation due under this Agreement. This authorization remains in effect until Contractor revokes it in writing, with reasonable advance notice before the next scheduled payment.</p>
+    <p>By submitting the direct deposit form, Contractor certifies that the account information provided is accurate and that Contractor is an authorized signer on the account, and agrees to promptly notify the Company in writing of any change to this banking information before the next scheduled pay date.</p>
   `;
 }
 function renderAgreementGateModal(assistant){
   return `
     <div class="modal" style="width:560px;">
-      <h3>Employment Agreement</h3>
+      <h3>Independent Contractor Agreement</h3>
       <div class="small" style="margin-bottom:10px;">Welcome, ${assistant.name}. Please review and sign before continuing.</div>
       <div class="agreement-text" style="max-height:320px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px;font-size:13px;background:var(--cream);">
         ${employmentAgreementHtml(assistant)}
+        ${exhibitADisclosureHtml()}
       </div>
       <div class="row" style="margin-top:10px;"><div><label class="small">Type your full legal name to sign</label><input id="ag_name" placeholder="Full name"></div></div>
       <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;">
         <input type="checkbox" id="ag_check"> I have read and agree to the terms of this Independent Contractor Agreement.
       </label>
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--cream-dark);">
+        <div class="small" style="font-weight:600;margin-bottom:8px;">Exhibit A — Direct Deposit (ACH)</div>
+        <div class="small" style="margin-bottom:8px;">These numbers go straight to a secure Drive filing and are never stored in this app's database.</div>
+        <div class="row"><div><label class="small">Account holder name</label><input id="ed_holder_name" placeholder="Full name on the account"></div></div>
+        <div class="row" style="margin-top:8px;"><div><label class="small">Business name (if paid to a business account)</label><input id="ed_business_name" placeholder="Optional"></div></div>
+        <div class="row" style="margin-top:8px;">
+          <div><label class="small">Bank name</label><input id="ed_bank_name"></div>
+          <div><label class="small">Bank address (city, state)</label><input id="ed_bank_address"></div>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <div><label class="small">Routing number (9 digits)</label><input id="ed_routing" inputmode="numeric" maxlength="9"></div>
+          <div><label class="small">Account number</label><input id="ed_account" inputmode="numeric"></div>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <div><label class="small">Verify account number</label><input id="ed_account_verify" inputmode="numeric"></div>
+          <div><label class="small">Account type</label>
+            <select id="ed_account_type"><option value="Checking">Checking</option><option value="Savings">Savings</option></select>
+          </div>
+        </div>
+      </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;">
-        <button onclick="signAgreement('${assistant.id}')">Sign & continue</button>
+        <button id="ag_submit_btn" onclick="signAgreement('${assistant.id}')">Sign & continue</button>
       </div>
     </div>
   `;
 }
-function signAgreement(assistantId){
+async function submitDirectDepositInfo(assistantId, assistantName){
+  const holderName = document.getElementById("ed_holder_name").value.trim();
+  const businessName = document.getElementById("ed_business_name").value.trim();
+  const bankName = document.getElementById("ed_bank_name").value.trim();
+  const bankAddress = document.getElementById("ed_bank_address").value.trim();
+  const routingNumber = document.getElementById("ed_routing").value.trim();
+  const accountNumber = document.getElementById("ed_account").value.trim();
+  const accountVerify = document.getElementById("ed_account_verify").value.trim();
+  const accountType = document.getElementById("ed_account_type").value;
+  if(!holderName || !bankName || !routingNumber || !accountNumber || !accountVerify){
+    alert("Please fill out the direct deposit section (Exhibit A) before signing.");
+    return false;
+  }
+  if(accountNumber !== accountVerify){
+    alert("Account number and verification don't match — please check both fields.");
+    return false;
+  }
+  try{
+    await withTimeout(fns.httpsCallable("submitDirectDepositInfo")({
+      assistantId, assistantName, holderName, businessName, bankName, bankAddress, routingNumber, accountNumber, accountType
+    }), 20000, "Direct deposit submission");
+    return true;
+  }catch(err){
+    console.error("submitDirectDepositInfo failed:", err);
+    alert("Your agreement will still be saved, but the direct deposit form couldn't be submitted (" + err.message + "). Please tell Heidi directly so she can set up your payment info another way.");
+    return true; // don't block onboarding on this specific step failing — Heidi can follow up
+  }
+}
+async function signAgreement(assistantId){
   const name = document.getElementById("ag_name").value.trim();
   const checked = document.getElementById("ag_check").checked;
   if(!name || !checked){ alert("Please type your name and check the agreement box to continue."); return; }
+  const btn = document.getElementById("ag_submit_btn");
+  if(btn){ btn.disabled = true; btn.textContent = "Submitting..."; }
+  const ok = await submitDirectDepositInfo(assistantId, name);
+  if(!ok){ if(btn){ btn.disabled = false; btn.textContent = "Sign & continue"; } return; }
   state.settings.assistants = state.settings.assistants.map(a=>{
     if(a.id!==assistantId) return a;
     const onboarding = (a.onboarding||[]).map(it=>it.id==="agreement"?{...it,done:true}:it);
     // Freeze the exact text they agreed to (today's date, their rate at the
     // time) rather than leaving it to be recomputed live later — a rate
     // change or viewing it next year shouldn't silently rewrite history.
-    return { ...a, agreementSigned:true, agreementSignedName:name, agreementSignedAt:new Date().toISOString(), agreementHtml: employmentAgreementHtml(a), onboarding };
+    // Exhibit A's real numbers are never part of this — see
+    // submitDirectDepositInfo above, which sends them straight to Drive.
+    return { ...a, agreementSigned:true, agreementSignedName:name, agreementSignedAt:new Date().toISOString(), agreementHtml: employmentAgreementHtml(a) + exhibitADisclosureHtml(), onboarding };
   });
   state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
   upsert("settings","access", { assistants: state.settings.assistants });
-  state.modal = state.currentAssistant && !state.currentAssistant.hasSeenAppGuide
-    ? { type:"appGuide", assistant: state.currentAssistant } : null;
+  state.modal = nextOnboardingGateFor(state.currentAssistant);
   render();
 }
 // Admin downloads this within 30 days to file externally — pruneExpiredAgreements()
@@ -10492,9 +10805,11 @@ const POLICY_BOOK_TOC = [
   ["pb-part-2","Part 2 — The Request System"],["pb-part-3","Part 3 — Weekly Client Rhythm"],
   ["pb-part-4","Part 4 — How to Handle a New Task"],["pb-part-5","Part 5 — Proactive Service"],
   ["pb-part-6","Part 6 — Client Communication Standards"],["pb-part-7","Part 7 — Hours Tracking & Accountability"],
-  ["pb-part-8","Part 8 — TMC Ops Workflow"],["pb-part-9","Part 9 — Handling Mistakes & Issues"],
+  ["pb-part-8","Part 8 — TMC App Workflow"],["pb-part-9","Part 9 — Handling Mistakes & Issues"],
   ["pb-part-10","Part 10 — Social Media & Personal Brand Policy"],["pb-part-11","Part 11 — Company Apparel Policy"],
-  ["pb-part-12","Part 12 — Professionalism & Conduct"],["pb-closing","Closing Note"]
+  ["pb-part-12","Part 12 — Professionalism & Conduct"],["pb-part-13","Part 13 — Employment Basics"],
+  ["pb-part-14","Part 14 — Compensation & Payroll"],["pb-part-15","Part 15 — Time Off"],
+  ["pb-part-16","Part 16 — Resignation & Termination"],["pb-closing","Closing Note"]
 ];
 // Scrolls within the modal's own scroll pane rather than following a plain
 // #hash link — this is a single-page app with no router, so letting the
@@ -10522,6 +10837,47 @@ function renderPolicyBookModal(){
       </div>
     </div>
   `;
+}
+// Required read-and-sign gate, shown once right after the agreement — this
+// is the actual Employee Handbook with an Acknowledgment of Receipt the
+// document itself expects signed. renderPolicyBookModal above stays as a
+// non-gating "look this up anytime" viewer using the SAME content.
+function renderHandbookGateModal(assistant){
+  return `
+    <div class="modal" style="width:640px;">
+      <h3>Employee Handbook</h3>
+      <div class="small" style="margin-bottom:8px;">Welcome, ${assistant.name}. Please read through, then sign below to continue.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;">
+        ${POLICY_BOOK_TOC.map(([id,label])=>`<a href="#" onclick="scrollToPolicySection('${id}');return false;" style="font-size:12px;background:var(--cream);border:1px solid #d8cabf;border-radius:14px;padding:4px 10px;text-decoration:none;">${label}</a>`).join("")}
+      </div>
+      <div class="agreement-text" style="max-height:420px;overflow-y:auto;border:1px solid #d8cabf;border-radius:8px;padding:14px 18px;font-size:13px;background:var(--cream);">
+        ${TEAM_POLICY_BOOK_HTML}
+      </div>
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <div class="small">By signing below, I confirm that I have received, read, and understand the policies in The Modern Concierge Employee Handbook.</div>
+      </div>
+      <div class="row" style="margin-top:10px;"><div><label class="small">Type your full legal name to sign</label><input id="hb_name" placeholder="Full name"></div></div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;">
+        <input type="checkbox" id="hb_check"> I have read and agree to the policies in the Employee Handbook.
+      </label>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;">
+        <button onclick="signHandbook('${assistant.id}')">Sign & continue</button>
+      </div>
+    </div>
+  `;
+}
+function signHandbook(assistantId){
+  const name = document.getElementById("hb_name").value.trim();
+  const checked = document.getElementById("hb_check").checked;
+  if(!name || !checked){ alert("Please type your name and check the box to continue."); return; }
+  state.settings.assistants = state.settings.assistants.map(a=>{
+    if(a.id!==assistantId) return a;
+    return { ...a, handbookSigned:true, handbookSignedName:name, handbookSignedAt:new Date().toISOString(), handbookHtml: TEAM_POLICY_BOOK_HTML };
+  });
+  state.currentAssistant = state.settings.assistants.find(a=>a.id===assistantId);
+  upsert("settings","access", { assistants: state.settings.assistants });
+  state.modal = nextOnboardingGateFor(state.currentAssistant);
+  render();
 }
 
 // No file-storage backend here (Firestore only), so a client photo gets
@@ -11723,7 +12079,10 @@ function renderModal(){
   const content = state.modal.type==="taskEditor" ? renderTaskEditorModal(state.modal.task)
     : state.modal.type==="clientEditor" ? renderClientEditorModal(state.modal.client)
     : state.modal.type==="employeeEditor" ? renderEmployeeEditorModal()
+    : state.modal.type==="changeCodeGate" ? renderChangeCodeGateModal(state.modal.assistant)
     : state.modal.type==="agreementGate" ? renderAgreementGateModal(state.modal.assistant)
+    : state.modal.type==="handbookGate" ? renderHandbookGateModal(state.modal.assistant)
+    : state.modal.type==="idUploadGate" ? renderIdUploadGateModal(state.modal.assistant)
     : state.modal.type==="reassignClient" ? renderReassignModal(state.modal.client)
     : state.modal.type==="timeEntryEditor" ? renderTimeEntryEditorModal(state.modal.entry)
     : state.modal.type==="appGuide" ? renderAppGuideModal(state.modal.assistant)
@@ -11741,7 +12100,8 @@ function renderModal(){
     : state.modal.type==="newSupportTicket" ? renderNewSupportTicketModal()
     : state.modal.type==="supportTicketDetail" ? renderSupportTicketDetailModal(state.modal.ticketId)
     : "";
-  const dismissable = state.modal.type !== "agreementGate" && state.modal.type !== "appGuide";
+  const NON_DISMISSABLE_MODALS = ["changeCodeGate","agreementGate","handbookGate","idUploadGate","appGuide"];
+  const dismissable = !NON_DISMISSABLE_MODALS.includes(state.modal.type);
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
 }
 function closeModal(){ state.modal = null; render(); }

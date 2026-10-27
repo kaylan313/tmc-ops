@@ -69,5 +69,17 @@ service cloud.firestore {
     // able to read or, worse, write here would defeat the point of having a
     // trustworthy history to restore from.
     match /settingsHistory/{document=**} { allow read, write: if false; }
+    // A new hire's ID photo / W9 scan, in transit on the way to Google
+    // Drive. Write-only from the client (the uploading assistant has no
+    // special auth claim to scope "only their own doc" more tightly without
+    // the bigger per-role-claims project noted above, so any authenticated
+    // session can write any doc here — same tradeoff every other collection
+    // in this file already makes). Read is denied to every client, full
+    // stop: unlike settings/access, this can hold an actual SSN (W9) or a
+    // photo ID, and it would otherwise be visible to every other assistant
+    // and every client's anonymous session. processEmployeeUpload (Cloud
+    // Function, Admin SDK) is the only thing that ever reads it, and it
+    // deletes each field the moment it's safely filed to Drive.
+    match /employeeUploads/{document=**} { allow write: if request.auth != null; allow read: if false; }
   }
 }

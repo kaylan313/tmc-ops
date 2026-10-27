@@ -28,7 +28,7 @@
  * That service account's email needs Editor access on both Drive folders
  * (see README notes in the project root for the exact setup steps).
  */
-const { onDocumentUpdated, onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentUpdated, onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
@@ -111,6 +111,26 @@ async function uploadHtmlAsDoc(drive, folderId, title, html) {
   return res.data;
 }
 
+// For a photo ID or W9 scan -- uploaded as-is (no Doc conversion, unlike
+// uploadHtmlAsDoc above), since these are real images/PDFs, not text meant
+// to be edited. Parses a data: URL directly rather than requiring the
+// caller to split mimeType/base64 themselves.
+function parseDataUrl(dataUrl) {
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl || "");
+  if (!match) throw new Error("Not a valid data: URL");
+  return { mimeType: match[1], buffer: Buffer.from(match[2], "base64") };
+}
+async function uploadDataUrlAsFile(drive, folderId, title, dataUrl) {
+  const { mimeType, buffer } = parseDataUrl(dataUrl);
+  const { Readable } = require("stream");
+  const res = await drive.files.create({
+    requestBody: { name: title, parents: [folderId] },
+    media: { mimeType, body: Readable.from(buffer) },
+    fields: "id, webViewLink",
+  });
+  return res.data;
+}
+
 exports.fileClientContractToDrive = onDocumentUpdated("clients/{clientId}", async (event) => {
   const before = event.data.before.data() || {};
   const after = event.data.after.data() || {};
@@ -156,13 +176,23 @@ exports.fileClientContractToDrive = onDocumentUpdated("clients/{clientId}", asyn
   console.log(`fileClientContractToDrive: signature notification for ${after.name} -> heidi@themodernconcierge.co -> ${sent ? "sent" : "not sent"}`);
 });
 
+// Files both the signed Independent Contractor Agreement (agreementHtml)
+// and the signed Employee Handbook acknowledgment (handbookHtml) to each
+// assistant's Drive folder -- same find-or-create-folder + upload + clear
+// dance, just run independently per document so one signing without the
+// other (e.g. re-signing just the handbook after a policy update) still
+// files correctly.
+const EMPLOYEE_DOC_FIELDS = [
+  { htmlField: "agreementHtml", urlField: "driveAgreementUrl", dateField: "agreementSignedAt", label: "Signed Agreement" },
+  { htmlField: "handbookHtml", urlField: "driveHandbookUrl", dateField: "handbookSignedAt", label: "Signed Handbook" },
+];
 exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", async (event) => {
   const before = event.data.before.data() || {};
   const after = event.data.after.data() || {};
   const beforeById = new Map((before.assistants || []).map((a) => [a.id, a]));
   const toFile = (after.assistants || []).filter((a) => {
     const prev = beforeById.get(a.id);
-    return a.agreementHtml && (!prev || prev.agreementHtml !== a.agreementHtml);
+    return EMPLOYEE_DOC_FIELDS.some((f) => a[f.htmlField] && (!prev || prev[f.htmlField] !== a[f.htmlField]));
   });
   if (!toFile.length) return;
 
@@ -170,23 +200,111 @@ exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", asyn
     const drive = await getDrive();
     const updatedAssistants = await Promise.all(
       (after.assistants || []).map(async (a) => {
-        const match = toFile.find((x) => x.id === a.id);
-        if (!match) return a;
-        const folderId = await findOrCreateFolder(drive, EMPLOYEES_FOLDER_ID.value(), a.name || "Unnamed employee");
-        const dateStr = a.agreementSignedAt ? a.agreementSignedAt.slice(0, 10) : new Date().toISOString().slice(0, 10);
-        const file = await uploadHtmlAsDoc(
-          drive,
-          folderId,
-          `${a.name || "Employee"} — Signed Agreement — ${dateStr}`,
-          a.agreementHtml
-        );
-        console.log(`Filed agreement for ${a.name} to Drive: ${file.webViewLink}`);
-        return { ...a, agreementHtml: null, driveAgreementUrl: file.webViewLink };
+        if (!toFile.find((x) => x.id === a.id)) return a;
+        let patched = a;
+        for (const f of EMPLOYEE_DOC_FIELDS) {
+          if (!patched[f.htmlField]) continue;
+          const prev = beforeById.get(a.id);
+          if (prev && prev[f.htmlField] === patched[f.htmlField]) continue;
+          const folderId = await findOrCreateFolder(drive, EMPLOYEES_FOLDER_ID.value(), a.name || "Unnamed employee");
+          const dateStr = (patched[f.dateField] || new Date().toISOString()).slice(0, 10);
+          const file = await uploadHtmlAsDoc(drive, folderId, `${a.name || "Employee"} — ${f.label} — ${dateStr}`, patched[f.htmlField]);
+          console.log(`Filed ${f.label} for ${a.name} to Drive: ${file.webViewLink}`);
+          patched = { ...patched, [f.htmlField]: null, [f.urlField]: file.webViewLink };
+        }
+        return patched;
       })
     );
     await event.data.after.ref.update({ assistants: updatedAssistants });
   } catch (err) {
-    console.error("Drive upload failed for employee agreements:", err);
+    console.error("Drive upload failed for employee agreement/handbook:", err);
+  }
+});
+
+// Exhibit A's real bank routing/account numbers come straight here over
+// HTTPS and are NEVER written to Firestore at any point -- this is the one
+// thing in the whole onboarding flow that doesn't go through the normal
+// settings/access -> Drive-trigger pipeline every other signed document
+// uses, specifically because that pipeline means the data sits in Firestore
+// (even if briefly, until the trigger clears it). A bank account number
+// deserves stricter handling than "briefly" -- it never touches the
+// database at all, not even in transit.
+exports.submitDirectDepositInfo = onCall(async (request) => {
+  const { assistantId, assistantName, holderName, businessName, bankName, bankAddress, routingNumber, accountNumber, accountType } = request.data || {};
+  if (!assistantId || !holderName || !bankName || !routingNumber || !accountNumber) {
+    throw new HttpsError("invalid-argument", "Missing required direct deposit fields.");
+  }
+  const settingsDoc = await admin.firestore().collection("settings").doc("access").get();
+  const assistant = (settingsDoc.exists && (settingsDoc.data().assistants || []).find((a) => a.id === assistantId)) || null;
+  const name = (assistant && assistant.name) || assistantName || "Unnamed employee";
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const html = `
+    <h2>Exhibit A — ACH / Direct Deposit Authorization</h2>
+    <p><strong>Contractor:</strong> ${name}</p>
+    <p><strong>Account Holder Name:</strong> ${holderName}</p>
+    <p><strong>Business Name:</strong> ${businessName || "(n/a)"}</p>
+    <p><strong>Bank Name:</strong> ${bankName}</p>
+    <p><strong>Bank Address:</strong> ${bankAddress || ""}</p>
+    <p><strong>Routing Number:</strong> ${routingNumber}</p>
+    <p><strong>Account Number:</strong> ${accountNumber}</p>
+    <p><strong>Account Type:</strong> ${accountType || ""}</p>
+    <p><strong>Submitted:</strong> ${todayStr}</p>
+  `;
+  try {
+    const drive = await getDrive();
+    const folderId = await findOrCreateFolder(drive, EMPLOYEES_FOLDER_ID.value(), name);
+    const file = await uploadHtmlAsDoc(drive, folderId, `${name} — Direct Deposit Authorization — ${todayStr}`, html);
+    console.log(`Filed direct deposit info for ${name} to Drive: ${file.webViewLink}`);
+    return { ok: true };
+  } catch (err) {
+    console.error(`Direct deposit Drive upload failed for ${name}:`, err);
+    throw new HttpsError("internal", "Couldn't file the direct deposit form -- tell Heidi directly so she can set it up another way.");
+  }
+});
+
+// A new hire's ID photo / W9 scan, in transit on the way to Drive. Never
+// sits in the shared, broadly-readable settings/access document the rest of
+// an assistant's record lives on -- an ID carries a full photo/DOB/address
+// and a W9 can carry an SSN, both far more sensitive than anything else on
+// that document. Write-only from the client (see firestore.rules); this
+// function (Admin SDK, bypasses rules) is the only thing that ever reads it,
+// and it deletes each field the instant it's safely filed to Drive.
+exports.processEmployeeUpload = onDocumentWritten("employeeUploads/{assistantId}", async (event) => {
+  const after = event.data.after.exists ? event.data.after.data() : null;
+  if (!after) return; // doc deleted -- nothing to do
+  const assistantId = event.params.assistantId;
+  const settingsDoc = await admin.firestore().collection("settings").doc("access").get();
+  const assistants = (settingsDoc.exists && settingsDoc.data().assistants) || [];
+  const assistant = assistants.find((a) => a.id === assistantId);
+  const name = (assistant && assistant.name) || after.assistantName || "Unnamed employee";
+
+  const jobs = [
+    { dataField: "idPhotoDataUrl", nameField: "idPhotoFileName", label: "ID Photo", gateField: "idUploadSubmittedAt" },
+    { dataField: "w9DataUrl", nameField: "w9FileName", label: "W9", gateField: "w9UploadSubmittedAt" },
+  ];
+  let drive = null;
+  const clearFields = {};
+  for (const job of jobs) {
+    if (!after[job.dataField]) continue;
+    try {
+      if (!drive) drive = await getDrive();
+      const folderId = await findOrCreateFolder(drive, EMPLOYEES_FOLDER_ID.value(), name);
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const file = await uploadDataUrlAsFile(drive, folderId, `${name} — ${job.label} — ${dateStr}`, after[job.dataField]);
+      console.log(`Filed ${job.label} for ${name} to Drive: ${file.webViewLink}`);
+      clearFields[job.dataField] = admin.firestore.FieldValue.delete();
+      clearFields[job.nameField] = admin.firestore.FieldValue.delete();
+    } catch (err) {
+      console.error(`Drive upload failed for ${job.label} (${name}):`, err);
+      // Leave this field in place so it isn't lost -- the gate gets cleared
+      // client-side regardless (see submitIdUpload/submitW9Upload in
+      // index.html), so onboarding isn't blocked on Drive being reachable;
+      // this will just retry filing on the next write to this doc if one
+      // ever comes, or needs a manual look if it doesn't.
+    }
+  }
+  if (Object.keys(clearFields).length) {
+    await event.data.after.ref.set(clearFields, { merge: true });
   }
 });
 
