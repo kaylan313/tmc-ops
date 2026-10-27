@@ -2837,6 +2837,10 @@ function tryAdminLogin(code){
 function nextOnboardingGateFor(assistant){
   if(!assistant) return null;
   if(assistant.mustChangeCode) return { type:"changeCodeGate", assistant };
+  // Blocks signing with whatever rate happens to still be on file (often the
+  // $22/hr new-employee default) if Heidi hasn't actively confirmed it's the
+  // real agreed number yet — see confirmAssistantPayRate on the Team tab.
+  if(!assistant.agreementSigned && !assistant.payRateConfirmed) return { type:"waitingOnRateGate", assistant };
   if(!assistant.agreementSigned) return { type:"agreementGate", assistant };
   if(!assistant.handbookSigned) return { type:"handbookGate", assistant };
   if(!assistant.idUploadSubmittedAt) return { type:"idUploadGate", assistant };
@@ -9820,15 +9824,15 @@ function renderAssistantRow(a){
         </div>` : ""}
       <div class="row">
         <div><label class="small">Pay type</label>
-          <select onchange="updateAssistantField('${a.id}','payType',this.value)">
+          <select onchange="updateAssistantPayField('${a.id}','payType',this.value)">
             <option value="hourly" ${a.payType!=="flat"?'selected':''}>Hourly</option>
             <option value="flat" ${a.payType==="flat"?'selected':''}>Flat rate per pay period</option>
           </select>
         </div>
         ${a.payType==="flat" ? `
-        <div><label class="small">Flat rate per pay period ($)</label><input id="asst_flatrate_${a.id}" type="number" step="1" value="${a.flatRatePerPeriod||0}" onchange="updateAssistantField('${a.id}','flatRatePerPeriod',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Flat rate per pay period ($)</label><input id="asst_flatrate_${a.id}" type="number" step="1" value="${a.flatRatePerPeriod||0}" onchange="updateAssistantPayField('${a.id}','flatRatePerPeriod',parseFloat(this.value)||0)"></div>
         ` : `
-        <div><label class="small">Hourly rate ($)</label><input id="asst_hourlyrate_${a.id}" type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
+        <div><label class="small">Hourly rate ($)</label><input id="asst_hourlyrate_${a.id}" type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantPayField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
         `}
         <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
         <div><label class="small">Email (for payroll reports; shown to teammates)</label><input id="asst_email_${a.id}" type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
@@ -9839,6 +9843,11 @@ function renderAssistantRow(a){
           </select>
         </div>
       </div>
+      ${!a.agreementSigned ? `
+      <div class="small ${a.payRateConfirmed ? '' : 'alert warn'}" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>${a.payRateConfirmed ? "✓ Pay rate confirmed — they can sign their agreement." : "⚠ Pay rate not confirmed yet — they're blocked from signing their agreement until you confirm it's correct."}</span>
+        ${a.payRateConfirmed ? "" : `<button class="secondary" style="padding:2px 8px;" onclick="confirmAssistantPayRate('${a.id}')">Confirm rate is correct</button>`}
+      </div>` : ""}
       <div><label class="small">Document upload folder — their private Google Drive folder link, for License &amp; W9 uploads (Onboarding tab shows them a button that opens this)</label><input id="asst_drivefolder_${a.id}" value="${a.driveUploadFolderUrl||''}" placeholder="https://drive.google.com/drive/folders/..." onchange="updateAssistantField('${a.id}','driveUploadFolderUrl',this.value.trim())"></div>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Roles</label>
@@ -9887,6 +9896,22 @@ function updateAssistantField(id, field, value){
   // render() firing soon after (the 60s timer, another click), but fields
   // whose own value changes what's shown next to them (pay type) need this
   // to redraw immediately.
+  render();
+}
+// Separate from updateAssistantField specifically for payType/hourlyRate/
+// flatRatePerPeriod — editing any of these before the agreement is signed
+// un-confirms the rate again, so a last-minute change can't silently slip
+// past the safeguard below (confirmAssistantPayRate) that blocks a new hire
+// from signing until Heidi has actively confirmed the number on file is
+// the one they actually agreed to pay.
+function updateAssistantPayField(id, field, value){
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,[field]:value,payRateConfirmed:false}:a);
+  upsert("settings","access", { assistants: state.settings.assistants });
+  render();
+}
+function confirmAssistantPayRate(id){
+  state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,payRateConfirmed:true}:a);
+  upsert("settings","access", { assistants: state.settings.assistants });
   render();
 }
 // isOpsLead/isDocsLead each drive exactly one Dashboard column (see
@@ -9997,6 +10022,7 @@ function saveNewEmployee(){
     active: true,
     agreementSigned: false,
     mustChangeCode: true,
+    payRateConfirmed: false,
     hourlyRate: 22,
     hireDate: new Date().toISOString().slice(0,10),
     onboarding: NEW_HIRE_ONBOARDING.map(i=>({ ...i, done:false }))
@@ -10515,6 +10541,17 @@ function employmentAgreementHtml(assistant){
 <p>IN WITNESS WHEREOF, the Parties have executed this Agreement as of the Effective Date first written above.</p>
 <p><b>THE MODERN CO, LLC</b><br>Name: Kaylan Ogle<br>Title: Founder</p>
 <p><b>CONTRACTOR</b><br>Name: ${assistant.name}<br>Signature: (typed name below)<br>Date: ${todayStr}</p>
+  `;
+}
+function renderWaitingOnRateGateModal(assistant){
+  return `
+    <div class="modal" style="width:420px;">
+      <h3>Almost there</h3>
+      <div class="small" style="margin-bottom:12px;">Welcome, ${assistant.name}! Heidi still needs to finish setting up your pay details before you can sign your agreement. Check back shortly, or reach out to her directly.</div>
+      <div style="display:flex;justify-content:flex-end;">
+        <button class="secondary" onclick="logout()">Log out</button>
+      </div>
+    </div>
   `;
 }
 function renderChangeCodeGateModal(assistant){
@@ -12080,6 +12117,7 @@ function renderModal(){
     : state.modal.type==="clientEditor" ? renderClientEditorModal(state.modal.client)
     : state.modal.type==="employeeEditor" ? renderEmployeeEditorModal()
     : state.modal.type==="changeCodeGate" ? renderChangeCodeGateModal(state.modal.assistant)
+    : state.modal.type==="waitingOnRateGate" ? renderWaitingOnRateGateModal(state.modal.assistant)
     : state.modal.type==="agreementGate" ? renderAgreementGateModal(state.modal.assistant)
     : state.modal.type==="handbookGate" ? renderHandbookGateModal(state.modal.assistant)
     : state.modal.type==="idUploadGate" ? renderIdUploadGateModal(state.modal.assistant)
@@ -12100,7 +12138,7 @@ function renderModal(){
     : state.modal.type==="newSupportTicket" ? renderNewSupportTicketModal()
     : state.modal.type==="supportTicketDetail" ? renderSupportTicketDetailModal(state.modal.ticketId)
     : "";
-  const NON_DISMISSABLE_MODALS = ["changeCodeGate","agreementGate","handbookGate","idUploadGate","appGuide"];
+  const NON_DISMISSABLE_MODALS = ["changeCodeGate","waitingOnRateGate","agreementGate","handbookGate","idUploadGate","appGuide"];
   const dismissable = !NON_DISMISSABLE_MODALS.includes(state.modal.type);
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
 }
