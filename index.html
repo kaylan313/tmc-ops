@@ -9898,7 +9898,7 @@ function moveOrgChartRow(rowId, dir){
   saveOrgChartRows(rows);
 }
 function addOrgChartSeat(rowId){
-  const seat = { id:newId("ocseat"), title:"Role", name:"Name", assistantId:null, dept:"ops", tag:"none", resp:[], flag:"" };
+  const seat = { id:newId("ocseat"), title:"Role", name:"Name", assistantId:null, dept:"ops", tag:"none", resp:[], flag:"", clientIds:[] };
   const rows = getOrgChartRows().map(r=>r.id===rowId ? { ...r, seats:[...r.seats, seat] } : r);
   saveOrgChartRows(rows);
   openOrgChartSeatEditor(rowId, seat.id);
@@ -9918,6 +9918,34 @@ function setOrgChartSeatAssistant(value){
   state.modal.seat.assistantId = value || null;
   render();
 }
+function toggleOrgChartSeatClient(clientId, checked){
+  const list = state.modal.seat.clientIds || [];
+  state.modal.seat.clientIds = checked ? [...list, clientId] : list.filter(id=>id!==clientId);
+  render();
+}
+// Real capacity instead of hand-typed estimates — for each client assigned
+// to this seat, how many hours THIS specific assistant has actually clocked
+// against THEM over the trailing 4 weeks (not all assistants on that
+// client, just this one's share of it). Averaged over 4 weeks rather than
+// read off a single week so one slow or unusually busy week doesn't skew
+// the number — this is for capacity planning, not payroll, so a smoothed
+// real number is more useful than an exact-but-noisy one. Pay period and
+// month figures are just that weekly average scaled up (≈2 weeks/period,
+// ≈4.345 weeks/month), not separately recomputed from different windows.
+function seatCapacityStats(seat){
+  if(!seat.assistantId || !(seat.clientIds||[]).length) return null;
+  const WINDOW_DAYS = 28;
+  const now = new Date();
+  const windowStart = new Date(now.getTime() - WINDOW_DAYS*86400000);
+  const perClient = seat.clientIds.map(clientId=>{
+    const client = state.clients.find(c=>c.id===clientId);
+    const entries = entriesForClient(clientId).filter(e=>e.assistantId===seat.assistantId);
+    const hours = hoursInPeriod(entries, { start:windowStart, end:now });
+    return { clientId, clientName: client ? client.name : "(deleted client)", avgWeek: hours / (WINDOW_DAYS/7) };
+  });
+  const totalWeek = perClient.reduce((s,c)=>s+c.avgWeek,0);
+  return { perClient, totalWeek, totalPeriod: totalWeek*2, totalMonth: totalWeek*(365.25/12/7) };
+}
 function saveOrgChartSeatModal(rowId, seatId){
   const seat = state.modal.seat;
   const title = (seat.title||"").trim();
@@ -9927,8 +9955,9 @@ function saveOrgChartSeatModal(rowId, seatId){
   const tag = seat.tag || "none";
   const resp = (seat.resp||[]);
   const flag = (seat.flag||"").trim();
+  const clientIds = seat.clientIds||[];
   const rows = getOrgChartRows().map(r=>r.id!==rowId ? r : {
-    ...r, seats: r.seats.map(s=>s.id!==seatId ? s : { ...s, title, name, assistantId, dept, tag, resp, flag })
+    ...r, seats: r.seats.map(s=>s.id!==seatId ? s : { ...s, title, name, assistantId, dept, tag, resp, flag, clientIds })
   });
   saveOrgChartRows(rows);
   closeModal();
@@ -10009,6 +10038,7 @@ function renderOrgChartSeat(rowId, seat){
     const parts = line.split(" — ");
     return parts.length>1 ? `<li><b>${parts[0]}</b> — ${parts.slice(1).join(" — ")}</li>` : `<li>${line}</li>`;
   }).join("");
+  const capacity = seatCapacityStats(seat);
   return `
     <div class="orgchart-seat dept-${seat.dept||'ops'}" draggable="true"
       ondragstart="ocDragStart(event,'${rowId}','${seat.id}')"
@@ -10018,6 +10048,14 @@ function renderOrgChartSeat(rowId, seat){
         <div class="oc-title">${seat.title||''}${tagHtml}</div>
         <div class="oc-name ${seat.tag==='leaving'?'leaving':''}">${orgChartSeatDisplayName(seat)}</div>
       </div>
+      ${capacity ? `
+      <div class="oc-body">
+        <div class="small" style="font-weight:600;">Capacity — avg, last 4 wks</div>
+        <div class="small">${capacity.totalWeek.toFixed(1)} hrs/wk &middot; ${capacity.totalPeriod.toFixed(1)} hrs/pay period &middot; ${capacity.totalMonth.toFixed(1)} hrs/mo</div>
+        <ul class="oc-resp">
+          ${capacity.perClient.map(c=>`<li><b>${escHtml(c.clientName)}</b> — ${c.avgWeek.toFixed(1)} hrs/wk avg</li>`).join("")}
+        </ul>
+      </div>` : ""}
       ${respHtml || seat.flag ? `
       <div class="oc-body">
         ${respHtml ? `<ul class="oc-resp">${respHtml}</ul>` : ""}
@@ -10061,8 +10099,29 @@ function renderOrgChartSeatModal(rowId, seat){
           </select>
         </div>
       </div>
-      <div><label class="small">Clients / responsibilities (one per line — "Name — detail" bolds the name)</label>
-        <textarea id="ocm_resp" rows="4" style="width:100%;" oninput="state.modal.seat.resp=this.value.split('\\n').map(s=>s.trim()).filter(Boolean)">${(seat.resp||[]).join("\n")}</textarea>
+      <div>
+        <label class="small">Clients assigned (drives the real capacity numbers below — only works once a real assistant is linked above)</label>
+        <input id="ocm_client_search" placeholder="Search clients..." oninput="state.modal.clientSearch=this.value.toLowerCase();render();" value="${escHtml(state.modal.clientSearch||'')}" style="margin-bottom:6px;">
+        <div style="max-height:160px;overflow-y:auto;border:1px solid var(--cream-dark);border-radius:6px;padding:6px;">
+          ${(()=>{
+            const q = state.modal.clientSearch||"";
+            const options = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus||c.clientStatus==="active") && (!q || c.name.toLowerCase().includes(q))).sort((a,b)=>a.name.localeCompare(b.name));
+            if(!options.length) return `<div class="small">No matching active clients.</div>`;
+            return options.map(c=>`
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;padding:3px 0;">
+                <input type="checkbox" ${(seat.clientIds||[]).includes(c.id)?'checked':''} onchange="toggleOrgChartSeatClient('${c.id}',this.checked)">
+                ${escHtml(c.name)}
+              </label>`).join("");
+          })()}
+        </div>
+        ${(()=>{
+          const capacity = seatCapacityStats(seat);
+          if(!capacity) return `<div class="small" style="margin-top:6px;">${!seat.assistantId ? "Link a real assistant above to calculate capacity." : "Pick at least one client to calculate capacity."}</div>`;
+          return `<div class="small" style="margin-top:6px;"><strong>${capacity.totalWeek.toFixed(1)} hrs/wk</strong> avg &middot; ${capacity.totalPeriod.toFixed(1)} hrs/pay period &middot; ${capacity.totalMonth.toFixed(1)} hrs/mo, based on their last 4 weeks clocked.</div>`;
+        })()}
+      </div>
+      <div style="margin-top:10px;"><label class="small">Other responsibilities — non-client (one per line — "Label — detail" bolds the label)</label>
+        <textarea id="ocm_resp" rows="3" style="width:100%;" oninput="state.modal.seat.resp=this.value.split('\\n').map(s=>s.trim()).filter(Boolean)">${(seat.resp||[]).join("\n")}</textarea>
       </div>
       <div style="margin-top:10px;"><label class="small">Note (shown in italics under the seat)</label>
         <textarea id="ocm_flag" rows="2" style="width:100%;" oninput="state.modal.seat.flag=this.value">${seat.flag||''}</textarea>
