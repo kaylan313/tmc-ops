@@ -3454,7 +3454,7 @@ function renderAdminDashboard(){
   const awaitingClientForOps = tasksAwaitingClientResponse().filter(({task})=>!opsExcludedIds.has(task.clientId));
   const pausedForOps = pausedTasks().filter(({task})=>!opsExcludedIds.has(task.clientId));
 
-  const assistantRows = state.settings.assistants.map(a=>{
+  const assistantRows = state.settings.assistants.filter(a=>!a.archived).map(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
     return { assistant:a, hrs: hoursInPeriod(entries, period), active: activeEntryFor(a.id) };
   }).filter(r=>r.assistant.active!==false || r.hrs>0)
@@ -9565,7 +9565,8 @@ const NEW_HIRE_ONBOARDING = [
 ];
 function renderTeamAdmin(){
   const active = state.settings.assistants.filter(a=>a.active!==false);
-  const former = state.settings.assistants.filter(a=>a.active===false);
+  const former = state.settings.assistants.filter(a=>a.active===false && !a.archived);
+  const archived = state.settings.assistants.filter(a=>a.archived);
   const byMarket = {};
   MARKETS.forEach(m=>byMarket[m]=[]);
   active.forEach(a=>{ const m = a.market||"Lafayette"; (byMarket[m]=byMarket[m]||[]).push(a); });
@@ -9587,10 +9588,29 @@ function renderTeamAdmin(){
       ${former.map(a=>`
         <div class="list-item">
           <div>${a.name}</div>
-          <button class="secondary" onclick="reactivateEmployee('${a.id}')">Reactivate</button>
+          <div style="display:flex;gap:6px;">
+            <button class="secondary" onclick="reactivateEmployee('${a.id}')">Reactivate</button>
+            <button class="secondary" onclick="archiveEmployee('${a.id}')" title="Once fully paid out — hides them everywhere in the app (dashboard, pickers, dropdowns). Their old hours/tasks/comments still show their real name; this just stops them cluttering every current list.">Archive</button>
+          </div>
         </div>
       `).join("")}
-      <div class="small" style="margin-top:6px;">Their past tasks and time entries stay on record; they just can't log in or be assigned new work.</div>
+      <div class="small" style="margin-top:6px;">Their past tasks and time entries stay on record; they just can't log in or be assigned new work. Once they're fully paid out, Archive removes them from the dashboard and every picker entirely.</div>
+      ` : ""}
+    </div>` : ""}
+    ${archived.length ? `
+    <div class="card">
+      <div class="flex-between" style="cursor:pointer;" onclick="state.showArchivedEmployees=!state.showArchivedEmployees;render();">
+        <h3 style="margin:0;">Archived (${archived.length})</h3>
+        <span class="small">${state.showArchivedEmployees ? "Hide ▲" : "Show ▼"}</span>
+      </div>
+      ${state.showArchivedEmployees ? `
+      ${archived.map(a=>`
+        <div class="list-item">
+          <div>${a.name}</div>
+          <button class="secondary" onclick="unarchiveEmployee('${a.id}')">Unarchive</button>
+        </div>
+      `).join("")}
+      <div class="small" style="margin-top:6px;">Fully closed out and hidden everywhere — this section is just here in case one needs to come back.</div>
       ` : ""}
     </div>` : ""}
     <div class="card">
@@ -9795,6 +9815,46 @@ function removeEmployee(id){
   setAssistantActive(id, false);
 }
 function reactivateEmployee(id){ setAssistantActive(id, true); }
+// Archiving is deliberately NOT deletion — an assistant's old time entries,
+// task comments, and card purchases only ever store their assistantId, not
+// a copy of their name, so actually removing the record would permanently
+// break name lookup on all of that history (exactly the Oct 2026 settings
+// wipe, just done on purpose this time). Archiving keeps the record intact
+// — history keeps resolving their real name forever — it only hides them
+// from every CURRENT list/picker/dropdown/dashboard view, via the same
+// active!==false filters already used everywhere (archived implies
+// active:false, so no other code needs to change).
+function archiveEmployee(id){
+  const a = state.settings.assistants.find(x=>x.id===id);
+  if(!a) return;
+  // Best-effort "are they actually paid out" check — flags any payroll
+  // period they have hours or build-cut pay in that hasn't been marked
+  // paid on the Payroll tab yet. Not a hard block (a period can be paid
+  // some other way without ever getting marked here), just an informed
+  // warning before archiving someone who might still be owed money.
+  const periodKeys = new Set();
+  state.timeEntries.filter(e=>e.assistantId===id).forEach(e=>{
+    periodKeys.add(currentPayrollPeriod(new Date(e.clockIn)).end.toISOString());
+  });
+  state.clients.forEach(client=>{
+    (client.addOns||[]).forEach(addOn=>{
+      if(addOn.buildAssistantId!==id) return;
+      (addOn.payments||[]).forEach(p=>{
+        if(p.paid && p.paidDate) periodKeys.add(currentPayrollPeriod(new Date(p.paidDate)).end.toISOString());
+      });
+    });
+  });
+  const paidSet = new Set(state.settings.paidPayrollPeriods||[]);
+  const unpaidCount = [...periodKeys].filter(k=>!paidSet.has(k)).length;
+  const warning = unpaidCount ? `Heads up — ${a.name} has ${unpaidCount} payroll period(s) with hours or build pay not yet marked paid on the Payroll tab. ` : "";
+  if(!confirm(`${warning}Archive ${a.name}? This hides them from the dashboard and every picker/dropdown going forward. Their real name still shows on all their past hours, tasks, and comments — nothing is deleted.`)) return;
+  state.settings.assistants = state.settings.assistants.map(x=>x.id===id?{...x, archived:true}:x);
+  upsert("settings","access", { assistants: state.settings.assistants });
+}
+function unarchiveEmployee(id){
+  state.settings.assistants = state.settings.assistants.map(x=>x.id===id?{...x, archived:false}:x);
+  upsert("settings","access", { assistants: state.settings.assistants });
+}
 function toggleOnboardingItem(assistantId, itemId){
   state.settings.assistants = state.settings.assistants.map(a=>{
     if(a.id!==assistantId) return a;
