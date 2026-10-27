@@ -8270,6 +8270,18 @@ function markReferralPayoutPaid(clientId){
   if(!client) return;
   upsert("clients", clientId, { referralPayoutsPaidCount: (client.referralPayoutsPaidCount||0) + 1 });
 }
+// Removes a referral from "Referral payouts owed" without pretending it was
+// actually paid (markReferralPayoutPaid increments a paid count that implies
+// real money went out — this doesn't). For when the referring employee or
+// the referred client is gone and the balance just isn't getting paid out.
+// Doesn't touch referredBy itself, so the referral still shows correctly on
+// the client's own profile — this only clears it from the admin owed list.
+function writeOffReferralPayout(clientId){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  if(!confirm(`Write off the referral payout owed for ${client.name}? This removes it from the owed list without marking it paid.`)) return;
+  upsert("clients", clientId, { referralPayoutWrittenOff: true });
+}
 
 // --- Bulk client reassignment ---
 // Moves a client's OPEN tasks to a new assistant roster in one shot; never
@@ -8993,7 +9005,7 @@ function renderPayrollTool(){
       <h3>Referral payouts owed</h3>
       <div class="small" style="margin-bottom:8px;">$100/month to the referring assistant, up to 12 months, starting once the client signs on past their 30-day pilot — stops early if the client cancels.</div>
       ${(()=>{
-        const referred = realClients.filter(c=>c.referredBy).map(c=>({ client:c, status: referralPayoutStatus(c) })).filter(x=>x.status && x.status.eligible && x.status.owed>0);
+        const referred = realClients.filter(c=>c.referredBy && !c.referralPayoutWrittenOff).map(c=>({ client:c, status: referralPayoutStatus(c) })).filter(x=>x.status && x.status.eligible && x.status.owed>0);
         if(referred.length===0) return `<div class="small">Nothing owed right now.</div>`;
         return `<div class="table-scroll"><table class="data-table">
           <thead><tr><th>Client</th><th>Referred by</th><th>Progress</th><th>Owed now</th><th></th></tr></thead>
@@ -9004,7 +9016,10 @@ function renderPayrollTool(){
                 <td>${status.assistant.name}</td>
                 <td>${status.paid}/${status.monthsElapsed} of 12 paid${status.stoppedEarly?' (cancelled)':''}</td>
                 <td>$${(status.owed*status.monthlyAmount).toFixed(2)}</td>
-                <td><button class="secondary" onclick="markReferralPayoutPaid('${c.id}')">Mark $${status.monthlyAmount} paid</button></td>
+                <td style="display:flex;gap:6px;">
+                  <button class="secondary" onclick="markReferralPayoutPaid('${c.id}')">Mark $${status.monthlyAmount} paid</button>
+                  <button class="secondary" onclick="writeOffReferralPayout('${c.id}')" title="Remove from this list without marking it paid — e.g. the referring employee or client is gone and it's not getting paid out">Write off</button>
+                </td>
               </tr>`).join("")}
           </tbody>
         </table></div>`;
