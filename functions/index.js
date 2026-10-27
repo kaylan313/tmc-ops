@@ -28,7 +28,7 @@
  * That service account's email needs Editor access on both Drive folders
  * (see README notes in the project root for the exact setup steps).
  */
-const { onDocumentUpdated, onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentUpdated, onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
@@ -156,13 +156,23 @@ exports.fileClientContractToDrive = onDocumentUpdated("clients/{clientId}", asyn
   console.log(`fileClientContractToDrive: signature notification for ${after.name} -> heidi@themodernconcierge.co -> ${sent ? "sent" : "not sent"}`);
 });
 
+// Files BOTH the signed Agreement and the signed Handbook acknowledgment --
+// same find-or-create-per-person-folder + upload-as-Doc + clear pattern,
+// just two independent fields (agreementHtml / handbookHtml) watched the
+// same way. Added handbookHtml here instead of a second near-duplicate
+// function since it's the exact same trigger path (settings/access
+// updates) and the exact same per-employee folder each document lands in.
 exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", async (event) => {
   const before = event.data.before.data() || {};
   const after = event.data.after.data() || {};
   const beforeById = new Map((before.assistants || []).map((a) => [a.id, a]));
+  const DOCS = [
+    { field: "agreementHtml", clearedField: "agreementHtml", urlField: "driveAgreementUrl", dateField: "agreementSignedAt", label: "Signed Agreement" },
+    { field: "handbookHtml", clearedField: "handbookHtml", urlField: "driveHandbookUrl", dateField: "handbookSignedAt", label: "Signed Handbook" },
+  ];
   const toFile = (after.assistants || []).filter((a) => {
     const prev = beforeById.get(a.id);
-    return a.agreementHtml && (!prev || prev.agreementHtml !== a.agreementHtml);
+    return DOCS.some((d) => a[d.field] && (!prev || prev[d.field] !== a[d.field]));
   });
   if (!toFile.length) return;
 
@@ -170,23 +180,87 @@ exports.fileEmployeeAgreementToDrive = onDocumentUpdated("settings/access", asyn
     const drive = await getDrive();
     const updatedAssistants = await Promise.all(
       (after.assistants || []).map(async (a) => {
-        const match = toFile.find((x) => x.id === a.id);
-        if (!match) return a;
-        const folderId = await findOrCreateFolder(drive, EMPLOYEES_FOLDER_ID.value(), a.name || "Unnamed employee");
-        const dateStr = a.agreementSignedAt ? a.agreementSignedAt.slice(0, 10) : new Date().toISOString().slice(0, 10);
-        const file = await uploadHtmlAsDoc(
-          drive,
-          folderId,
-          `${a.name || "Employee"} — Signed Agreement — ${dateStr}`,
-          a.agreementHtml
-        );
-        console.log(`Filed agreement for ${a.name} to Drive: ${file.webViewLink}`);
-        return { ...a, agreementHtml: null, driveAgreementUrl: file.webViewLink };
+        if (!toFile.find((x) => x.id === a.id)) return a;
+        let patched = a;
+        for (const d of DOCS) {
+          const prev = beforeById.get(a.id);
+          if (!patched[d.field] || (prev && prev[d.field] === patched[d.field])) continue;
+          const folderId = await findOrCreateFolder(drive, EMPLOYEES_FOLDER_ID.value(), patched.name || "Unnamed employee");
+          const dateStr = patched[d.dateField] ? patched[d.dateField].slice(0, 10) : new Date().toISOString().slice(0, 10);
+          const file = await uploadHtmlAsDoc(drive, folderId, `${patched.name || "Employee"} — ${d.label} — ${dateStr}`, patched[d.field]);
+          console.log(`Filed ${d.label} for ${patched.name} to Drive: ${file.webViewLink}`);
+          patched = { ...patched, [d.clearedField]: null, [d.urlField]: file.webViewLink };
+        }
+        return patched;
       })
     );
     await event.data.after.ref.update({ assistants: updatedAssistants });
   } catch (err) {
-    console.error("Drive upload failed for employee agreements:", err);
+    console.error("Drive upload failed for employee agreement/handbook:", err);
+  }
+});
+
+// A new hire's ID photo (login gate) or W9 scan (30-day nag, Onboarding
+// tab) -- written by the client into employeeUploads/{assistantId}, a
+// collection no client can ever read back (see firestore.rules). Files
+// each present field to Drive under the same per-person folder the
+// agreement/handbook use, deletes that field from Firestore the moment
+// it's safely in Drive, and marks the corresponding status flag on
+// settings/access (idUploaded / w9Uploaded) -- purely informational, since
+// the actual login-gate/nag logic in index.html already cleared on
+// idUploadSubmittedAt / w9UploadSubmittedAt (set synchronously client-side
+// at submission, so the UI never races this function's own processing time).
+async function uploadRawFileToDrive(drive, folderId, filename, mimeType, dataUrl) {
+  const base64 = dataUrl.split(",")[1] || dataUrl;
+  const buffer = Buffer.from(base64, "base64");
+  const { Readable } = require("stream");
+  const res = await drive.files.create({
+    requestBody: { name: filename, parents: [folderId] },
+    media: { mimeType, body: Readable.from(buffer) },
+    fields: "id, webViewLink",
+  });
+  return res.data;
+}
+exports.processEmployeeUpload = onDocumentWritten("employeeUploads/{assistantId}", async (event) => {
+  const after = event.data.after.exists ? event.data.after.data() : null;
+  if (!after) return;
+  const assistantId = event.params.assistantId;
+  const settingsRef = admin.firestore().collection("settings").doc("access");
+  const settingsSnap = await settingsRef.get();
+  if (!settingsSnap.exists) return;
+  const assistants = settingsSnap.data().assistants || [];
+  const assistant = assistants.find((a) => a.id === assistantId);
+  if (!assistant) return;
+
+  const UPLOADS = [
+    { field: "idUpload", statusField: "idUploaded", urlField: "idDriveUrl", label: "ID" },
+    { field: "w9Upload", statusField: "w9Uploaded", urlField: "w9DriveUrl", label: "W9" },
+  ];
+  const pending = UPLOADS.filter((u) => after[u.field] && after[u.field].dataUrl);
+  if (!pending.length) return;
+
+  try {
+    const drive = await getDrive();
+    const folderId = await findOrCreateFolder(drive, EMPLOYEES_FOLDER_ID.value(), assistant.name || "Unnamed employee");
+    const clearUpdate = {};
+    const assistantPatch = {};
+    for (const u of pending) {
+      const upload = after[u.field];
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const ext = (upload.name && upload.name.includes(".")) ? upload.name.split(".").pop() : (upload.type || "").includes("pdf") ? "pdf" : "jpg";
+      const file = await uploadRawFileToDrive(drive, folderId, `${assistant.name || "Employee"} — ${u.label} — ${dateStr}.${ext}`, upload.type || "application/octet-stream", upload.dataUrl);
+      console.log(`Filed ${u.label} for ${assistant.name} to Drive: ${file.webViewLink}`);
+      clearUpdate[u.field] = admin.firestore.FieldValue.delete();
+      assistantPatch[u.statusField] = true;
+      assistantPatch[u.urlField] = file.webViewLink;
+    }
+    const updatedAssistants = assistants.map((a) => (a.id === assistantId ? { ...a, ...assistantPatch } : a));
+    await Promise.all([
+      settingsRef.update({ assistants: updatedAssistants }),
+      event.data.after.ref.update(clearUpdate),
+    ]);
+  } catch (err) {
+    console.error(`Drive upload failed for employee upload (${assistantId}):`, err);
   }
 });
 
