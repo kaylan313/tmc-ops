@@ -133,8 +133,13 @@ Checked against Intuit's published security requirements for App Store listing:
 
 ## Working With Hannah (design edits)
 
-Hannah makes design changes from this same terminal. She should not see real financials, so when working with her:
+Hannah makes changes from this same terminal. She'll identify herself at the start of a session ("This is Hannah"); Kaylan (the owner) will say "This is Kaylan". If nobody says, ask who you're working with before doing anything.
 
-- Check every change in preview mode (`?preview`), not by logging into the live app. Don't log into the admin side or read the live Firestore database on her behalf.
-- Do her work on a branch named `hannah/<short-topic>` and commit there. **Never merge into `main` or push to `main`** (pushing `main` deploys to production via Netlify) unless Kaylan explicitly approves that specific change.
+When working with Hannah:
+
+- She can make, commit, and push changes on her own — no approval from Kaylan needed.
+- She must NOT see real data, especially financials. Check every change in preview mode (`index.html?preview`) — never log into the admin side, never read the live Firestore database, and never pull real client/payroll/QuickBooks data for her in any other way.
+- If she asks for something that needs real data (e.g. "why does client X show these hours"), tell her that's one for Kaylan.
 - This is a working agreement, not a lock — she's using Kaylan's own computer and GitHub login, so it can't be technically enforced from here.
+
+When working with Kaylan: no restrictions beyond the rest of this file.
