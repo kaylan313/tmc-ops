@@ -273,7 +273,16 @@ const REPORT_VIEWER_URL = "https://modern-co-dashboard.web.app/report.html";
 let db = null;
 let fns = null;
 let FIREBASE_AVAILABLE = false;
+// Design preview: open the app with ?preview (e.g. index.html?preview) to
+// click through every role and tab on FAKE data with no login. Firebase is
+// never initialized in this mode, so no real client/financial data is ever
+// loaded and nothing is saved anywhere — writes only touch in-memory state
+// and vanish on reload. Built so someone making design edits can check
+// their work without the admin passcode. See seedPreviewData() and
+// renderPreviewBar().
+const PREVIEW_MODE = /[?&]preview(=|&|$)/.test(location.search);
 try{
+  if(PREVIEW_MODE) throw new Error("Preview mode — Firebase intentionally not initialized.");
   if(typeof firebase === "undefined") throw new Error("Firebase SDK did not load (blocked script or no network).");
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
@@ -527,6 +536,13 @@ function subscribe(name, onChange, attempt){
 // e.g. a freshly-created client could never be found. Mirror the write into
 // the matching in-memory array so local/demo mode is actually usable —
 // it still won't survive a page reload until real Firebase config is in place.
+// Set while render() is building the page. Some tabs save as they draw
+// (e.g. the Scorecard's weekly snapshot); with Firebase that write never
+// re-renders synchronously, but the local-only path below calls render()
+// directly — which re-drew the Scorecard, which saved again, forever
+// (stack overflow). A write made mid-render is already reflected in the
+// page being built, so the local path just skips the extra render then.
+let _rendering = false;
 function upsertLocal(name, id, data){
   const arr = state[name];
   if(!Array.isArray(arr)) return;
@@ -548,7 +564,7 @@ function upsert(name, id, data){
   if(!db){
     console.warn("Firebase not connected — saving locally only (won't survive a reload):", name, id, data);
     upsertLocal(name, id, data);
-    render();
+    if(!_rendering) render();
     return Promise.resolve(true);
   }
   return col(name).doc(id).set(data, { merge:true }).then(()=>true).catch(err=>{
@@ -561,7 +577,7 @@ function remove(name, id){
   if(!db){
     console.warn("Firebase not connected — deleting locally only:", name, id);
     removeLocal(name, id);
-    render();
+    if(!_rendering) render();
     return Promise.resolve();
   }
   return col(name).doc(id).delete().catch(err=>{
@@ -670,6 +686,102 @@ function seedDemoData(){
   return { clients:[client], tasks, timeEntries };
 }
 
+// Preview mode's fake world (see PREVIEW_MODE) — seedDemoData() plus enough
+// extra clients, vendors, leads, etc. that every tab has something on it,
+// and fake contact info/codes on the team. Every name, number, code and
+// dollar amount here is made up.
+function seedPreviewData(){
+  const base = seedDemoData();
+  const now = Date.now();
+  const hoursAgo = h => new Date(now - h*3600000).toISOString();
+  const daysFromNow = d => new Date(now + d*24*3600000).toISOString().slice(0,10);
+  const assistants = SEED_ASSISTANTS.map((a,i)=>({
+    ...a,
+    email: a.name.split(" ")[0].toLowerCase() + "@example.com",
+    phone: "555-010-" + String(1000+i).slice(1),
+    accessCode: "preview" + (i+1),
+    handbookSigned: true, idUploadSubmittedAt: hoursAgo(24*90), hasSeenAppGuide: true, payRateConfirmed: true
+  }));
+  const settings = { ...SEED_SETTINGS, adminPasscode: "preview", assistants };
+  const c2 = { id:"client_preview_2", name:"Jordan Sample", packageHours:10, packagePrice:500, cycleType:"monthly",
+    renewalDate: new Date(now - 20*24*3600000).toISOString().slice(0,10), assistantIds:["asst_2"], email:"jordan@example.com",
+    portalCode:"preview-client2", termType:"pilot", clientStatus:"active", createdAt: hoursAgo(24*20), notes:[],
+    profile:{ serviceType:"home", phone:"555-222-3333", homeAddress:"789 Example St, Lafayette, LA", homeAccess:"Garage code 0000. Dog is friendly." } };
+  const c3 = { id:"client_preview_3", name:"Sample Business LLC", packageHours:30, packagePrice:1350, cycleType:"monthly",
+    renewalDate: new Date(now - 5*24*3600000).toISOString().slice(0,10), assistantIds:["asst_4","asst_5"], email:"ops@example.com",
+    portalCode:"preview-client3", termType:"12month", clientStatus:"active", createdAt: hoursAgo(24*200), notes:[],
+    profile:{ serviceType:"business", phone:"555-444-5555", officeAddress:"100 Fake Ave, Baton Rouge, LA" } };
+  const tasks = [...base.tasks,
+    { id:"task_preview_1", title:"Organize pantry", clientId:c2.id, status:"In progress", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Sort, label, and restock the pantry.", createdAt: hoursAgo(72) },
+    { id:"task_preview_2", title:"Book anniversary dinner", clientId:c2.id, status:"Done", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Reserved a table for two.", completedAt: hoursAgo(40) },
+    { id:"task_preview_3", title:"Monthly invoice cleanup", clientId:c3.id, status:"Researching", category:"Business", assignees:["asst_4"], subtasks:[{text:"Pull open invoices",done:true},{text:"Email follow-ups",done:false}], discussion:[], description:"Chase down unpaid invoices.", createdAt: hoursAgo(100) },
+    { id:"task_preview_4", title:"Inbox triage", clientId:c3.id, status:"To do", category:"Business", assignees:["asst_5"], subtasks:[], discussion:[], description:"", dueDate: daysFromNow(2) }
+  ];
+  const timeEntries = [...base.timeEntries,
+    { id:"te_preview_1", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(30), clockOut: hoursAgo(26) },
+    { id:"te_preview_2", taskId:"task_preview_2", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(42), clockOut: hoursAgo(37) },
+    { id:"te_preview_3", taskId:"task_preview_3", assistantId:"asst_4", clientId:c3.id, clockIn: hoursAgo(12), clockOut: hoursAgo(9) },
+    { id:"te_preview_4", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(1), clockOut: null }
+  ];
+  const vendors = [{ id:"vendor_preview_1", name:"Sam Handyman", profession:"Handyman", market:"Lafayette", phone:"555-777-8888", email:"sam@example.com",
+    rating:5, commissionPercent:10, portalAccessCode:"preview-vendor", earnings:[],
+    tickets:[
+      { id:"vticket_preview_1", clientId:base.clients[0].id, title:"Replace porch light", description:"Fixture is flickering.", accessInstructions:"Hidden key under the third flowerpot.",
+        requestedByAssistantId:"asst_3", requestedByName:"Heidi Jo Peaden", requestedAt: hoursAgo(50), scheduledAt:"", availableTimesNote:"",
+        vendorCost:null, vendorCostSubmittedAt:null, clientChargeAmount:null, clientChargeSetAt:null, clientCharged:false, clientChargedAt:null, vendorPaid:false, vendorPaidAt:null, receipts:[], discussion:[] },
+      { id:"vticket_preview_2", clientId:c2.id, title:"Mount TV", description:"", accessInstructions:"Garage code 0000.",
+        requestedByAssistantId:"asst_2", requestedByName:"Victoria Haas", requestedAt: hoursAgo(120), scheduledAt: hoursAgo(-24), availableTimesNote:"",
+        vendorCost:85, vendorCostSubmittedAt: hoursAgo(20), clientChargeAmount:120, clientChargeSetAt: hoursAgo(10), clientCharged:false, clientChargedAt:null, vendorPaid:false, vendorPaidAt:null, receipts:[], discussion:[{ id:"vcomment_preview_1", author:"Sam Handyman", text:"Bringing my own mount.", date: hoursAgo(19) }] }
+    ] }];
+  const leads = [
+    { id:"lead_preview_1", name:"Pat Prospect", email:"pat@example.com", phone:"555-123-0000", source:"Instagram", status:"New", nextFollowUpDate: daysFromNow(1), notes:"Interested in 10hr package.", createdDate: daysFromNow(-3) },
+    { id:"lead_preview_2", name:"Casey Curious", email:"casey@example.com", phone:"555-123-1111", source:"Word of Mouth", status:"Follow-up Needed", nextFollowUpDate: daysFromNow(-1), notes:"", createdDate: daysFromNow(-10) }
+  ];
+  const cardPurchases = [
+    { id:"cardpx_preview_1", clientId:c2.id, assistantId:"asst_2", assistantName:"Victoria Haas", amount:42.17, store:"Grocery Store", description:"Pantry restock", receiptPhotoDataUrl:"", submittedAt: hoursAgo(28), reviewed:false }
+  ];
+  return { settings, clients:[...base.clients, c2, c3], tasks, timeEntries, vendors, leads, cardPurchases, supportTickets:[] };
+}
+// Floating bar shown on every screen in preview mode — makes it obvious the
+// data is fake and lets the viewer jump between roles without codes.
+const PREVIEW_ROLES = [
+  ["admin","Admin"], ["team","Assistant"], ["newHire","New hire"], ["client","Client"], ["vendor","Vendor"]
+];
+function previewRoleKey(){
+  if(state.view==="login") return "login";
+  if(state.role==="team" && state.currentAssistant && state.currentAssistant.id==="asst_preview_newhire") return "newHire";
+  return state.role;
+}
+function switchPreviewRole(key){
+  state.modal = null; state.selectedClientId = null; state.currentAssistant = null; state.currentClientId = null; state.currentVendorId = null;
+  state.view = "app";
+  if(key==="admin"){ state.role = "admin"; state.activeTab = "dashboard"; }
+  else if(key==="team"){ state.role = "team"; state.currentAssistant = state.settings.assistants.find(a=>a.id==="asst_3"); state.activeTab = "dashboard"; }
+  else if(key==="newHire"){
+    // A brand-new hire who hasn't done any onboarding steps yet, so the
+    // onboarding gate screens can be previewed too.
+    let hire = state.settings.assistants.find(a=>a.id==="asst_preview_newhire");
+    if(!hire){
+      hire = { id:"asst_preview_newhire", name:"Nova Newhire", email:"nova@example.com", phone:"555-010-9999", accessCode:"preview-new", active:true,
+        hourlyRate:22, payType:"hourly", hireDate: new Date().toISOString().slice(0,10), market:"Lafayette", agreementSigned:false, payRateConfirmed:true };
+      state.settings.assistants = [...state.settings.assistants, hire];
+    }
+    state.role = "team"; state.currentAssistant = hire; state.activeTab = "dashboard";
+    state.modal = nextOnboardingGateFor(hire);
+  }
+  else if(key==="client"){ state.role = "client"; state.currentClientId = state.clients[0].id; state.activeTab = "portal"; state.clientRequestDraft = { title:"", details:"", category:"Home" }; }
+  else if(key==="vendor"){ state.role = "vendor"; state.currentVendorId = state.vendors[0].id; }
+  else { state.view = "login"; state.role = null; }
+  render();
+}
+function renderPreviewBar(){
+  const current = previewRoleKey();
+  return `<div id="preview-bar" style="position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:10000;background:#241a17;color:#f6efe6;border:2px solid #c9a3a0;border-radius:22px;padding:6px 10px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;font:12px 'Jost',Arial,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.3);max-width:calc(100vw - 32px);">
+    <strong style="letter-spacing:1px;">PREVIEW · fake data · nothing saves</strong>
+    ${[...PREVIEW_ROLES, ["login","Login screen"]].map(([k,label])=>`<button onclick="switchPreviewRole('${k}')" style="padding:3px 10px;border-radius:14px;font-size:12px;${current===k?'background:#c9a3a0;color:#241a17;':'background:transparent;color:#f6efe6;border:1px solid rgba(246,239,230,.4);'}">${label}</button>`).join("")}
+  </div>`;
+}
+
 async function boot(){
   // Render immediately so the UI is never blank while Firestore connects
   // (or fails to, if firebaseConfig hasn't been filled in yet, or the SDK
@@ -682,7 +794,12 @@ async function boot(){
   // would otherwise trigger a re-render while still waiting on first data.
   setTimeout(()=>{ if(!state.modal && state.view==="login") render(); }, 12000);
 
-  if(!FIREBASE_AVAILABLE || !FIREBASE_CONFIGURED){
+  if(PREVIEW_MODE){
+    const p = seedPreviewData();
+    Object.assign(state, { settings:p.settings, clients:p.clients, tasks:p.tasks, timeEntries:p.timeEntries, vendors:p.vendors,
+      leads:p.leads, cardPurchases:p.cardPurchases, supportTickets:p.supportTickets, settingsReady:true, clientsReady:true, vendorsReady:true });
+    switchPreviewRole("admin");
+  } else if(!FIREBASE_AVAILABLE || !FIREBASE_CONFIGURED){
     console.warn("Running with local seed data only — Firebase is either unavailable or still using placeholder config. Nothing will persist.");
     if(state.clients.length===0){
       const demo = seedDemoData();
@@ -3005,10 +3122,14 @@ function render(){
   const prevScrollEl = document.querySelector(".main");
   const prevScrollTop = prevScrollEl ? prevScrollEl.scrollTop : 0;
 
-  if(state.view === "login") renderLogin();
-  else if(state.role === "client") renderClientPortal();
-  else if(state.role === "vendor") renderVendorPortal();
-  else renderAppShell();
+  _rendering = true;
+  try{
+    if(state.view === "login") renderLogin();
+    else if(state.role === "client") renderClientPortal();
+    else if(state.role === "vendor") renderVendorPortal();
+    else renderAppShell();
+  } finally { _rendering = false; }
+  if(PREVIEW_MODE) app.insertAdjacentHTML("beforeend", renderPreviewBar());
 
   if(preserved && preserved.id){
     const el = document.getElementById(preserved.id);

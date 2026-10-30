@@ -123,3 +123,18 @@ Checked against Intuit's published security requirements for App Store listing:
 - Test changes by opening `index.html` directly in a real desktop browser (not an in-app preview pane, which may sandbox scripts) after each edit.
 - Commit after each working change (`git add -A && git commit -m "..."`) so there's always a rollback point.
 - Firebase writes (`upsert`/`remove`) fail silently with a console warning if Firebase isn't connected — check the browser console if changes don't seem to save.
+
+## Design Preview Mode (`?preview`)
+
+- Open `index.html?preview` (locally: `file:///C:/Users/suppo/tmc-ops/index.html?preview`) to see the whole app on **fake data** with no login. Firebase is never initialized in this mode, so no real client, payroll, or QuickBooks data loads, and nothing saves — edits live in memory until the page reloads.
+- A floating bar at the bottom switches between Admin, Assistant, New hire (shows the onboarding gate screens), Client, Vendor, and the Login screen.
+- Fake data comes from `seedPreviewData()` (built on `seedDemoData()`). If a new feature/tab looks empty in preview, add fake records for it there — never copy real data in.
+- Server-only features (QuickBooks/Gmail connect, file uploads to Firebase, direct deposit) don't work in preview; report "View" falls back to downloading the HTML.
+
+## Working With Hannah (design edits)
+
+Hannah makes design changes from this same terminal. She should not see real financials, so when working with her:
+
+- Check every change in preview mode (`?preview`), not by logging into the live app. Don't log into the admin side or read the live Firestore database on her behalf.
+- Do her work on a branch named `hannah/<short-topic>` and commit there. **Never merge into `main` or push to `main`** (pushing `main` deploys to production via Netlify) unless Kaylan explicitly approves that specific change.
+- This is a working agreement, not a lock — she's using Kaylan's own computer and GitHub login, so it can't be technically enforced from here.
