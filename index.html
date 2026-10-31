@@ -736,7 +736,7 @@ function seedPreviewData(){
     { id:"task_preview_1", title:"Organize pantry", clientId:c2.id, status:"In progress", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Sort, label, and restock the pantry.", createdAt: hoursAgo(72) },
     { id:"task_preview_2", title:"Book anniversary dinner", clientId:c2.id, status:"Done", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Reserved a table for two.", completedAt: hoursAgo(40) },
     { id:"task_preview_3", title:"Monthly invoice cleanup", clientId:c3.id, status:"Researching", category:"Business", assignees:["asst_4"], subtasks:[{text:"Pull open invoices",done:true},{text:"Email follow-ups",done:false}], discussion:[], description:"Chase down unpaid invoices.", createdAt: hoursAgo(100) },
-    { id:"task_preview_4", title:"Inbox triage", clientId:c3.id, status:"To do", category:"Business", assignees:["asst_5"], subtasks:[], discussion:[], description:"", dueDate: daysFromNow(2) }
+    { id:"task_preview_4", title:"Inbox triage", clientId:c3.id, status:"To do", category:"Business", assignees:["asst_5"], subtasks:[], discussion:[], description:"", dueDate: daysFromNow(2), repeat:{ type:"weekly", days:[1,4] } }
   ];
   const timeEntries = [...base.timeEntries,
     { id:"te_preview_1", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(30), clockOut: hoursAgo(26) },
@@ -6365,6 +6365,7 @@ function renderTaskMiniList(tasks){
     return `<div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${t.id}')">
       <div>
         <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
+        ${t.repeat ? `<span class="badge" style="background:#8a7a72;" title="${repeatSummary(t.repeat)}">🔁</span>` : ''}
         ${t.title} <span class="small">(${client?client.name:'Internal'})</span>
       </div>
       <span class="small">${t.status} &middot; ${hoursForTask(t.id).toFixed(1)} hrs logged</span>
@@ -8988,6 +8989,7 @@ function renderKanbanCard(t){
         <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
         ${t.priority ? '<span class="badge" style="background:var(--danger);">⚑ Priority</span>' : ''}
         ${t.requestedByClient ? '<span class="badge" style="background:var(--rose-dark);">Client request</span>' : ''}
+        ${t.repeat ? `<span class="badge" style="background:#8a7a72;">🔁 ${repeatSummary(t.repeat)}</span>` : ''}
         <strong>${t.taskNumber ? `#${t.taskNumber} — ` : ''}${t.title}</strong>
         <div class="meta">${client?client.name:'Internal'} ${ (t.assignees||[]).length ? '· '+t.assignees.map(id=>{const a=state.settings.assistants.find(x=>x.id===id);return a?a.name:id;}).join(", ") : ''}</div>
         ${(t.subtasks||[]).length ? `<div class="meta">${(t.subtasks||[]).filter(s=>s.done).length}/${(t.subtasks||[]).length} subtasks</div>` : ""}
@@ -11842,7 +11844,10 @@ function openTaskEditor(taskId, defaultClientId){
     id: newId("task"), title:"", clientId: defaultClientId || INTERNAL_CLIENT_ID,
     status:"To do", category:"Business", assignees:[], subtasks:[], discussion:[], description:"", dueDate:""
   };
-  state.modal = { type:"taskEditor", task };
+  // state.modal.task is the SAME object as the one in state.tasks, so the
+  // status select changing it also changes "what's saved" as far as
+  // saveTask can tell — remember the status it opened with instead.
+  state.modal = { type:"taskEditor", task, originalStatus: taskId ? task.status : null };
   render();
 }
 // Lets whoever opens a task see exactly which clock-ins make up its total —
@@ -11937,10 +11942,11 @@ function renderTaskEditorModal(task){
             ${STATUSES.map(s=>`<option ${task.status===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
-        <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}" onchange="state.modal.task.dueDate=this.value"></div>
+        <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}" onchange="state.modal.task.dueDate=this.value;if(state.modal.task.repeat)render();"></div>
         <div><label class="small">Completed date${task.status==='Done'?'':' (only applies once status is Done)'}</label><input type="date" id="tf_completed" value="${task._completedDraft !== undefined ? task._completedDraft : (task.completedAt ? toLocalDateInputValue(task.completedAt) : '')}" onchange="state.modal.task._completedDraft=this.value"></div>
       </div>
       <div class="small" style="margin-top:2px;">Reports pull "completed this period" straight off this date — if a task was actually finished earlier and just had its status corrected today, set the real date here so it doesn't show up on a report it doesn't belong on.</div>
+      ${renderTaskRepeatEditor(task)}
       ${task.status==='Paused' ? `
       <div style="margin-top:8px;">
         <label class="small">Why is this paused? <span style="font-weight:400;">(shows on Tori's Dashboard so she can tell "on hold for a reason" apart from "stuck")</span></label>
@@ -12258,6 +12264,116 @@ function suggestClientFromTitle(title){
     return first && first.length>2 && t.includes(first.toLowerCase());
   }) || null;
 }
+// ---- Repeating tasks ----
+// task.repeat = { type:"weekly", days:[1,4] } | { type:"biweekly" }
+//   | { type:"monthly" } | { type:"dates", dates:["YYYY-MM-DD",...] }
+// When a repeating task is marked Done, saveTask creates the next copy with
+// the next due date (same title/client/assignees/checklist, unticked) —
+// a fresh task each time rather than rolling one task's due date forward,
+// so each occurrence keeps its own completedAt (reports) and its own time
+// entries. repeatNextTaskId on the finished one stops a reopen + re-Done
+// from creating a duplicate.
+const WEEKDAY_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function ymd(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+// Next occurrence strictly after fromYMD (the current due date, or today).
+function nextRepeatDate(repeat, fromYMD){
+  if(!repeat || !repeat.type) return null;
+  const from = parseYMD(fromYMD || ymd(new Date()));
+  if(repeat.type==="weekly"){
+    const days = (repeat.days||[]).length ? repeat.days : [from.getDay()];
+    for(let i=1;i<=7;i++){ const d = new Date(from.getFullYear(), from.getMonth(), from.getDate()+i); if(days.includes(d.getDay())) return ymd(d); }
+    return null;
+  }
+  if(repeat.type==="biweekly") return ymd(new Date(from.getFullYear(), from.getMonth(), from.getDate()+14));
+  if(repeat.type==="monthly"){
+    const day = from.getDate();
+    const lastDay = new Date(from.getFullYear(), from.getMonth()+2, 0).getDate();
+    return ymd(new Date(from.getFullYear(), from.getMonth()+1, Math.min(day, lastDay)));
+  }
+  if(repeat.type==="dates") return (repeat.dates||[]).filter(Boolean).sort().find(s=>s > ymd(from)) || null;
+  return null;
+}
+function repeatSummary(repeat){
+  if(!repeat || !repeat.type) return "";
+  if(repeat.type==="weekly") return "Every " + ((repeat.days||[]).length ? repeat.days.slice().sort().map(d=>WEEKDAY_SHORT[d]).join(", ") : "week");
+  if(repeat.type==="biweekly") return "Every other week";
+  if(repeat.type==="monthly") return "Monthly";
+  if(repeat.type==="dates") return "On " + (repeat.dates||[]).filter(Boolean).length + " set dates";
+  return "";
+}
+function setTaskRepeatType(type){
+  const t = state.modal.task;
+  t.dueDate = document.getElementById("tf_due").value || t.dueDate;
+  if(!type){ t.repeat = null; render(); return; }
+  const dueDay = t.dueDate ? parseYMD(t.dueDate).getDay() : new Date().getDay();
+  t.repeat = type==="weekly" ? { type, days:[dueDay] } : type==="dates" ? { type, dates: t.dueDate ? [t.dueDate] : [""] } : { type };
+  render();
+}
+function toggleTaskRepeatDay(day, on){
+  const r = state.modal.task.repeat;
+  const days = new Set(r.days||[]);
+  on ? days.add(day) : days.delete(day);
+  r.days = [...days].sort();
+  render();
+}
+function updateTaskRepeatDate(i, value){ state.modal.task.repeat.dates[i] = value; render(); }
+function addTaskRepeatDate(){ state.modal.task.repeat.dates.push(""); render(); }
+function removeTaskRepeatDate(i){ state.modal.task.repeat.dates.splice(i,1); render(); }
+function renderTaskRepeatEditor(task){
+  const r = task.repeat || null;
+  const type = r ? r.type : "";
+  const due = task.dueDate || "";
+  const next = r ? nextRepeatDate(r, due || null) : null;
+  return `
+    <div style="margin-top:8px;padding:8px 10px;border:1px solid var(--cream-dark);border-radius:8px;">
+      <div class="row" style="align-items:flex-end;">
+        <div><label class="small">🔁 Repeat</label>
+          <select id="tf_repeat_type" onchange="setTaskRepeatType(this.value)">
+            <option value="" ${!type?'selected':''}>Doesn't repeat</option>
+            <option value="weekly" ${type==='weekly'?'selected':''}>Weekly on…</option>
+            <option value="biweekly" ${type==='biweekly'?'selected':''}>Every other week</option>
+            <option value="monthly" ${type==='monthly'?'selected':''}>Monthly (same date)</option>
+            <option value="dates" ${type==='dates'?'selected':''}>On specific dates</option>
+          </select>
+        </div>
+      </div>
+      ${type==='weekly' ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+        ${[1,2,3,4,5,6,0].map(d=>`<label style="display:inline-flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" ${(r.days||[]).includes(d)?'checked':''} onchange="toggleTaskRepeatDay(${d},this.checked)"> ${WEEKDAY_SHORT[d]}</label>`).join("")}
+      </div>` : ""}
+      ${type==='dates' ? `
+      <div style="margin-top:6px;">
+        ${(r.dates||[]).map((d,i)=>`
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+            <input type="date" value="${d||''}" onchange="updateTaskRepeatDate(${i},this.value)" style="max-width:170px;">
+            ${(r.dates||[]).length>1 ? `<button class="secondary" style="padding:2px 8px;" onclick="removeTaskRepeatDate(${i})">✕</button>` : ""}
+          </div>`).join("")}
+        <button class="secondary" style="margin-top:6px;" onclick="addTaskRepeatDate()">+ Add date</button>
+      </div>` : ""}
+      ${type ? `<div class="small" style="margin-top:6px;">${(type==='biweekly'||type==='monthly') && !due ? 'Set a due date above — it repeats from that date. ' : ''}When this is marked <strong>Done</strong>, the next one is created automatically${next ? ` — due <strong>${parseYMD(next).toLocaleDateString()}</strong>` : type==='dates' ? ' — add a date after the current due date' : ''}.${task.repeatNextTaskId ? ' (Next one already created.)' : ''}</div>` : ""}
+    </div>`;
+}
+// Called from saveTask once a repeating task lands on Done for the first time.
+async function createNextRepeatTask(fromTask){
+  const dueDate = nextRepeatDate(fromTask.repeat, fromTask.dueDate || null);
+  if(!dueDate) return null;
+  const id = newId("task");
+  const taskNumber = await allocateTaskNumber();
+  upsert("tasks", id, {
+    title: fromTask.title, clientId: fromTask.clientId, category: fromTask.category,
+    status: "To do", description: fromTask.description||"", privateNotes: fromTask.privateNotes||"",
+    dueDate, priority: !!fromTask.priority,
+    goodForContent: !!fromTask.goodForContent, goodForContentNote: fromTask.goodForContentNote||"",
+    taskNumber, assignees: fromTask.assignees||[],
+    // Same people as last time — not a brand-new assignment to acknowledge.
+    assignmentAcks: (fromTask.assignees||[]).map(a=>({ assistantId:a, ackedAt:new Date().toISOString() })),
+    subtasks: (fromTask.subtasks||[]).map(s=>({ ...s, done:false })),
+    discussion: [], completedAt: null,
+    repeat: fromTask.repeat, repeatSeriesId: fromTask.repeatSeriesId || fromTask.id,
+    createdAt: new Date().toISOString()
+  });
+  return { id, dueDate };
+}
 async function saveTask(taskId){
   const task = state.modal.task;
   const assignees = task.assignees || [];
@@ -12268,6 +12384,10 @@ async function saveTask(taskId){
   // currently saved in Firestore — look that up separately wherever the
   // actual previous value matters (the Done-transition check right below).
   const existingTask = state.tasks.find(t=>t.id===taskId);
+  // existingTask.status can't be used for "what was it before" — the modal
+  // edits that same object live (see openTaskEditor), so it already reads
+  // the NEW status. Use the status captured when the editor opened.
+  const prevStatus = existingTask ? state.modal.originalStatus : null;
   // Stamp completedAt the moment a task lands on Done, and clear it if it's
   // reopened — the weekly client report needs to know WHEN a task finished,
   // not just that it's currently sitting in Done. A manually-set completed
@@ -12278,7 +12398,7 @@ async function saveTask(taskId){
   let completedAt = task.completedAt || null;
   if(newStatus === "Done"){
     if(completedField) completedAt = new Date(completedField + "T12:00:00").toISOString();
-    else if(!existingTask || existingTask.status !== "Done") completedAt = new Date().toISOString();
+    else if(prevStatus !== "Done") completedAt = new Date().toISOString();
   } else {
     completedAt = null;
   }
@@ -12291,7 +12411,7 @@ async function saveTask(taskId){
   let clientReviewResponse = task.clientReviewResponse || null;
   let clientReviewResponseNote = task.clientReviewResponseNote || "";
   let clientReviewRespondedAt = task.clientReviewRespondedAt || null;
-  if(newStatus === "Needs Client Review" && (!existingTask || existingTask.status !== "Needs Client Review")){
+  if(newStatus === "Needs Client Review" && prevStatus !== "Needs Client Review"){
     clientReviewRequestedAt = new Date().toISOString();
     clientReviewResponse = null;
     clientReviewResponseNote = "";
@@ -12346,12 +12466,30 @@ async function saveTask(taskId){
     pushToNextMonthAsked: !!task.pushToNextMonthAsked,
     pushToNextMonthAskedAt: task.pushToNextMonthAskedAt || null,
     pushToNextMonthResponse: task.pushToNextMonthResponse || null,
-    pushToNextMonthRespondedAt: task.pushToNextMonthRespondedAt || null
+    pushToNextMonthRespondedAt: task.pushToNextMonthRespondedAt || null,
+    repeat: task.repeat ? { ...task.repeat, ...(task.repeat.dates ? { dates: task.repeat.dates.filter(Boolean).sort() } : {}) } : null,
+    repeatSeriesId: task.repeatSeriesId || null,
+    repeatNextTaskId: task.repeatNextTaskId || null
   };
+  // A repeating task with no due date yet starts on its first upcoming
+  // occurrence (today counts), so it shows up in Week ahead / past-due.
+  if(payload.repeat && !payload.dueDate){
+    const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
+    payload.dueDate = (payload.repeat.type==="weekly" || payload.repeat.type==="dates") ? (nextRepeatDate(payload.repeat, ymd(yesterday)) || "") : ymd(new Date());
+  }
   if(payload.clientId === INTERNAL_CLIENT_ID){
     const suggested = suggestClientFromTitle(payload.title);
     if(suggested && !confirm(`This task's title mentions ${suggested.name}, but Client is set to "Internal / Modern Co." — any time clocked on it will count as admin hours instead of ${suggested.name}'s.\n\nSave it as Internal anyway?`)){
       return;
+    }
+  }
+  if(payload.repeat && newStatus==="Done" && prevStatus!=="Done" && !payload.repeatNextTaskId){
+    try {
+      const next = await createNextRepeatTask({ ...payload, id: taskId });
+      if(next) payload.repeatNextTaskId = next.id;
+    } catch(err){
+      console.warn("Creating the next repeat failed:", err);
+      alert("This task was saved, but the next repeat couldn't be created — " + err.message + "\n\nCreate it by hand for now, and tell Kaylan if it keeps happening.");
     }
   }
   upsert("tasks", taskId, payload);
