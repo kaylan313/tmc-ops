@@ -760,7 +760,8 @@ function seedPreviewData(){
   ];
   const supportTickets = [
     { id:"support_preview_1", kind:"bug", title:"Save button not working on client notes", description:"Clicked save twice, note didn't show up.", screenshot:null, authorId:"asst_2", authorName:"Victoria Haas", status:"Open", createdAt: hoursAgo(20), comments:[] },
-    { id:"support_preview_2", kind:"feature", title:"Add a filter for overdue tasks", description:"Would help on Mondays.", screenshot:null, authorId:"asst_3", authorName:settings.assistants.find(a=>a.id==="asst_3")?.name||"Assistant", status:"In Progress", createdAt: hoursAgo(50), comments:[] }
+    { id:"support_preview_2", kind:"feature", title:"Add a filter for overdue tasks", description:"Would help on Mondays.", screenshot:null, authorId:"asst_3", authorName:settings.assistants.find(a=>a.id==="asst_3")?.name||"Assistant", status:"In Progress", createdAt: hoursAgo(50), comments:[] },
+    { id:"support_preview_3", kind:"bug", title:"Timer kept running after clock out", description:"Fixed after refresh.", screenshot:null, authorId:"asst_2", authorName:"Victoria Haas", status:"Resolved", resolvedAt: hoursAgo(30), createdAt: hoursAgo(96), comments:[{ id:"comment_preview_1", authorName:"Admin", text:"Fixed — let me know if it happens again.", date: hoursAgo(30) }] }
   ];
   return { settings, clients:[...base.clients, c2, c3], tasks, timeEntries, vendors, leads, cardPurchases, supportTickets };
 }
@@ -5915,29 +5916,60 @@ function visibleSupportTickets(){
   const me = currentSupportAuthor().id;
   return all.filter(t=>t.authorId===me);
 }
+// Same layout as the Vendor Requests tab: an Open card plus a collapsible
+// Resolved card, each row with a same-width status pill, a progress bar
+// (Open → In Progress → Resolved) and a "Next:" line.
+function toggleSupportTicketsHistory(){ state.supportTicketsHistoryOpen = !state.supportTicketsHistoryOpen; render(); }
 function renderTechSupportTab(){
   const tickets = visibleSupportTickets();
-  const openCount = tickets.filter(t=>t.status!=="Resolved").length;
+  const openRows = tickets.filter(t=>t.status!=="Resolved");
+  const doneRows = tickets.filter(t=>t.status==="Resolved");
   return `
-    <div class="flex-between">
-      <h2>Tech Support</h2>
-      <button onclick="openNewSupportTicketModal()">+ New request</button>
-    </div>
-    <div class="small" style="margin-bottom:12px;">${state.role==="admin" || isDevDirector() ? "Every bug report and feature idea the team has submitted." : "Bugs, errors, or feature ideas — submit one any time, and check back here for updates."} ${openCount ? openCount + " still open." : "Nothing open right now."}</div>
+    <h2>Tech Support</h2>
+    <div class="small" style="margin-bottom:14px;">${state.role==="admin" || isDevDirector() ? "Every bug report and feature idea the team has submitted." : "Bugs, errors, or feature ideas — submit one any time, and check back here for updates."}</div>
     <div class="card">
-      ${tickets.length===0 ? `<div class="small">Nothing submitted yet.</div>` : tickets.map(renderSupportTicketRow).join("")}
-    </div>`;
+      <div class="flex-between">
+        <h3 style="margin:0;">Open requests <span class="small">(${openRows.length})</span></h3>
+        <button onclick="openNewSupportTicketModal()">+ New request</button>
+      </div>
+      ${openRows.length ? openRows.map(renderSupportTicketRow).join("") : `<div class="small">No open requests right now.</div>`}
+    </div>
+    ${doneRows.length ? `
+    <div class="card">
+      <div class="flex-between" style="cursor:pointer;" onclick="toggleSupportTicketsHistory()">
+        <h3 style="margin:0;">Resolved <span class="small">(${doneRows.length})</span></h3>
+        <span class="small">${state.supportTicketsHistoryOpen?'Hide ▲':'Show ▼'}</span>
+      </div>
+      ${state.supportTicketsHistoryOpen ? doneRows.map(renderSupportTicketRow).join("") : ""}
+    </div>` : ""}`;
+}
+function supportTicketNextStep(t){
+  const handles = state.role==="admin" || isDevDirector();
+  if(t.status==="Resolved") return `Resolved${t.resolvedAt ? ' '+new Date(t.resolvedAt).toLocaleDateString() : ''}`;
+  if(t.status==="In Progress") return handles ? "Next: finish the fix, then mark it Resolved" : "Next: being worked on — check back for updates";
+  return handles ? "Next: review it and move it to In Progress" : "Next: Tech Support reviews it";
 }
 function renderSupportTicketRow(t){
   const statusColor = t.status==="Resolved" ? "var(--ok)" : t.status==="In Progress" ? "var(--warn)" : "#8a7a72";
+  const step = Math.max(SUPPORT_TICKET_STATUSES.indexOf(t.status), 0) + 1;
+  const commentCount = (t.comments||[]).length;
   return `
-    <div class="list-item" style="cursor:pointer;" onclick="openSupportTicketDetail('${t.id}')">
-      <div>
-        <span class="badge">${t.kind==='feature'?'Feature idea':'Bug'}</span>
-        <strong>${escHtml(t.title)}</strong>
-        <div class="small">${t.authorName} &middot; ${new Date(t.createdAt).toLocaleDateString()}</div>
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;cursor:pointer;" onclick="openSupportTicketDetail('${t.id}')">
+      <div class="flex-between" style="align-items:flex-start;gap:10px;">
+        <div style="min-width:0;">
+          <span class="badge">${t.kind==='feature'?'Feature idea':'Bug'}</span>
+          <strong>${escHtml(t.title)}</strong>
+          <div class="small">${escHtml(t.authorName||'')} · ${new Date(t.createdAt).toLocaleDateString()}${commentCount ? ` · 💬 ${commentCount}` : ''}</div>
+        </div>
+        <span class="badge" style="background:${statusColor};min-width:110px;text-align:center;white-space:nowrap;margin:0;flex-shrink:0;">${t.status}</span>
       </div>
-      <span class="small" style="color:${statusColor};font-weight:600;">${t.status}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;gap:3px;flex:1;max-width:320px;" title="Step ${step} of ${SUPPORT_TICKET_STATUSES.length}: ${t.status}">
+          ${SUPPORT_TICKET_STATUSES.map((s,i)=>`<div style="flex:1;height:6px;border-radius:3px;background:${i<step?statusColor:'var(--cream-dark)'};"></div>`).join("")}
+        </div>
+        <span class="small" style="white-space:nowrap;">step ${step} of ${SUPPORT_TICKET_STATUSES.length}</span>
+      </div>
+      <div class="small">${supportTicketNextStep(t)}</div>
     </div>`;
 }
 function openSupportTicketDetail(id){
@@ -5945,7 +5977,7 @@ function openSupportTicketDetail(id){
   render();
 }
 function updateSupportTicketStatus(id, status){
-  upsert("supportTickets", id, { status });
+  upsert("supportTickets", id, { status, resolvedAt: status==="Resolved" ? new Date().toISOString() : null });
 }
 function addSupportTicketComment(id){
   const text = ((state.commentDrafts&&state.commentDrafts[id])||"").trim();
