@@ -710,7 +710,20 @@ function seedPreviewData(){
   const c3 = { id:"client_preview_3", name:"Sample Business LLC", packageHours:30, packagePrice:1350, cycleType:"monthly",
     renewalDate: new Date(now - 5*24*3600000).toISOString().slice(0,10), assistantIds:["asst_4","asst_5"], email:"ops@example.com",
     portalCode:"preview-client3", termType:"12month", clientStatus:"active", createdAt: hoursAgo(24*200), notes:[],
-    profile:{ serviceType:"business", phone:"555-444-5555", officeAddress:"100 Fake Ave, Baton Rouge, LA" } };
+    profile:{ serviceType:"business", phone:"555-444-5555", officeAddress:"100 Fake Ave, Baton Rouge, LA" },
+    // A fake assigned build so the Builds tab isn't empty in preview.
+    addOns:[{ id:"addon_preview_1", label:"Website Build", status:"Active", flatFee:3000, buildAssistantId:"asst_3", buildAssistantPercent:30,
+      buildStartDate: new Date(now - 10*24*3600000).toISOString().slice(0,10),
+      payments:[
+        { id:"pay_preview_1", label:"50% Deposit", amount:1500, paid:true, paidDate: new Date(now - 10*24*3600000).toISOString().slice(0,10) },
+        { id:"pay_preview_2", label:"25% Progress Payment", amount:750, paid:false, paidDate:"" },
+        { id:"pay_preview_3", label:"25% Final Payment", amount:750, paid:false, paidDate:"" }
+      ],
+      buildTodos:[
+        { id:"todo_preview_1", phase:"Setup", text:"Review intake details (brand, colors, fonts, logo, content)", dueDayOffset:3, done:true, doneAt: hoursAgo(24*7) },
+        { id:"todo_preview_2", phase:"Build", text:"Build out all pages/features", dueDayOffset:10, done:false, doneAt:"" },
+        { id:"todo_preview_3", phase:"Handoff", text:"Submit all deliverables, confirm launch-ready", dueDayOffset:28, done:false, doneAt:"" }
+      ] }] };
   const tasks = [...base.tasks,
     { id:"task_preview_1", title:"Organize pantry", clientId:c2.id, status:"In progress", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Sort, label, and restock the pantry.", createdAt: hoursAgo(72) },
     { id:"task_preview_2", title:"Book anniversary dinner", clientId:c2.id, status:"Done", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Reserved a table for two.", completedAt: hoursAgo(40) },
@@ -740,15 +753,20 @@ function seedPreviewData(){
   const cardPurchases = [
     { id:"cardpx_preview_1", clientId:c2.id, assistantId:"asst_2", assistantName:"Victoria Haas", amount:42.17, store:"Grocery Store", description:"Pantry restock", receiptPhotoDataUrl:"", submittedAt: hoursAgo(28), reviewed:false }
   ];
-  return { settings, clients:[...base.clients, c2, c3], tasks, timeEntries, vendors, leads, cardPurchases, supportTickets:[] };
+  const supportTickets = [
+    { id:"support_preview_1", kind:"bug", title:"Save button not working on client notes", description:"Clicked save twice, note didn't show up.", screenshot:null, authorId:"asst_2", authorName:"Victoria Haas", status:"Open", createdAt: hoursAgo(20), comments:[] },
+    { id:"support_preview_2", kind:"feature", title:"Add a filter for overdue tasks", description:"Would help on Mondays.", screenshot:null, authorId:"asst_3", authorName:settings.assistants.find(a=>a.id==="asst_3")?.name||"Assistant", status:"In Progress", createdAt: hoursAgo(50), comments:[] }
+  ];
+  return { settings, clients:[...base.clients, c2, c3], tasks, timeEntries, vendors, leads, cardPurchases, supportTickets };
 }
 // Floating bar shown on every screen in preview mode — makes it obvious the
 // data is fake and lets the viewer jump between roles without codes.
 const PREVIEW_ROLES = [
-  ["admin","Admin"], ["team","Assistant"], ["newHire","New hire"], ["client","Client"], ["vendor","Vendor"]
+  ["admin","Admin"], ["team","Assistant"], ["director","Dev Director"], ["newHire","New hire"], ["client","Client"], ["vendor","Vendor"]
 ];
 function previewRoleKey(){
   if(state.view==="login") return "login";
+  if(isDevDirector()) return "director";
   if(state.role==="team" && state.currentAssistant && state.currentAssistant.id==="asst_preview_newhire") return "newHire";
   return state.role;
 }
@@ -757,6 +775,7 @@ function switchPreviewRole(key){
   state.view = "app";
   if(key==="admin"){ state.role = "admin"; state.activeTab = "dashboard"; }
   else if(key==="team"){ state.role = "team"; state.currentAssistant = state.settings.assistants.find(a=>a.id==="asst_3"); state.activeTab = "dashboard"; }
+  else if(key==="director"){ state.role = "team"; state.currentAssistant = { ...state.settings.assistants.find(a=>a.id==="asst_3"), isDevDirector:true }; state.activeTab = "builds"; }
   else if(key==="newHire"){
     // A brand-new hire who hasn't done any onboarding steps yet, so the
     // onboarding gate screens can be previewed too.
@@ -3204,6 +3223,13 @@ function promptLogin(kind){
   else tryClientLogin(code.trim());
 }
 
+// Director of Software Development & Web Design — a team member (not admin)
+// who oversees every build and handles Tech Support, so they get the
+// company-wide Builds view (build finances included, per Kaylan) and every
+// team ticket. Nothing else admin-only opens up. Set via the Team tab.
+function isDevDirector(){
+  return state.role==="team" && !!(state.currentAssistant && state.currentAssistant.isDevDirector);
+}
 function renderAppShell(){
   const isContentCreator = state.role==="team" && state.currentAssistant && state.currentAssistant.isContentCreator;
   // Admin's own list grouped into sections — 17 same-level items in one flat
@@ -3220,7 +3246,7 @@ function renderAppShell(){
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["techSupport","Tech Support"]] }
       ]
     : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
-       ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : []), ["techSupport","Tech Support"]] }];
+       ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []), ["techSupport","Tech Support"]] }];
 
   app.innerHTML = `
     <div class="app-shell">
@@ -5854,7 +5880,7 @@ async function saveNewSupportTicket(){
 }
 function visibleSupportTickets(){
   const all = (state.supportTickets||[]).slice().sort((a,b)=> b.createdAt < a.createdAt ? -1 : 1);
-  if(state.role==="admin") return all;
+  if(state.role==="admin" || isDevDirector()) return all;
   const me = currentSupportAuthor().id;
   return all.filter(t=>t.authorId===me);
 }
@@ -5866,7 +5892,7 @@ function renderTechSupportTab(){
       <h2>Tech Support</h2>
       <button onclick="openNewSupportTicketModal()">+ New request</button>
     </div>
-    <div class="small" style="margin-bottom:12px;">${state.role==="admin" ? "Every bug report and feature idea the team has submitted." : "Bugs, errors, or feature ideas — submit one any time, and check back here for updates."} ${openCount ? openCount + " still open." : "Nothing open right now."}</div>
+    <div class="small" style="margin-bottom:12px;">${state.role==="admin" || isDevDirector() ? "Every bug report and feature idea the team has submitted." : "Bugs, errors, or feature ideas — submit one any time, and check back here for updates."} ${openCount ? openCount + " still open." : "Nothing open right now."}</div>
     <div class="card">
       ${tickets.length===0 ? `<div class="small">Nothing submitted yet.</div>` : tickets.map(renderSupportTicketRow).join("")}
     </div>`;
@@ -5913,7 +5939,7 @@ function renderSupportTicketDetailModal(id){
       <div class="small" style="margin-bottom:10px;">Submitted by ${t.authorName} on ${new Date(t.createdAt).toLocaleString()}</div>
       ${t.description ? `<p>${escHtml(t.description)}</p>` : ""}
       ${t.screenshot ? `<img src="${t.screenshot}" style="max-width:100%;max-height:280px;border-radius:8px;margin:8px 0;display:block;cursor:pointer;" onclick="openImageViewer('${t.screenshot}')">` : ""}
-      ${state.role==="admin" ? `
+      ${state.role==="admin" || isDevDirector() ? `
       <div style="margin-top:10px;"><label class="small">Status</label>
         <select onchange="updateSupportTicketStatus('${t.id}',this.value)">
           ${SUPPORT_TICKET_STATUSES.map(s=>`<option ${t.status===s?'selected':''}>${s}</option>`).join("")}
@@ -9209,14 +9235,17 @@ function allAssignedBuilds(){
   return allClientAddOns().filter(({addOn})=>!!addOn.buildAssistantId);
 }
 function renderBuildsTab(){
+  // seesAll = admin or the Dev Director: every build plus its finances.
+  // Only admin gets the jump into the client profile (Membership etc.).
   const isAdmin = state.role==="admin";
-  const builds = isAdmin ? allAssignedBuilds() : allAssignedBuilds().filter(({addOn})=>addOn.buildAssistantId===state.currentAssistant?.id);
+  const seesAll = isAdmin || isDevDirector();
+  const builds = seesAll ? allAssignedBuilds() : allAssignedBuilds().filter(({addOn})=>addOn.buildAssistantId===state.currentAssistant?.id);
   return `
     <h2>Builds</h2>
-    <div class="small" style="margin-bottom:14px;">${isAdmin
+    <div class="small" style="margin-bottom:14px;">${seesAll
       ? "Every flat-fee build assigned to an assistant, company-wide — financials live here and on each client's Software Build tab."
       : "Your assigned build(s) — check off to-dos as you complete them. This is separate from the Task Board since you're not clocking hourly for this work."}</div>
-    ${builds.length===0 ? `<div class="card"><div class="small">${isAdmin?'No assigned builds yet — add one from a client\'s Software Build tab.':'Nothing assigned to you right now.'}</div></div>` :
+    ${builds.length===0 ? `<div class="card"><div class="small">${seesAll?'No assigned builds yet — add one from a client\'s Software Build tab.':'Nothing assigned to you right now.'}</div></div>` :
       builds.map(({client,addOn})=>{
         const todos = addOn.buildTodos||[];
         const doneCount = todos.filter(t=>t.done).length;
@@ -9229,10 +9258,10 @@ function renderBuildsTab(){
             ${isAdmin ? `<button class="secondary" onclick="viewClientSoftwareBuild('${client.id}')">Open in client profile</button>` : ""}
           </div>
           <div class="small" style="margin-bottom:8px;">
-            ${isAdmin ? `${assistantName(addOn.buildAssistantId)} · ${addOn.buildAssistantPercent||0}% of $${(addOn.buildAssistantBasisAmount!=null?addOn.buildAssistantBasisAmount:(addOn.flatFee||0)).toFixed(0)} build cost · earned so far: $${paidCut.toFixed(2)} of $${totalCut.toFixed(2)} total` : `${todos.length?doneCount+' of '+todos.length+' to-dos complete':'No to-dos set yet — ask Kaylan to add the checklist.'}`}
+            ${seesAll ? `${assistantName(addOn.buildAssistantId)} · ${addOn.buildAssistantPercent||0}% of $${(addOn.buildAssistantBasisAmount!=null?addOn.buildAssistantBasisAmount:(addOn.flatFee||0)).toFixed(0)} build cost · earned so far: $${paidCut.toFixed(2)} of $${totalCut.toFixed(2)} total` : `${todos.length?doneCount+' of '+todos.length+' to-dos complete':'No to-dos set yet — ask Kaylan to add the checklist.'}`}
             ${addOn.buildStartDate ? ` · Day 1 was ${parseYMD(addOn.buildStartDate).toLocaleDateString()}` : ` · Day 1 (deposit received) not set yet`}
           </div>
-          ${todos.length ? renderBuildTodoList(client.id, addOn, isAdmin) : ""}
+          ${todos.length ? renderBuildTodoList(client.id, addOn, seesAll) : ""}
         </div>`;
       }).join("")}
   `;
@@ -9988,6 +10017,10 @@ function renderAssistantRow(a){
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Gets an &quot;Attention: ${a.name||'them'}&quot; column at the top of the admin Dashboard: contracts, payments, renewal/recap emails to send. Only one person at a time — checking this unchecks it for anyone else.">
             <input type="checkbox" ${a.isDocsLead?'checked':''} onchange="setExclusiveAssistantFlag('${a.id}','isDocsLead',this.checked)">
             Documentation &amp; Billing Lead
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Director of Software Development &amp; Web Design: always sees the Builds tab with every build and its finances, and every team Tech Support request (can change status). No other admin tabs. Takes effect on their next login.">
+            <input type="checkbox" ${a.isDevDirector?'checked':''} onchange="updateAssistantField('${a.id}','isDevDirector',this.checked)">
+            Director of Development
           </label>
         </div>
       </div>
