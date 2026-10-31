@@ -1108,7 +1108,7 @@ function clockIn(taskId, assistantId, note){
     clockOut: null,
     note: note || ""
   };
-  upsert("timeEntries", entry.id, entry);
+  return upsert("timeEntries", entry.id, entry);
 }
 // A standing task under Internal / Modern Co. so anyone can clock straight
 // into general admin work without first creating a one-off task for it.
@@ -1144,7 +1144,7 @@ function clockOut(entryId, editedTime){
   // clocking in is always real-time already (see clockIn()), so this is the
   // only point a manually-entered time can slip in, and admin wants visibility
   // into that rather than it blending in with real-time clock-outs.
-  upsert("timeEntries", entryId, { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime });
+  return upsert("timeEntries", entryId, { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime });
 }
 function entryDurationHours(entry){
   const start = new Date(entry.clockIn);
@@ -11655,6 +11655,30 @@ function openTaskEditor(taskId, defaultClientId){
 // asked for after a correction added on top of an existing entry produced a
 // total that didn't match either number, which is much easier to catch when
 // every individual entry is visible right here instead of only a sum.
+// Clock in/out and manual time straight from the open task, so nobody has
+// to close it and go hunting on the Task Board or Time Tracking tab. Time
+// entry snapshots don't re-render while a modal is open (see
+// subscribeAppData), so these re-render themselves once the write lands.
+function taskModalClockIn(taskId){
+  const p = clockIn(taskId, state.currentAssistant.id);
+  if(p) p.then(()=>render());
+}
+function taskModalClockOut(entryId){
+  clockOut(entryId, null).then(()=>render());
+}
+function renderTaskClockControls(task){
+  const me = state.currentAssistant;
+  const myActive = me ? activeEntryFor(me.id) : null;
+  const clockBtn = !me || task.status==="Done" ? ""
+    : myActive && myActive.taskId===task.id
+      ? `<button class="secondary" onclick="taskModalClockOut('${myActive.id}')">⏱ ${entryDurationHours(myActive).toFixed(2)} hrs — Clock out</button>`
+      : `<button class="secondary" onclick="taskModalClockIn('${task.id}')">Clock in</button>`;
+  return `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;">
+      ${clockBtn}
+      <button class="secondary" onclick="openManualTimeEntry('${task.id}')">+ Log time manually</button>
+    </div>`;
+}
 function renderTaskTimeEntriesSection(task){
   if(!task.id || !state.tasks.find(t=>t.id===task.id)) return "";
   const entries = state.timeEntries.filter(e=>e.taskId===task.id).sort((a,b)=> new Date(b.clockIn) - new Date(a.clockIn));
@@ -11662,6 +11686,7 @@ function renderTaskTimeEntriesSection(task){
   return `
     <div class="card" style="margin-top:10px;">
       <div class="flex-between"><h4 style="margin:0;">Time clocked on this task</h4><span class="small">${total.toFixed(2)} hrs total &middot; ${entries.length} ${entries.length===1?'entry':'entries'}</span></div>
+      ${renderTaskClockControls(task)}
       ${entries.length ? `
       <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Assistant</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th></th></tr></thead>
@@ -11672,7 +11697,7 @@ function renderTaskTimeEntriesSection(task){
               <td>${new Date(e.clockIn).toLocaleString()}</td>
               <td>${e.clockOut ? new Date(e.clockOut).toLocaleString() : '<span class="small">still clocked in</span>'}</td>
               <td>${entryDurationHours(e).toFixed(2)}${e.clockOutManual?' <span class="small">(manual)</span>':''}${e.flagged?' <span class="small" style="color:var(--danger);">⚑</span>':''}</td>
-              <td style="white-space:nowrap;">${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}</td>
+              <td style="white-space:nowrap;">${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" onclick="openTimeEntryEditor('${e.id}', true)">Edit</button>` : ""}</td>
             </tr>
             ${e.note ? `<tr><td colspan="5" class="small" style="padding-top:0;">&ldquo;${e.note}&rdquo;</td></tr>` : ""}
           `).join("")}
@@ -12223,12 +12248,22 @@ function toDatetimeLocalValue(iso){
 function fromDatetimeLocalValue(val){
   return val ? new Date(val).toISOString() : null;
 }
-function openManualTimeEntry(){
+// Opened with a taskId from inside an open task: the task is fixed (no
+// search), and saving/cancelling returns to that task modal — unsaved
+// edits included — instead of closing everything.
+function openManualTimeEntry(taskId){
   const now = toDatetimeLocalValue(new Date().toISOString());
   const defaultAssistantId = state.role==='admin'
     ? (state.settings.assistants.find(a=>a.active!==false)||{}).id
     : state.currentAssistant.id;
-  state.modal = { type:"manualTimeEntry", rows: [{ id:newId("row"), clockIn: now, clockOut: now, note:"" }], assistantId: defaultAssistantId };
+  const returnTo = taskId ? state.modal : null;
+  state.modal = { type:"manualTimeEntry", rows: [{ id:newId("row"), clockIn: now, clockOut: now, note:"" }], assistantId: defaultAssistantId, fixedTaskId: taskId || null, returnTo };
+  render();
+}
+// Closes a time modal, going back to the task it was opened from if any.
+function closeTimeModal(){
+  const returnTo = state.modal && state.modal.returnTo;
+  state.modal = returnTo || null;
   render();
 }
 function addManualEntryRow(){
@@ -12245,6 +12280,7 @@ function updateManualEntryRow(rowId, field, value){
 }
 function renderManualTimeEntryModal(){
   const rows = state.modal.rows;
+  const fixedTask = state.modal.fixedTaskId ? state.tasks.find(t=>t.id===state.modal.fixedTaskId) : null;
   return `
     <div class="modal">
       <h3>Log time manually</h3>
@@ -12259,8 +12295,9 @@ function renderManualTimeEntryModal(){
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Task</label>
+          ${fixedTask ? `<div><strong>${fixedTask.taskNumber ? '#'+fixedTask.taskNumber+' — ' : ''}${escHtml(fixedTask.title||'')}</strong></div>` : `
           <input id="mte_task" list="mte_task_list" value="${(state.modal.taskSearch||'').replace(/"/g,'&quot;')}" oninput="state.modal.taskSearch=this.value" placeholder="Search by # or title...">
-          <datalist id="mte_task_list">${taskSearchOptions(state.tasks)}</datalist>
+          <datalist id="mte_task_list">${taskSearchOptions(state.tasks)}</datalist>`}
         </div>
       </div>
       <div style="margin-top:10px;">
@@ -12276,14 +12313,16 @@ function renderManualTimeEntryModal(){
         <button class="secondary" style="margin-top:8px;" onclick="addManualEntryRow()">+ Add another time block</button>
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
-        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button class="secondary" onclick="closeTimeModal()">Cancel</button>
         <button onclick="saveManualTimeEntry()">Log time</button>
       </div>
     </div>
   `;
 }
 function saveManualTimeEntry(){
-  const task = resolveTaskFromSearch(document.getElementById("mte_task").value);
+  const task = state.modal.fixedTaskId
+    ? state.tasks.find(t=>t.id===state.modal.fixedTaskId)
+    : resolveTaskFromSearch(document.getElementById("mte_task").value);
   const assistantId = state.role==='admin' ? state.modal.assistantId : state.currentAssistant.id;
   if(!task){ alert("Pick a task from the list first — search by its # or title."); return; }
   const rows = state.modal.rows;
@@ -12301,12 +12340,12 @@ function saveManualTimeEntry(){
     };
     upsert("timeEntries", entry.id, entry);
   });
-  closeModal();
+  closeTimeModal();
 }
-function openTimeEntryEditor(entryId){
+function openTimeEntryEditor(entryId, fromTask){
   const entry = state.timeEntries.find(e=>e.id===entryId);
   if(!entry) return;
-  state.modal = { type:"timeEntryEditor", entry, assistantId: entry.assistantId, flagged: !!entry.flagged };
+  state.modal = { type:"timeEntryEditor", entry, assistantId: entry.assistantId, flagged: !!entry.flagged, returnTo: fromTask ? state.modal : null };
   render();
 }
 function renderTimeEntryEditorModal(entry){
@@ -12342,9 +12381,9 @@ function renderTimeEntryEditorModal(entry){
         <input id="tef_flagnote" value="${(entry.flagNote||'').replace(/"/g,'&quot;')}">
       </div>` : ""}
       <div style="margin-top:14px;display:flex;justify-content:space-between;">
-        <button class="danger" onclick="deleteTimeEntry('${entry.id}'); closeModal();">Delete</button>
+        <button class="danger" onclick="deleteTimeEntry('${entry.id}'); closeTimeModal();">Delete</button>
         <div>
-          <button class="secondary" onclick="closeModal()">Cancel</button>
+          <button class="secondary" onclick="closeTimeModal()">Cancel</button>
           <button onclick="saveTimeEntryEdit('${entry.id}')">Save</button>
         </div>
       </div>
@@ -12368,7 +12407,7 @@ function saveTimeEntryEdit(entryId){
     payload.flagNote = document.getElementById("tef_flagnote").value.trim();
   }
   upsert("timeEntries", entryId, payload);
-  closeModal();
+  closeTimeModal();
 }
 
 // --- Modal shell ---
