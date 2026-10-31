@@ -213,7 +213,65 @@
   .cal-cell.cal-drop-hover{outline:2px dashed var(--rose-dark);outline-offset:-2px;}
   .cal-add{position:absolute;top:2px;right:2px;background:none;border:none;color:#c7b8ae;font-size:13px;cursor:pointer;line-height:1;padding:2px 4px;}
   .cal-add:hover{color:var(--rose-dark);}
+
+  /* ---- Dark mode (sidebar toggle; saved per browser as tmcTheme) ----
+     The light palette's --cream/--brown vars double as BOTH background and
+     text colors in different rules (e.g. button text is var(--cream)), so
+     dark mode overrides specific rules rather than just swapping the vars.
+     The [style*=...] rules catch the handful of colors written inline in
+     templates instead of in a class. */
+  html[data-theme="dark"]{
+    --cream-dark:#3a2e29; --text:#eadfd4; --muted:#b3a49b; --surface:#261d1a; --surface-2:#2f2521; --danger:#e57373;
+    --shadow:0 2px 10px rgba(0,0,0,0.45); color-scheme:dark;
+  }
+  html[data-theme="dark"] body,
+  html[data-theme="dark"] .center-screen{background:#1a1311;color:var(--text);}
+  html[data-theme="dark"] h1,html[data-theme="dark"] h2,html[data-theme="dark"] h3,html[data-theme="dark"] h4,
+  html[data-theme="dark"] .kanban-col h4,html[data-theme="dark"] .stat-tile .stat-value,
+  html[data-theme="dark"] .login-box .logo,html[data-theme="dark"] .orgchart-seat .oc-name,
+  html[data-theme="dark"] .orgchart-seat .oc-resp{color:#f3e7dc;}
+  html[data-theme="dark"] .sidebar{background:#120d0b;}
+  html[data-theme="dark"] .card,html[data-theme="dark"] .stat-tile,html[data-theme="dark"] .modal,
+  html[data-theme="dark"] .task-card,html[data-theme="dark"] .login-box,html[data-theme="dark"] .orgchart-seat,
+  html[data-theme="dark"] .cal-cell{background:var(--surface);}
+  html[data-theme="dark"] .kanban-col{background:#211915;}
+  html[data-theme="dark"] .modal-bg{background:rgba(0,0,0,0.6);}
+  html[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
+  html[data-theme="dark"] select,html[data-theme="dark"] textarea{background:#1f1714;color:var(--text);border-color:#4a3c36;}
+  html[data-theme="dark"] button.secondary{background:var(--cream-dark);color:#f3e7dc;}
+  html[data-theme="dark"] .tabs button{color:#e3d2c4;}
+  html[data-theme="dark"] .tabs button.active{color:#fff;}
+  html[data-theme="dark"] button.danger{background:#b23a3a;}
+  html[data-theme="dark"] a{color:var(--rose);}
+  html[data-theme="dark"] .small,html[data-theme="dark"] .task-card .meta,
+  html[data-theme="dark"] .stat-tile .stat-label,html[data-theme="dark"] .stat-tile .stat-sub,
+  html[data-theme="dark"] table.data-table th,html[data-theme="dark"] .login-box .tagline,
+  html[data-theme="dark"] .orgchart-seat .oc-title,html[data-theme="dark"] .orgchart-seat .oc-flag,
+  html[data-theme="dark"] .cal-daynum,html[data-theme="dark"] .cal-headcell{color:var(--muted);}
+  html[data-theme="dark"] .subtask{color:#cdbdb2;}
+  html[data-theme="dark"] .alert.warn{background:#4a3618;color:#f3d6a6;}
+  html[data-theme="dark"] .alert.danger{background:#4a2020;color:#f2c0c0;}
+  html[data-theme="dark"] .alert.ok{background:#213a28;color:#cfe6d3;}
+  html[data-theme="dark"] .cal-headcell{background:#2a201c;}
+  html[data-theme="dark"] .cal-cell.cal-empty{background:#1f1815;}
+  html[data-theme="dark"] .cal-cell.cal-today{background:#33261f;}
+  html[data-theme="dark"] .cal-pill-content{background:#213a28;color:#cfe6d3;}
+  html[data-theme="dark"] .cal-pill-posted{background:#3a2e29;color:var(--muted);}
+  html[data-theme="dark"] .oc-tag.new{background:#213a28;color:#9fd0ae;}
+  html[data-theme="dark"] .oc-tag.leaving{background:#4a2020;}
+  html[data-theme="dark"] [style*="background:#fff"],
+  html[data-theme="dark"] [style*="background:var(--cream)"]{background:var(--surface-2) !important;}
+  html[data-theme="dark"] [style*="color:#8a7a72"]{color:var(--muted) !important;}
+  html[data-theme="dark"] [style*="color:#241a17"],
+  html[data-theme="dark"] [style*="color:var(--brown-dark)"]{color:#f3e7dc !important;}
+  html[data-theme="dark"] #preview-bar [style*="color:#241a17"]{color:#241a17 !important;}
+  .theme-toggle{display:block;margin-top:6px;background:transparent;border:1px solid rgba(255,255,255,0.25);color:var(--cream);font-size:12px;padding:4px 10px;border-radius:14px;}
 </style>
+<script>
+  // Applied before the page paints so a dark-mode user doesn't get a flash
+  // of the light theme on every load.
+  try { if(localStorage.getItem("tmcTheme")==="dark") document.documentElement.setAttribute("data-theme","dark"); } catch(e){}
+</script>
 </head>
 <body>
 <div id="app"><div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;color:#8a7a72;font-size:15px;">Loading The Modern Concierge…</div></div>
@@ -3249,6 +3307,16 @@ function promptLogin(kind){
 function isDevDirector(){
   return state.role==="team" && !!(state.currentAssistant && state.currentAssistant.isDevDirector);
 }
+// Dark mode is a per-browser preference (localStorage), applied early in
+// <head> so there's no light flash on load; see the dark-mode CSS block.
+function isDarkTheme(){ return document.documentElement.getAttribute("data-theme")==="dark"; }
+function toggleTheme(){
+  const dark = !isDarkTheme();
+  if(dark) document.documentElement.setAttribute("data-theme","dark");
+  else document.documentElement.removeAttribute("data-theme");
+  try { localStorage.setItem("tmcTheme", dark ? "dark" : "light"); } catch(e){}
+  render();
+}
 function renderAppShell(){
   const isContentCreator = state.role==="team" && state.currentAssistant && state.currentAssistant.isContentCreator;
   // Admin's own list grouped into sections — 17 same-level items in one flat
@@ -3277,6 +3345,7 @@ function renderAppShell(){
         <div class="who">
           ${state.role==="admin" ? "Admin" : isContentCreator ? "Content Creator — " + state.currentAssistant.name : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
           <div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div>
+          <button class="theme-toggle" onclick="toggleTheme()">${isDarkTheme() ? '☀ Light mode' : '☾ Dark mode'}</button>
         </div>
         <div class="nav-links">
           ${tabGroups.map(g=>`
