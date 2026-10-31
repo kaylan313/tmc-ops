@@ -3210,8 +3210,11 @@ function renderAppShell(){
   // list was hard to scan for anything beyond the first few. Team/Content
   // Creator lists stay short enough (5-7 items) that grouping them wouldn't
   // add anything, so they stay as one unlabeled group (no header renders).
+  // Content creators (e.g. Hannah) also take on flat-fee builds, so they
+  // always get Builds — the non-admin view shows only their own builds and
+  // no dollar amounts.
   const tabGroups = isContentCreator
-    ? [{ label:null, tabs:[["content","Content Calendar"],["techSupport","Tech Support"]] }]
+    ? [{ label:null, tabs:[["content","Content Calendar"],["builds","Builds"],["techSupport","Tech Support"]] }]
     : state.role==="admin"
     ? [
         { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
