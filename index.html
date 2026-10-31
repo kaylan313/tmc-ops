@@ -2121,14 +2121,19 @@ function downloadCsv(filename, rows){
 }
 function exportPayrollCsv(){
   const period = payrollFilterPeriod();
-  const rows = [["Assistant","Pay type","Hours worked","Rate","Amount owed","Status","Payroll period"]];
+  // Build and maintenance pay get their own columns (same as the Payroll
+  // table's separate lines) so each paycheck component is clear.
+  const rows = [["Assistant","Pay type","Hours worked","Rate","Hourly/flat pay","Build pay","Maintenance pay","Total owed","Status","Payroll period"]];
   state.settings.assistants.forEach(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
     const hrs = hoursInPeriod(entries, period);
+    const basePay = payrollAmountForAssistant(a,hrs);
+    const buildPay = buildPayForAssistantInPeriod(a.id, period);
+    const maintPay = maintenancePayForAssistantInPeriod(a.id, period);
     rows.push([
       a.name + (a.active===false ? " (former)" : ""),
       a.payType==="flat" ? "Flat rate" : "Hourly",
-      hrs.toFixed(2), payrollRateLabel(a), payrollAmountForAssistant(a,hrs).toFixed(2),
+      hrs.toFixed(2), payrollRateLabel(a), basePay.toFixed(2), buildPay.toFixed(2), maintPay.toFixed(2), (basePay+buildPay+maintPay).toFixed(2),
       a.active===false ? "former employee" : "active",
       formatPeriodRange(period)
     ]);
