@@ -5505,6 +5505,56 @@ function openVendorTicketDetail(vendorId, ticketId){
   state.modal = { type:"vendorTicketDetail", vendorId, ticketId };
   render();
 }
+// Collapsible "where is this request" tracker at the top of the detail
+// window: every stage with ✓ + date once reached, the current one
+// highlighted. Read-only on purpose — each stage is driven by a real
+// action below (vendor schedules, submits cost, charge set, client
+// charged, vendor paid), so jumping stages from a dropdown would leave
+// the request missing the data that stage needs.
+function toggleVendorStageTracker(){ state.vendorStageTrackerOpen = !state.vendorStageTrackerOpen; render(); }
+function renderVendorTicketStageTracker(vendor, ticket){
+  const isAdmin = state.role==="admin";
+  const stage = vendorTicketStage(ticket);
+  const step = VENDOR_TICKET_STAGES.indexOf(stage) + 1;
+  const stageColor = stage==="paid" ? 'var(--ok)' : stage==="readyToCharge" ? 'var(--warn)' : stage==="chargedAwaitingPayout" ? 'var(--rose-dark)' : '#8a7a72';
+  const fmt = d => d ? new Date(d).toLocaleDateString() : "";
+  const money = n => "$"+(n||0).toFixed(2);
+  const details = {
+    requested: fmt(ticket.requestedAt) + (ticket.requestedByName ? " · by "+escHtml(ticket.requestedByName) : ""),
+    scheduled: ticket.scheduledAt ? "for "+new Date(ticket.scheduledAt).toLocaleString() : ticket.availableTimesNote ? "times offered — confirm with the client" : "",
+    awaitingMarkup: ticket.vendorCost!=null ? fmt(ticket.vendorCostSubmittedAt) + (isAdmin ? " · his cost "+money(ticket.vendorCost) : "") : "",
+    readyToCharge: ticket.clientChargeAmount!=null ? fmt(ticket.clientChargeSetAt) + " · charge "+money(ticket.clientChargeAmount) : "",
+    chargedAwaitingPayout: ticket.clientCharged ? fmt(ticket.clientChargedAt) : "",
+    paid: ticket.vendorPaid ? fmt(ticket.vendorPaidAt) : ""
+  };
+  const open = !!state.vendorStageTrackerOpen;
+  return `
+    <div style="border:1px solid var(--cream-dark);border-radius:8px;margin:8px 0;">
+      <div class="flex-between" style="cursor:pointer;padding:8px 10px;gap:10px;" onclick="toggleVendorStageTracker()">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="small" style="font-weight:600;">Stage:</span>
+          <span class="badge" style="background:${stageColor};min-width:110px;text-align:center;white-space:nowrap;margin:0;">${VENDOR_TICKET_STAGE_LABELS[stage]}</span>
+          <span class="small">step ${step} of ${VENDOR_TICKET_STAGES.length}</span>
+        </div>
+        <span class="small" style="white-space:nowrap;">${open?'Hide stages ▲':'All stages ▼'}</span>
+      </div>
+      ${open ? `
+      <div style="padding:2px 10px 8px;">
+        ${VENDOR_TICKET_STAGES.map((s,i)=>{
+          const done = i < step-1 || stage==="paid";
+          const current = i === step-1 && stage!=="paid";
+          const mark = done ? '✓' : current ? '●' : '○';
+          const markColor = done ? 'var(--ok)' : current ? stageColor : '#b8aaa2';
+          return `
+          <div style="display:flex;gap:8px;align-items:baseline;padding:4px 0;${i?'border-top:1px dashed var(--cream-dark);':''}${!done&&!current?'opacity:.55;':''}">
+            <span style="width:14px;text-align:center;color:${markColor};font-weight:700;">${mark}</span>
+            <span style="min-width:120px;${current?'font-weight:600;':''}">${VENDOR_TICKET_STAGE_LABELS[s]}</span>
+            <span class="small">${(done||current) ? details[s] : ''}${current ? `${details[s]?' · ':''}${vendorTicketNextStep(stage, ticket, vendor)}` : ''}</span>
+          </div>`;
+        }).join("")}
+      </div>` : ""}
+    </div>`;
+}
 function renderVendorTicketDetailModal(vendorId, ticketId){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
   const ticket = vendor && (vendor.tickets||[]).find(t=>t.id===ticketId);
@@ -5520,6 +5570,7 @@ function renderVendorTicketDetailModal(vendorId, ticketId){
         <button class="secondary" onclick="closeModal()">Close</button>
       </div>
       <div class="small" style="margin:6px 0;">${client?client.name:'—'} · ${escHtml(vendor.name||'')} · requested by ${ticket.requestedByName||'—'} on ${new Date(ticket.requestedAt).toLocaleDateString()}</div>
+      ${renderVendorTicketStageTracker(vendor, ticket)}
       ${ticket.description ? `<p>${escHtml(ticket.description)}</p>` : ''}
       <label class="small" style="font-weight:600;margin-top:10px;display:block;">How to get into the home <span style="font-weight:400;">(the vendor sees this)</span></label>
       <textarea id="vt_access_${ticket.id}" onchange="updateVendorTicketField('${vendor.id}','${ticket.id}','accessInstructions',this.value.trim())" placeholder="e.g. Lockbox on back door, code 1234. Alarm is off. Park in driveway.">${escHtml(ticket.accessInstructions||'')}</textarea>
