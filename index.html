@@ -9655,8 +9655,7 @@ function defaultDevGoals(){
       item("year","Train each new hire on TMC's process and standards"),
       item("year","Review progress at the monthly goal meetings with Kaylan")
     ],
-    wins: [],
-    qualifications: "Skills\n- Some background in AI and coding, with at least a basic working knowledge of both\n- Experience building websites on the platforms TMC uses\n- Basic understanding of CRMs, automations or no-code tools, or a strong willingness to learn\n- An eye for clean, modern design\n- Comfortable learning new software quickly\n\nWork style\n- Clear, friendly communication with clients\n- Organised and reliable with deadlines\n- Detail-oriented, catching mistakes before clients do\n- Takes feedback well and is open to coaching\n\nFit with TMC\n- Represents The Modern Co.'s standards and reputation\n- Can keep client information confidential\n- Available for the agreed hours and team workshops\n\nInterviews\n- Tori and Kaylan are welcome to be part of the interview process."
+    wins: []
   };
 }
 function devGoals(){ return state.settings.devGoals || defaultDevGoals(); }
@@ -9802,11 +9801,6 @@ function renderGoalsTab(){
           <div>${escHtml(w.text)}</div>
           <div style="display:flex;align-items:center;gap:8px;"><span class="small">${parseYMD(w.date).toLocaleDateString()}</span><button class="secondary" style="padding:2px 8px;" title="Edit" onclick="editDevGoalWin('${w.id}')">✎</button><button class="secondary" style="padding:2px 8px;" title="Remove" onclick="removeDevGoalWin('${w.id}')">✕</button></div>
         </div>`).join("") || `<div class="small" style="margin-top:6px;">No wins logged yet.</div>`}
-    </div>
-    <div class="card">
-      <h3>Qualifications for new hires</h3>
-      <div class="small" style="margin-bottom:6px;">Draft to finalise with Kaylan in Q1. Saves when you click away.</div>
-      <textarea style="min-height:220px;" onchange="saveDevGoals({...devGoals(), qualifications:this.value})">${escHtml(g.qualifications||'')}</textarea>
     </div>
     <div class="card"><h3>Personal goals</h3>${checklist("personal")}</div>
   `;
