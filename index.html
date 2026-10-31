@@ -715,8 +715,8 @@ function seedPreviewData(){
     addOns:[{ id:"addon_preview_1", label:"Website Build", status:"Active", flatFee:3000, buildAssistantId:"asst_3", buildAssistantPercent:30,
       monthlyMaintenance:150, maintenanceActive:true, maintenanceAssistantId:"asst_3", maintenanceAssistantPercent:30,
       maintenancePayments:[
-        { id:"maintpay_preview_1", month: new Date(now - 30*24*3600000).toISOString().slice(0,7), amount:150, paid:true, paidDate: new Date(now - 3*24*3600000).toISOString().slice(0,10) },
-        { id:"maintpay_preview_2", month: new Date(now).toISOString().slice(0,7), amount:150, paid:false, paidDate:"" }
+        { id:"maintpay_preview_1", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(new Date(now).getFullYear(), new Date(now).getMonth()-1, 1)), amount:150, paid:true, paidDate: new Date(now - 3*24*3600000).toISOString().slice(0,10) },
+        { id:"maintpay_preview_2", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(now)), amount:150, paid:false, paidDate:"" }
       ],
       buildStartDate: new Date(now - 10*24*3600000).toISOString().slice(0,10),
       payments:[
