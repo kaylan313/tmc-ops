@@ -778,6 +778,8 @@ function previewRoleKey(){
 function switchPreviewRole(key){
   state.modal = null; state.selectedClientId = null; state.currentAssistant = null; state.currentClientId = null; state.currentVendorId = null;
   state.view = "app";
+  // Mirror a real login: team roles start on their own tasks only.
+  state.kanbanFilter.onlyMine = key==="team" || key==="director" || key==="newHire";
   if(key==="admin"){ state.role = "admin"; state.activeTab = "dashboard"; }
   else if(key==="team"){ state.role = "team"; state.currentAssistant = state.settings.assistants.find(a=>a.id==="asst_3"); state.activeTab = "dashboard"; }
   else if(key==="director"){ state.role = "team"; state.currentAssistant = { ...state.settings.assistants.find(a=>a.id==="asst_3"), isDevDirector:true }; state.activeTab = "builds"; }
@@ -2999,6 +3001,9 @@ function tryTeamLogin(code){
   if(match){
     state.role = "team"; state.currentAssistant = match; state.view="app";
     state.activeTab = match.isContentCreator ? "content" : "dashboard";
+    // Team members start the Task Board on just their own assigned tasks,
+    // with a "Show all tasks" tick to widen it.
+    state.kanbanFilter.onlyMine = true;
     state.modal = nextOnboardingGateFor(match);
     subscribeAppData(); render();
   } else alert("Access code not recognized.");
@@ -8672,7 +8677,7 @@ function renderKanban(){
     if(inactiveHidden(t)) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
     if(!taskMatchesMarketFilter(t, f.market||"all")) return false;
-    if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
+    if(f.onlyMine && state.currentAssistant && !(t.assignees||[]).includes(state.currentAssistant.id)) return false;
     if(f.hideDone && t.status==="Done") return false;
     if(search){
       const hay = (t.title||"").toLowerCase() + " #" + (t.taskNumber||"");
@@ -8686,7 +8691,7 @@ function renderKanban(){
     if(inactiveHidden(t)) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
     if(!taskMatchesMarketFilter(t, f.market||"all")) return false;
-    if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
+    if(f.onlyMine && state.currentAssistant && !(t.assignees||[]).includes(state.currentAssistant.id)) return false;
     return true;
   }).length;
   const inactiveHiddenCount = f.clientId==="all" ? state.tasks.filter(t=>t.status!=="Done" && !taskBelongsToActiveClient(t)).length : 0;
@@ -8730,7 +8735,7 @@ function renderKanban(){
       ${state.currentAssistant ? `
       <div style="display:flex;align-items:flex-end;padding-bottom:8px;">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
-          <input type="checkbox" ${f.onlyMine?'checked':''} onchange="setKanbanFilter('onlyMine',this.checked)"> My tasks only
+          <input type="checkbox" ${f.onlyMine?'':'checked'} onchange="setKanbanFilter('onlyMine',!this.checked)"> Show all tasks
         </label>
       </div>` : ""}
       <div style="display:flex;align-items:flex-end;padding-bottom:8px;">
