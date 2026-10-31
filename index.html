@@ -707,6 +707,9 @@ function seedPreviewData(){
     renewalDate: new Date(now - 20*24*3600000).toISOString().slice(0,10), assistantIds:["asst_2"], email:"jordan@example.com",
     portalCode:"preview-client2", termType:"pilot", clientStatus:"active", createdAt: hoursAgo(24*20), notes:[],
     profile:{ serviceType:"home", phone:"555-222-3333", homeAddress:"789 Example St, Lafayette, LA", homeAccess:"Garage code 0000. Dog is friendly." } };
+  // Already confirmed in QuickBooks this cycle, so the dashboard's
+  // membership-charge card shows a completed row too.
+  c2.billingChecks = [{ key: c2.renewalDate, completedAt: hoursAgo(24*19), completedBy: "Heidi" }];
   const c3 = { id:"client_preview_3", name:"Sample Business LLC", packageHours:30, packagePrice:1350, cycleType:"monthly",
     renewalDate: new Date(now - 5*24*3600000).toISOString().slice(0,10), assistantIds:["asst_4","asst_5"], email:"ops@example.com",
     portalCode:"preview-client3", termType:"12month", clientStatus:"active", createdAt: hoursAgo(24*200), notes:[],
@@ -3593,6 +3596,91 @@ function renderDocsLeadColumn(assistant, d){
     </div>
   `;
 }
+// ---- Monthly membership charge check-off (admin) ----
+// Each billing cycle's charge date is that cycle's start (renewalDate +
+// cycleType, see currentBillingPeriod). Once someone confirms in
+// QuickBooks that the charge went through, they click Complete — stored
+// per cycle on the client (billingChecks: [{ key: YYYY-MM-DD of cycle
+// start, completedAt, completedBy }]), so the button comes back on its own
+// next cycle. An array, not a map keyed by date: upsert() merges, and a
+// merge can't remove a map key, which would make Undo silently not stick.
+// Admin logins are shared, so it asks for a name rather than just "Admin".
+function billingCheckKey(date){ return toLocalDateInputValue(date.toISOString()); }
+function billingCheckRows(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const weekOut = new Date(today.getTime() + 7*86400000);
+  const rows = { due:[], upcoming:[], done:[], noDate:0 };
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active")).forEach(client=>{
+    const period = currentBillingPeriod(client);
+    if(!period){ rows.noDate++; return; }
+    const key = billingCheckKey(period.start);
+    const check = (client.billingChecks||[]).find(b=>b.key===key);
+    if(check) rows.done.push({ client, date: period.start, key, check });
+    else rows.due.push({ client, date: period.start, key, days: Math.round((today - period.start)/86400000) });
+    if(period.end <= weekOut) rows.upcoming.push({ client, date: period.end });
+  });
+  rows.due.sort((a,b)=>a.date-b.date);
+  rows.upcoming.sort((a,b)=>a.date-b.date);
+  rows.done.sort((a,b)=>new Date(b.check.completedAt)-new Date(a.check.completedAt));
+  return rows;
+}
+function markBillingCheckComplete(clientId, key){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  let lastName = "";
+  try { lastName = localStorage.getItem("tmcBillingCheckName") || ""; } catch(e){}
+  const name = (prompt("Confirmed in QuickBooks that "+client.name+"'s charge went through?\n\nYour name (shows next to the ✓ for the admin team):", lastName) || "").trim();
+  if(!name) return;
+  try { localStorage.setItem("tmcBillingCheckName", name); } catch(e){}
+  const billingChecks = [...(client.billingChecks||[]).filter(b=>b.key!==key), { key, completedAt: new Date().toISOString(), completedBy: name }];
+  upsert("clients", clientId, { billingChecks });
+}
+function undoBillingCheck(clientId, key){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  upsert("clients", clientId, { billingChecks: (client.billingChecks||[]).filter(b=>b.key!==key) });
+}
+function toggleBillingChecksDone(){ state.billingChecksDoneOpen = !state.billingChecksDoneOpen; render(); }
+function renderBillingChecksCard(){
+  const r = billingCheckRows();
+  const dueLabel = d => d===0 ? "due today" : d===1 ? "due yesterday" : `due ${d} days ago`;
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Membership charges — confirm in QuickBooks</h3>
+        <span class="small">${r.due.length ? r.due.length+' to confirm' : 'All caught up ✓'}</span>
+      </div>
+      <div class="small" style="margin:4px 0 8px;">Each client's charge date is the start of their billing cycle. Once you've checked QuickBooks and the payment went through, click Complete — the whole admin team sees it here. It resets on its own next cycle.</div>
+      ${r.due.length ? r.due.map(({client,date,key,days})=>`
+        <div class="list-item">
+          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${date.toLocaleDateString()} · ${cycleLabel(client.cycleType)}</span></div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="small" style="${days>0?'color:var(--danger);font-weight:600;':'color:var(--warn);font-weight:600;'}">${dueLabel(days)}</span>
+            <button onclick="markBillingCheckComplete('${client.id}','${key}')">Complete</button>
+          </div>
+        </div>`).join("") : `<div class="small">Nothing waiting — every active client's current charge is marked complete.</div>`}
+      ${r.upcoming.length ? `
+        <div class="small" style="font-weight:600;margin:12px 0 4px;">Coming up (next 7 days)</div>
+        ${r.upcoming.map(({client,date})=>`
+          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+            <div>${escHtml(client.name)}</div><span class="small">${date.toLocaleDateString()}</span>
+          </div>`).join("")}` : ""}
+      ${r.done.length ? `
+        <div class="flex-between" style="cursor:pointer;margin-top:12px;" onclick="toggleBillingChecksDone()">
+          <span class="small" style="font-weight:600;">Completed this cycle (${r.done.length})</span>
+          <span class="small">${state.billingChecksDoneOpen?'Hide ▲':'Show ▼'}</span>
+        </div>
+        ${state.billingChecksDoneOpen ? r.done.map(({client,date,key,check})=>`
+          <div class="list-item">
+            <div><strong>${escHtml(client.name)}</strong> <span class="small">· charged ${date.toLocaleDateString()}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="small" style="color:var(--ok);font-weight:600;">✓ ${escHtml(check.completedBy||'Admin')} · ${new Date(check.completedAt).toLocaleDateString()}</span>
+              <a href="#" class="small" onclick="undoBillingCheck('${client.id}','${key}');return false;">Undo</a>
+            </div>
+          </div>`).join("") : ""}` : ""}
+      ${r.noDate ? `<div class="small" style="margin-top:8px;color:var(--warn);">${r.noDate} active client${r.noDate===1?' has':'s have'} no renewal date set, so no charge date can be shown — set it on their Membership tab.</div>` : ""}
+    </div>`;
+}
 function renderAdminDashboard(){
   const period = currentPayrollPeriod();
   const totalPayrollHours = hoursInPeriod(state.timeEntries, period);
@@ -3707,6 +3795,8 @@ function renderAdminDashboard(){
         <div class="stat-sub">${formatPeriodRange(nextCalendarWeek())}</div>
       </div>
     </div>
+
+    ${renderBillingChecksCard()}
 
     <div class="row">
       ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns:clientCheckInsForOps, renewalCheckInEmails:renewalCheckInEmailsForOps, pending:pendingForOps, notStartedClients:notStartedClientsForOps, atRiskClients:atRiskClientsForOps, awaitingClient:awaitingClientForOps, paused:pausedForOps, overdue, pastDue })}
