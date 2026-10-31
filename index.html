@@ -5233,14 +5233,28 @@ function vendorTicketStage(t){
   if(t.scheduledAt || t.availableTimesNote) return "scheduled";
   return "requested";
 }
+// In order — the list shows a same-width short pill plus a 6-step progress
+// bar and a "Next:" line (see vendorTicketNextStep) instead of one long
+// sentence-style badge per row.
+const VENDOR_TICKET_STAGES = ["requested","scheduled","awaitingMarkup","readyToCharge","chargedAwaitingPayout","paid"];
 const VENDOR_TICKET_STAGE_LABELS = {
-  requested: "Requested — awaiting scheduling",
-  scheduled: "Scheduled — awaiting his cost",
-  awaitingMarkup: "Cost submitted — awaiting markup",
-  readyToCharge: "Ready to charge the client",
-  chargedAwaitingPayout: "Client charged — pay him next payout",
+  requested: "Requested",
+  scheduled: "Scheduled",
+  awaitingMarkup: "Cost submitted",
+  readyToCharge: "Ready to charge",
+  chargedAwaitingPayout: "Client charged",
   paid: "Paid"
 };
+function vendorTicketNextStep(stage, ticket, vendor){
+  const isAdmin = state.role==="admin";
+  const money = n => "$"+(n||0).toFixed(2);
+  if(stage==="requested") return "Next: vendor schedules a time";
+  if(stage==="scheduled") return "Next: vendor submits his cost";
+  if(stage==="awaitingMarkup") return isAdmin ? `Next: set the client charge (his cost ${money(ticket.vendorCost)})` : "Next: admin sets the client charge";
+  if(stage==="readyToCharge") return `Next: charge the client ${money(ticket.clientChargeAmount)}`;
+  if(stage==="chargedAwaitingPayout") return `Next: pay ${escHtml(vendor.name||'the vendor')} at the Friday payout`;
+  return `Paid${ticket.vendorPaidAt ? ' '+new Date(ticket.vendorPaidAt).toLocaleDateString() : ''}`;
+}
 function createVendorTicket(vendorId, clientId, title, description, accessInstructions){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
   if(!vendor) return null;
@@ -5390,23 +5404,25 @@ function renderVendorTicketsTab(){
   `;
 }
 function renderVendorTicketRow({vendor, ticket, client}){
-  const isAdmin = state.role==="admin";
   const stage = vendorTicketStage(ticket);
-  const stageLabel = VENDOR_TICKET_STAGE_LABELS[stage];
+  const step = VENDOR_TICKET_STAGES.indexOf(stage) + 1;
   const stageColor = stage==="paid" ? 'var(--ok)' : stage==="readyToCharge" ? 'var(--warn)' : stage==="chargedAwaitingPayout" ? 'var(--rose-dark)' : '#8a7a72';
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;cursor:pointer;" onclick="openVendorTicketDetail('${vendor.id}','${ticket.id}')">
-      <div class="flex-between">
-        <div>
+      <div class="flex-between" style="align-items:flex-start;gap:10px;">
+        <div style="min-width:0;">
           <strong>${escHtml(ticket.title||'(untitled)')}</strong>
           <div class="small">${client?client.name:'—'} · ${escHtml(vendor.name||'')} · requested by ${ticket.requestedByName||'—'}</div>
         </div>
-        <span class="badge" style="background:${stageColor};">${stageLabel}</span>
+        <span class="badge" style="background:${stageColor};min-width:110px;text-align:center;white-space:nowrap;margin:0;flex-shrink:0;">${VENDOR_TICKET_STAGE_LABELS[stage]}</span>
       </div>
-      ${(isAdmin && ticket.vendorCost!=null) || ticket.clientChargeAmount!=null ? `<div class="small">${[
-        isAdmin && ticket.vendorCost!=null ? 'His cost: $'+ticket.vendorCost.toFixed(2) : '',
-        ticket.clientChargeAmount!=null ? 'Charge client: $'+ticket.clientChargeAmount.toFixed(2) : ''
-      ].filter(Boolean).join(' · ')}</div>` : ""}
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;gap:3px;flex:1;max-width:320px;" title="Step ${step} of ${VENDOR_TICKET_STAGES.length}: ${VENDOR_TICKET_STAGE_LABELS[stage]}">
+          ${VENDOR_TICKET_STAGES.map((s,i)=>`<div style="flex:1;height:6px;border-radius:3px;background:${i<step?stageColor:'var(--cream-dark)'};"></div>`).join("")}
+        </div>
+        <span class="small" style="white-space:nowrap;">step ${step} of ${VENDOR_TICKET_STAGES.length}</span>
+      </div>
+      <div class="small">${vendorTicketNextStep(stage, ticket, vendor)}</div>
     </div>
   `;
 }
