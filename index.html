@@ -9694,6 +9694,21 @@ function addDevGoalItem(section){
   const g = devGoals();
   saveDevGoals({ ...g, items: [...g.items, { id:newId("goal"), section, text, done:false, doneAt:"" }] });
 }
+function editDevGoalItem(id){
+  const item = devGoals().items.find(i=>i.id===id);
+  if(!item) return;
+  const text = prompt("Edit goal:", item.text);
+  if(text===null || !text.trim()) return;
+  updateDevGoalItem(id, { text: text.trim() });
+}
+function editDevGoalWin(id){
+  const g = devGoals();
+  const win = (g.wins||[]).find(w=>w.id===id);
+  if(!win) return;
+  const text = prompt("Edit win:", win.text);
+  if(text===null || !text.trim()) return;
+  saveDevGoals({ ...g, wins: g.wins.map(w=>w.id===id ? { ...w, text: text.trim() } : w) });
+}
 function removeDevGoalItem(id){
   if(!confirm("Remove this goal?")) return;
   const g = devGoals();
@@ -9737,6 +9752,7 @@ function renderGoalsTab(){
       <div class="checklist-item">
         <input type="checkbox" ${i.done?'checked':''} onchange="updateDevGoalItem('${i.id}',{done:this.checked,doneAt:this.checked?new Date().toISOString():''})">
         <span style="flex:1;${i.done?'text-decoration:line-through;opacity:.65;':''}">${escHtml(i.text)}${i.done&&i.doneAt?` <span class="small">· ${new Date(i.doneAt).toLocaleDateString()}</span>`:''}</span>
+        <button class="secondary" style="padding:2px 8px;" title="Edit" onclick="editDevGoalItem('${i.id}')">✎</button>
         <button class="secondary" style="padding:2px 8px;" title="Remove" onclick="removeDevGoalItem('${i.id}')">✕</button>
       </div>`).join("") || `<div class="small">Nothing here yet.</div>`}
     <button class="secondary" style="margin-top:6px;padding:4px 10px;" onclick="addDevGoalItem('${section}')">+ Add goal</button>`;
@@ -9784,7 +9800,7 @@ function renderGoalsTab(){
       ${(g.wins||[]).map(w=>`
         <div class="list-item">
           <div>${escHtml(w.text)}</div>
-          <div style="display:flex;align-items:center;gap:8px;"><span class="small">${parseYMD(w.date).toLocaleDateString()}</span><button class="secondary" style="padding:2px 8px;" onclick="removeDevGoalWin('${w.id}')">✕</button></div>
+          <div style="display:flex;align-items:center;gap:8px;"><span class="small">${parseYMD(w.date).toLocaleDateString()}</span><button class="secondary" style="padding:2px 8px;" title="Edit" onclick="editDevGoalWin('${w.id}')">✎</button><button class="secondary" style="padding:2px 8px;" title="Remove" onclick="removeDevGoalWin('${w.id}')">✕</button></div>
         </div>`).join("") || `<div class="small" style="margin-top:6px;">No wins logged yet.</div>`}
     </div>
     <div class="card">
