@@ -8368,7 +8368,7 @@ function renderAddOnRow(clientId, a){
           <div class="small" style="margin-top:6px;">No to-dos yet. <a href="#" onclick="seedDefaultBuildTodos('${clientId}','${a.id}');return false;">Start from the standard build checklist</a>, or add your own.</div>
         `}
       </div>` : ""}
-      <div><button class="secondary" onclick="removeClientAddOn('${clientId}','${a.id}')">Remove</button></div>
+      <div><button class="danger" onclick="removeClientAddOn('${clientId}','${a.id}')">Delete</button></div>
     </div>
   `;
 }
@@ -8680,10 +8680,17 @@ function removeMaintenancePayment(clientId, addOnId, paymentId){
   if(!confirm("Remove this month's maintenance payment?")) return;
   updateAddOnMaintenancePayments(clientId, addOnId, list=>list.filter(p=>p.id!==paymentId));
 }
+// A build carries its payment schedule, assistant pay, maintenance log and
+// to-dos with it, so a stray OK click on a plain confirm() was too easy —
+// deleting takes typing the word "delete".
 function removeClientAddOn(clientId, addOnId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
-  if(!confirm("Remove this add-on from the client's record?")) return;
+  const addOn = (client.addOns||[]).find(a=>a.id===addOnId);
+  if(!addOn) return;
+  const typed = prompt(`Delete "${addOn.label||'this add-on'}" from ${client.name}?\n\nThis also deletes its payment schedule, assistant pay, monthly maintenance log, and build to-dos. It can't be undone.\n\nType delete to confirm:`, "");
+  if(typed===null) return;
+  if(typed.trim().toLowerCase()!=="delete"){ alert('Not deleted — you need to type the word "delete" to confirm.'); return; }
   upsert("clients", clientId, { addOns: (client.addOns||[]).filter(a=>a.id!==addOnId) });
 }
 function updateClientField(id, field, value){ upsert("clients", id, { [field]: value }); }
