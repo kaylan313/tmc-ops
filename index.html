@@ -3330,10 +3330,11 @@ function renderAppShell(){
         { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
-        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["techSupport","Tech Support"]] }
+        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Dev Goals"],["techSupport","Tech Support"]] }
       ]
     : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
-       ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []), ["techSupport","Tech Support"]] }];
+       ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []),
+       ...(isDevDirector() ? [["goals","Goals"]] : []), ["techSupport","Tech Support"]] }];
 
   app.innerHTML = `
     <div class="app-shell">
@@ -3381,6 +3382,7 @@ function renderMain(){
     case "vendorTickets": return renderVendorTicketsTab();
     case "cardPurchases": return state.role==="admin" ? renderCardPurchasesTab() : "";
     case "builds": return renderBuildsTab();
+    case "goals": return (state.role==="admin" || isDevDirector()) ? renderGoalsTab() : "";
     case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return state.role==="admin" ? renderTeamAdmin() : renderTeamDirectory();
@@ -8375,6 +8377,12 @@ function renderAddOnRow(clientId, a){
             ${ADDON_STATUSES.map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
+        <div><label class="small">Counts toward goals as</label>
+          <select onchange="updateAddOnField('${clientId}','${a.id}','buildType',this.value||null)">
+            ${[["","— Pick one —"],["website","Website build"],["software","Software build"],["none","Not a build"]].map(([v,l])=>`<option value="${v}" ${addOnBuildType(a)===v||(!addOnBuildType(a)&&!v)?'selected':''}>${l}</option>`).join("")}
+          </select>
+        </div>
+        ${a.status==="Completed" ? `<div><label class="small">Completed on</label><input type="date" value="${a.completedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','completedDate',this.value)"></div>` : ""}
       </div>
       <div class="row">
         <div><label class="small">Flat fee ($)</label><input id="addon_fee_${a.id}" type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
@@ -8674,6 +8682,10 @@ function updateAddOnField(clientId, addOnId, field, value){
   const addOns = (client.addOns||[]).map(a=>{
     if(a.id!==addOnId) return a;
     const updated = { ...a, [field]: value };
+    // Goals tab counts a build in the month it was completed — stamp that
+    // the moment it's marked Completed (editable after), clear it if it's
+    // moved back out so it stops counting.
+    if(field==="status") updated.completedDate = value==="Completed" ? (a.completedDate || ymd(new Date())) : "";
     // Keep each payment's due date in sync with Day 1 whenever it's set or
     // changed — re-deriving dueDayOffset-tagged payments only (a payment
     // added by hand, with no offset, is left exactly as whoever set it
@@ -9610,6 +9622,179 @@ function viewClientSoftwareBuild(clientId){
 // build(s) — her phase checklist and deadlines, no dollar amounts at all.
 // This is deliberately not the normal Task Board: she isn't clocking
 // hourly for this work, so it has no place there.
+// ---- Goals tab (Director of Development + admin) ----
+// Stored in settings/access as devGoals (same place team-side writes like
+// the content calendar already go — no new collection/rules). Build counts
+// aren't typed in: they're counted from add-ons marked Completed, by
+// completedDate and buildType (website/software), company-wide since these
+// are division goals. Everything else is a checklist seeded from the
+// 2027 Goals doc, editable from the tab.
+const DEV_GOALS_SECTIONS = [["Q1","Q1 · January–March"],["Q2","Q2 · April–June"],["Q3","Q3 · July–September"],["Q4","Q4 · October–December"],["year","All year"],["personal","Personal goals"]];
+function defaultDevGoals(){
+  let n = 0;
+  const item = (section, text) => ({ id:"goal_seed_"+(++n), section, text, done:false, doneAt:"" });
+  return {
+    year: 2027,
+    // Builds completed per month, by quarter.
+    targets: { Q1:{website:2,software:1}, Q2:{website:3,software:2}, Q3:{website:4,software:3}, Q4:{website:5,software:4} },
+    items: [
+      item("Q1","Agree on the salary milestones with Kaylan in writing"),
+      item("Q1","Set qualifications for new hires with Kaylan"),
+      item("Q1","Hire team member #1"),
+      item("Q1","Pass the 90-day review (around March 1) and move to the independent rate"),
+      item("Q2","Hire team member #2"),
+      item("Q2","Build a portfolio of projects I can show"),
+      item("Q3","Hire team member #3"),
+      item("Q3","First team members run projects with light oversight"),
+      item("Q3","Check progress toward the salary milestones"),
+      item("Q4","Hire team member #4"),
+      item("Q4","Meet the salary milestones"),
+      item("Q4","Hold an annual recap with Kaylan in December to review the year and discuss salary"),
+      item("Q4","Move the director role to a salary by December 31"),
+      item("Q4","Set 2028 goals with Kaylan"),
+      item("year","Train each new hire on TMC's process and standards"),
+      item("year","Review progress at the monthly goal meetings with Kaylan")
+    ],
+    wins: [],
+    qualifications: "Skills\n- Some background in AI and coding, with at least a basic working knowledge of both\n- Experience building websites on the platforms TMC uses\n- Basic understanding of CRMs, automations or no-code tools, or a strong willingness to learn\n- An eye for clean, modern design\n- Comfortable learning new software quickly\n\nWork style\n- Clear, friendly communication with clients\n- Organised and reliable with deadlines\n- Detail-oriented, catching mistakes before clients do\n- Takes feedback well and is open to coaching\n\nFit with TMC\n- Represents The Modern Co.'s standards and reputation\n- Can keep client information confidential\n- Available for the agreed hours and team workshops\n\nInterviews\n- Tori and Kaylan are welcome to be part of the interview process."
+  };
+}
+function devGoals(){ return state.settings.devGoals || defaultDevGoals(); }
+function saveDevGoals(goals){
+  state.settings.devGoals = goals;
+  upsert("settings","access", { devGoals: goals });
+  render();
+}
+// Website/software classification for goal counting. Explicit pick wins;
+// otherwise inferred from the catalog category, and a Custom Build stays
+// unset (could be either) until someone picks.
+function addOnBuildType(a){
+  if(a.buildType) return a.buildType;
+  if(a.category==="SOP") return "none";
+  if(a.category==="Productized Software" || a.category==="AI Integration") return "software";
+  return "";
+}
+function completedBuilds(){
+  return allClientAddOns().filter(({addOn})=>addOn.status==="Completed" && addOn.completedDate);
+}
+function countCompletedBuilds(type, start, end){
+  return completedBuilds().filter(({addOn})=>{
+    if(addOnBuildType(addOn)!==type) return false;
+    const d = parseYMD(addOn.completedDate);
+    return d >= start && d < end;
+  }).length;
+}
+function updateDevGoalItem(id, patch){
+  const g = devGoals();
+  saveDevGoals({ ...g, items: g.items.map(i=>i.id===id ? { ...i, ...patch } : i) });
+}
+function addDevGoalItem(section){
+  const text = (prompt("New goal:", "") || "").trim();
+  if(!text) return;
+  const g = devGoals();
+  saveDevGoals({ ...g, items: [...g.items, { id:newId("goal"), section, text, done:false, doneAt:"" }] });
+}
+function removeDevGoalItem(id){
+  if(!confirm("Remove this goal?")) return;
+  const g = devGoals();
+  saveDevGoals({ ...g, items: g.items.filter(i=>i.id!==id) });
+}
+function updateDevGoalTarget(q, type, value){
+  const g = devGoals();
+  saveDevGoals({ ...g, targets: { ...g.targets, [q]: { ...g.targets[q], [type]: Math.max(0, parseInt(value,10)||0) } } });
+}
+function addDevGoalWin(){
+  const text = (state.devWinDraft||"").trim();
+  if(!text) return;
+  const g = devGoals();
+  state.devWinDraft = "";
+  saveDevGoals({ ...g, wins: [{ id:newId("win"), date: ymd(new Date()), text }, ...(g.wins||[])] });
+}
+function removeDevGoalWin(id){
+  if(!confirm("Remove this win?")) return;
+  const g = devGoals();
+  saveDevGoals({ ...g, wins: (g.wins||[]).filter(w=>w.id!==id) });
+}
+function renderGoalBar(done, target, color){
+  const pct = target ? Math.min(100, Math.round(done/target*100)) : 0;
+  return `<div class="progress-bar" style="margin:4px 0;"><div style="width:${pct}%;background:${done>=target&&target?'var(--ok)':color||'var(--rose-dark)'};"></div></div>`;
+}
+function renderGoalsTab(){
+  const g = devGoals();
+  const year = g.year;
+  const yStart = new Date(year,0,1), yEnd = new Date(year+1,0,1);
+  const now = new Date();
+  const quarterOf = m => "Q"+(Math.floor(m/3)+1);
+  const qTotal = (q,type) => (g.targets[q]?.[type]||0)*3;
+  const yearTarget = type => ["Q1","Q2","Q3","Q4"].reduce((s,q)=>s+qTotal(q,type),0);
+  const inYear = now >= yStart && now < yEnd;
+  const unclassified = completedBuilds().filter(({addOn})=>!addOnBuildType(addOn));
+  const typeLabel = { website:"Website builds", software:"Software builds" };
+  const isAdmin = state.role==="admin";
+  const items = section => g.items.filter(i=>i.section===section);
+  const checklist = section => `
+    ${items(section).map(i=>`
+      <div class="checklist-item">
+        <input type="checkbox" ${i.done?'checked':''} onchange="updateDevGoalItem('${i.id}',{done:this.checked,doneAt:this.checked?new Date().toISOString():''})">
+        <span style="flex:1;${i.done?'text-decoration:line-through;opacity:.65;':''}">${escHtml(i.text)}${i.done&&i.doneAt?` <span class="small">· ${new Date(i.doneAt).toLocaleDateString()}</span>`:''}</span>
+        <button class="secondary" style="padding:2px 8px;" title="Remove" onclick="removeDevGoalItem('${i.id}')">✕</button>
+      </div>`).join("") || `<div class="small">Nothing here yet.</div>`}
+    <button class="secondary" style="margin-top:6px;padding:4px 10px;" onclick="addDevGoalItem('${section}')">+ Add goal</button>`;
+  return `
+    <h2>${year} Goals</h2>
+    <div class="small" style="margin-bottom:14px;">Director of Software Development &amp; Web Design${isAdmin ? ` · ${escHtml((state.settings.assistants.find(a=>a.isDevDirector)||{}).name||'')}` : ''}. Build counts fill in automatically from builds marked <strong>Completed</strong> on a client's Software Build tab (yours and your team's), using their completed date and "Counts toward goals as".${inYear ? '' : ` These goals start January ${year} — counts will show from then.`}</div>
+    ${unclassified.length ? `<div class="alert warn">${unclassified.length} completed build${unclassified.length===1?' isn\'t':'s aren\'t'} counted yet — pick Website or Software under "Counts toward goals as": ${unclassified.map(({client,addOn})=>`<a href="#" onclick="viewClientSoftwareBuild('${client.id}');return false;">${escHtml(client.name)} — ${escHtml(addOn.label||'build')}</a>`).join(", ")}</div>` : ""}
+    <div class="stat-row">
+      ${["website","software"].map(type=>{
+        const done = countCompletedBuilds(type, yStart, yEnd), target = yearTarget(type);
+        return `<div class="stat-tile"><div class="stat-label">${typeLabel[type]} — ${year}</div><div class="stat-value">${done} <span class="small">/ ${target}</span></div>${renderGoalBar(done,target)}</div>`;
+      }).join("")}
+      ${inYear ? ["website","software"].map(type=>{
+        const mStart = new Date(now.getFullYear(), now.getMonth(), 1), mEnd = new Date(now.getFullYear(), now.getMonth()+1, 1);
+        const done = countCompletedBuilds(type, mStart, mEnd), target = g.targets[quarterOf(now.getMonth())]?.[type]||0;
+        return `<div class="stat-tile"><div class="stat-label">${typeLabel[type]} — ${now.toLocaleDateString(undefined,{month:'long'})}</div><div class="stat-value">${done} <span class="small">/ ${target}</span></div>${renderGoalBar(done,target)}</div>`;
+      }).join("") : ""}
+    </div>
+    ${["Q1","Q2","Q3","Q4"].map((q,qi)=>{
+      const qStart = new Date(year, qi*3, 1), qEnd = new Date(year, qi*3+3, 1);
+      const isNow = now >= qStart && now < qEnd;
+      return `
+      <div class="card" style="${isNow?'border:2px solid var(--rose);':''}">
+        <div class="flex-between"><h3 style="margin:0;">${DEV_GOALS_SECTIONS[qi][1]}</h3>${isNow?'<span class="badge">This quarter</span>':''}</div>
+        <div class="row" style="margin:8px 0 4px;">
+          ${["website","software"].map(type=>{
+            const done = countCompletedBuilds(type, qStart, qEnd);
+            return `<div>
+              <div class="small" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${typeLabel[type]}: <input type="number" min="0" value="${g.targets[q]?.[type]||0}" onchange="updateDevGoalTarget('${q}','${type}',this.value)" style="width:58px;padding:2px 6px;"> per month · <strong>${done} / ${qTotal(q,type)}</strong> for the quarter</div>
+              ${renderGoalBar(done, qTotal(q,type))}
+            </div>`;
+          }).join("")}
+        </div>
+        ${checklist(q)}
+      </div>`;
+    }).join("")}
+    <div class="card"><h3>All year</h3>${checklist("year")}</div>
+    <div class="card">
+      <h3>Wins log</h3>
+      <div class="small" style="margin-bottom:6px;">Builds completed, clients brought in, hires made, positive client feedback — a running record to bring to the annual recap.</div>
+      <div style="display:flex;gap:6px;">
+        <input id="dev_win_draft" value="${escHtml(state.devWinDraft||'')}" oninput="state.devWinDraft=this.value" placeholder="e.g. Client loved the new booking page">
+        <button onclick="addDevGoalWin()">Add</button>
+      </div>
+      ${(g.wins||[]).map(w=>`
+        <div class="list-item">
+          <div>${escHtml(w.text)}</div>
+          <div style="display:flex;align-items:center;gap:8px;"><span class="small">${parseYMD(w.date).toLocaleDateString()}</span><button class="secondary" style="padding:2px 8px;" onclick="removeDevGoalWin('${w.id}')">✕</button></div>
+        </div>`).join("") || `<div class="small" style="margin-top:6px;">No wins logged yet.</div>`}
+    </div>
+    <div class="card">
+      <h3>Qualifications for new hires</h3>
+      <div class="small" style="margin-bottom:6px;">Draft to finalise with Kaylan in Q1. Saves when you click away.</div>
+      <textarea style="min-height:220px;" onchange="saveDevGoals({...devGoals(), qualifications:this.value})">${escHtml(g.qualifications||'')}</textarea>
+    </div>
+    <div class="card"><h3>Personal goals</h3>${checklist("personal")}</div>
+  `;
+}
 function allAssignedBuilds(){
   return allClientAddOns().filter(({addOn})=>!!addOn.buildAssistantId);
 }
