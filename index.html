@@ -6322,6 +6322,7 @@ function renderClientCRM(clientId){
   // single Profile tab's behavior before this split.
   const subtabs = [["profileDetails","Details"],["profileNotes","Notes & Dates"],["tasks","Tasks"],["profileContract","Contract & Payment"]];
   if(state.role==="admin") subtabs.push(["membership","Membership"],["softwareBuild","Software Build"]);
+  else if(isDevDirector()) subtabs.push(["softwareBuild","Software Build"]);
   subtabs.push(["emailTemplates","Email Templates"]);
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
@@ -6344,7 +6345,7 @@ function renderClientCRM(clientId){
     ${state.crmSubTab==="profileContract" ? renderClientProfile(client).contract : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
     ${state.crmSubTab==="membership" && state.role==="admin" ? renderClientMembership(client) : ""}
-    ${state.crmSubTab==="softwareBuild" && state.role==="admin" ? renderClientAddOnsSection(client) : ""}
+    ${state.crmSubTab==="softwareBuild" && (state.role==="admin" || isDevDirector()) ? renderClientAddOnsSection(client) : ""}
     ${state.crmSubTab==="emailTemplates" ? renderClientEmailTemplates(client) : ""}
   `;
 }
@@ -9235,10 +9236,10 @@ function allAssignedBuilds(){
   return allClientAddOns().filter(({addOn})=>!!addOn.buildAssistantId);
 }
 function renderBuildsTab(){
-  // seesAll = admin or the Dev Director: every build plus its finances.
-  // Only admin gets the jump into the client profile (Membership etc.).
-  const isAdmin = state.role==="admin";
-  const seesAll = isAdmin || isDevDirector();
+  // seesAll = admin or the Dev Director: every build plus its finances, and
+  // the jump into the client's Software Build sub-tab (Membership stays
+  // admin-only — see renderClientCRM).
+  const seesAll = state.role==="admin" || isDevDirector();
   const builds = seesAll ? allAssignedBuilds() : allAssignedBuilds().filter(({addOn})=>addOn.buildAssistantId===state.currentAssistant?.id);
   return `
     <h2>Builds</h2>
@@ -9255,7 +9256,7 @@ function renderBuildsTab(){
         <div class="card">
           <div class="flex-between">
             <h3 style="margin:0;">${client.name} — ${addOn.label}</h3>
-            ${isAdmin ? `<button class="secondary" onclick="viewClientSoftwareBuild('${client.id}')">Open in client profile</button>` : ""}
+            ${seesAll ? `<button class="secondary" onclick="viewClientSoftwareBuild('${client.id}')">Open in client profile</button>` : ""}
           </div>
           <div class="small" style="margin-bottom:8px;">
             ${seesAll ? `${assistantName(addOn.buildAssistantId)} · ${addOn.buildAssistantPercent||0}% of $${(addOn.buildAssistantBasisAmount!=null?addOn.buildAssistantBasisAmount:(addOn.flatFee||0)).toFixed(0)} build cost · earned so far: $${paidCut.toFixed(2)} of $${totalCut.toFixed(2)} total` : `${todos.length?doneCount+' of '+todos.length+' to-dos complete':'No to-dos set yet — ask Kaylan to add the checklist.'}`}
