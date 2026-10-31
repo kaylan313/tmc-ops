@@ -713,6 +713,11 @@ function seedPreviewData(){
     profile:{ serviceType:"business", phone:"555-444-5555", officeAddress:"100 Fake Ave, Baton Rouge, LA" },
     // A fake assigned build so the Builds tab isn't empty in preview.
     addOns:[{ id:"addon_preview_1", label:"Website Build", status:"Active", flatFee:3000, buildAssistantId:"asst_3", buildAssistantPercent:30,
+      monthlyMaintenance:150, maintenanceActive:true, maintenanceAssistantId:"asst_3", maintenanceAssistantPercent:30,
+      maintenancePayments:[
+        { id:"maintpay_preview_1", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(new Date(now).getFullYear(), new Date(now).getMonth()-1, 1)), amount:150, paid:true, paidDate: new Date(now - 3*24*3600000).toISOString().slice(0,10) },
+        { id:"maintpay_preview_2", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(now)), amount:150, paid:false, paidDate:"" }
+      ],
       buildStartDate: new Date(now - 10*24*3600000).toISOString().slice(0,10),
       payments:[
         { id:"pay_preview_1", label:"50% Deposit", amount:1500, paid:true, paidDate: new Date(now - 10*24*3600000).toISOString().slice(0,10) },
@@ -8135,6 +8140,24 @@ function renderAddOnRow(clientId, a){
           <div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>
         `}
       </div>
+      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Recurring Monthly Maintenance — Assistant Split</label>
+        <div class="small" style="margin-bottom:6px;">${a.monthlyMaintenance>0
+          ? `$${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}. The assigned assistant gets their % of each month's fee once that month is marked paid — it's added to their next regular paycheck automatically, listed separately from build pay.`
+          : `Set a monthly maintenance amount above to track recurring maintenance payments and the assistant's split.`}</div>
+        ${a.monthlyMaintenance>0 ? `
+        <div class="row">
+          <div><label class="small">Maintaining assistant</label>
+            <select onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantId',this.value||null)">
+              <option value="">— None —</option>
+              ${state.settings.assistants.filter(x=>x.active!==false).map(x=>`<option value="${x.id}" ${a.maintenanceAssistantId===x.id?'selected':''}>${x.name}</option>`).join("")}
+            </select>
+          </div>
+          <div><label class="small">Their %</label><input id="addon_maintpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.maintenanceAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
+        </div>
+        ${(a.maintenancePayments||[]).slice().sort((x,y)=> (y.month||'') < (x.month||'') ? -1 : 1).map(p=>renderMaintenancePaymentRow(clientId,a,p)).join("")}
+        <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add month</button></div>` : ""}
+      </div>
       ${a.buildAssistantId ? `
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <div class="flex-between">
@@ -8396,6 +8419,66 @@ function updateAddOnField(clientId, addOnId, field, value){
     return updated;
   });
   upsert("clients", clientId, { addOns });
+}
+// ---- Recurring monthly maintenance — one payment row per month, so the
+// maintaining assistant's % is only counted once that month's fee is
+// actually collected (same rule as build pay), in the payroll period it
+// was marked paid.
+function maintenanceAssistantCut(addOn, payment){
+  if(!addOn.maintenanceAssistantId || !addOn.maintenanceAssistantPercent) return 0;
+  return Math.round((payment.amount||0) * (addOn.maintenanceAssistantPercent/100) * 100) / 100;
+}
+function formatMaintenanceMonth(ym){
+  if(!ym) return "Month not set";
+  const [y,m] = ym.split("-").map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString(undefined, { month:"long", year:"numeric" });
+}
+function renderMaintenancePaymentRow(clientId, a, p){
+  const cut = maintenanceAssistantCut(a, p);
+  return `
+    <div class="row" style="align-items:flex-end;margin-top:6px;">
+      <div><label class="small">Month</label><input type="month" value="${p.month||''}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','month',this.value)" style="max-width:160px;"></div>
+      <div><label class="small">Amount ($)</label><input id="addon_maintpay_amt_${p.id}" type="number" step="1" value="${p.amount||0}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
+        <input type="checkbox" ${p.paid?'checked':''} onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','paid',this.checked)">
+        Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+')' : ''}
+      </label>
+      <div style="padding-bottom:6px;"><button class="secondary" style="padding:2px 8px;" onclick="removeMaintenancePayment('${clientId}','${a.id}','${p.id}')">✕</button></div>
+    </div>
+    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${formatMaintenanceMonth(p.month)}: ${assistantName(a.maintenanceAssistantId)} earns $${cut.toFixed(2)} (${a.maintenanceAssistantPercent}%) ${p.paid?'— rolled into the '+formatPeriodRange(currentPayrollPeriod(new Date(p.paidDate)))+' paycheck':'— added to the next regular paycheck once this month is marked paid'}</div>` : ""}
+  `;
+}
+function updateAddOnMaintenancePayments(clientId, addOnId, fn){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, maintenancePayments: fn(a.maintenancePayments||[], a) } : a);
+  upsert("clients", clientId, { addOns });
+}
+// Defaults to the month after the latest one logged (or this month if none
+// yet), at the add-on's current monthly maintenance amount.
+function addMaintenancePayment(clientId, addOnId){
+  updateAddOnMaintenancePayments(clientId, addOnId, (list, a)=>{
+    const latest = list.map(p=>p.month).filter(Boolean).sort().pop();
+    let month = new Date().toISOString().slice(0,7);
+    if(latest){
+      const [y,m] = latest.split("-").map(Number);
+      month = new Date(y, m, 1).getFullYear() + "-" + String(new Date(y, m, 1).getMonth()+1).padStart(2,"0");
+    }
+    return [...list, { id:newId("maintpay"), month, amount:a.monthlyMaintenance||0, paid:false, paidDate:"" }];
+  });
+}
+function updateMaintenancePaymentField(clientId, addOnId, paymentId, field, value){
+  updateAddOnMaintenancePayments(clientId, addOnId, list=>list.map(p=>{
+    if(p.id!==paymentId) return p;
+    const updated = { ...p, [field]: value };
+    // Same as build payments: checking Paid stamps today, unchecking clears it.
+    if(field==="paid") updated.paidDate = value ? (p.paidDate || new Date().toISOString().slice(0,10)) : "";
+    return updated;
+  }));
+}
+function removeMaintenancePayment(clientId, addOnId, paymentId){
+  if(!confirm("Remove this month's maintenance payment?")) return;
+  updateAddOnMaintenancePayments(clientId, addOnId, list=>list.filter(p=>p.id!==paymentId));
 }
 function removeClientAddOn(clientId, addOnId){
   const client = state.clients.find(c=>c.id===clientId);
@@ -8984,6 +9067,23 @@ function buildPayForAssistantInPeriod(assistantId, period){
   });
   return Math.round(total*100)/100;
 }
+// Recurring maintenance share — same rule as build pay: counted in the
+// payroll period the month's fee was marked paid.
+function maintenancePayForAssistantInPeriod(assistantId, period){
+  let total = 0;
+  state.clients.forEach(client=>{
+    (client.addOns||[]).forEach(a=>{
+      if(a.maintenanceAssistantId!==assistantId) return;
+      (a.maintenancePayments||[]).forEach(p=>{
+        if(!p.paid || !p.paidDate) return;
+        const paidAt = new Date(p.paidDate);
+        if(period && (paidAt < period.start || paidAt >= period.end)) return;
+        total += maintenanceAssistantCut(a, p);
+      });
+    });
+  });
+  return Math.round(total*100)/100;
+}
 function payrollRateLabel(assistant){
   return assistant.payType==="flat"
     ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+"/period (flat)"
@@ -9019,7 +9119,7 @@ function renderPayrollTool(){
   const shownAssistants = state.settings.assistants.filter(a=>{
     if(pf.assistantId!=="all") return a.id===pf.assistantId;
     if(a.active!==false) return true;
-    return payrollHoursForAssistant(a.id, period, pf.adminOnly) > 0 || buildPayForAssistantInPeriod(a.id, period) > 0;
+    return payrollHoursForAssistant(a.id, period, pf.adminOnly) > 0 || buildPayForAssistantInPeriod(a.id, period) > 0 || maintenancePayForAssistantInPeriod(a.id, period) > 0;
   });
   const periodLabel = PAYROLL_FILTER_PRESETS.find(([v])=>v===pf.preset)[1];
   const periodPaidKey = isPayrollPeriodPreset ? period.end.toISOString() : null;
@@ -9109,12 +9209,13 @@ function renderPayrollTool(){
           ${shownAssistants.map(a=>{
             const hrs = payrollHoursForAssistant(a.id, period, pf.adminOnly);
             const buildPay = buildPayForAssistantInPeriod(a.id, period);
+            const maintPay = maintenancePayForAssistantInPeriod(a.id, period);
             const active = activeEntryFor(a.id);
             return `<tr>
               <td>${a.name}${a.active===false?' <span class="small">(former)</span>':''}</td>
               <td>${hrs.toFixed(1)}</td>
               <td>${payrollRateLabel(a)}</td>
-              <td>$${(payrollAmountForAssistant(a,hrs)+buildPay).toFixed(2)}${buildPay>0?`<div class="small">incl. $${buildPay.toFixed(2)} build pay</div>`:''}</td>
+              <td>$${(payrollAmountForAssistant(a,hrs)+buildPay+maintPay).toFixed(2)}${buildPay>0?`<div class="small">incl. $${buildPay.toFixed(2)} build pay</div>`:''}${maintPay>0?`<div class="small">incl. $${maintPay.toFixed(2)} maintenance pay</div>`:''}</td>
               <td>${active
                 ? `<span class="dot-live ${isStale(active)?'stale':''}"></span>clocked in ${entryDurationHours(active).toFixed(1)}h`
                 : `<span class="small">off the clock</span>`}</td>
@@ -9124,7 +9225,7 @@ function renderPayrollTool(){
             <td>Total</td>
             <td>${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly),0).toFixed(1)}</td>
             <td></td>
-            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly))+buildPayForAssistantInPeriod(a.id, period),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly))+buildPayForAssistantInPeriod(a.id, period)+maintenancePayForAssistantInPeriod(a.id, period),0).toFixed(2)}</td>
             <td></td>
           </tr>
         </tbody>
