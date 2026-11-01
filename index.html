@@ -142,6 +142,8 @@
   .flex-between{display:flex;justify-content:space-between;align-items:center;}
   .stat-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
   .goals-section-title{margin:26px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--rose);font-size:20px;}
+  .goals-switch-row{display:flex;flex-wrap:wrap;gap:10px 16px;justify-content:space-between;align-items:center;margin-bottom:12px;}
+  .goals-owner-switch{display:flex;gap:6px;flex-wrap:wrap;}
   .goals-month-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;}
   .goals-month-grid .goals-month-card{margin:0;}
   .stat-tile{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;flex:1;min-width:170px;}
@@ -3338,7 +3340,7 @@ function renderAppShell(){
         { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
-        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Dev Goals"],["techSupport","Tech Support"]] }
+        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Goals"],["techSupport","Tech Support"]] }
       ]
     : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
        ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []),
@@ -9672,6 +9674,61 @@ function saveDevGoals(goals){
   upsert("settings","access", { devGoals: goals });
   render();
 }
+// Admin's own goals: same Monthly / Quarterly / Annual / Personal layout
+// and wins log, minus the build-count targets (those are the dev
+// division's). Stored as settings/access.adminGoals, alongside devGoals.
+// Admin switches between "My goals" and the Dev Director's with the
+// toggle at the top of the tab; the Dev Director only ever sees theirs.
+function defaultAdminGoals(){ return { year: devGoals().year, targets:{}, items:[], wins:[] }; }
+function adminGoals(){ return state.settings.adminGoals || defaultAdminGoals(); }
+function goalsOwner(){ return state.role==="admin" && state.goalsOwner!=="dev" ? "admin" : "dev"; }
+function setGoalsOwner(owner){ state.goalsOwner = owner; state.devGoalEditingId = null; state.devWinDraft = ""; render(); }
+// Years: each owner's original goal set (devGoals / adminGoals) stays
+// exactly where it is, for its own .year. Every other year lives in a
+// map keyed by year (devGoalYears / adminGoalYears), so adding years never
+// moves or rewrites the existing data.
+function mainGoalsFor(owner){ return owner==="admin" ? adminGoals() : devGoals(); }
+function goalYearsKey(owner){ return owner==="admin" ? "adminGoalYears" : "devGoalYears"; }
+function selectedGoalsYear(){ return state.goalsYear || mainGoalsFor(goalsOwner()).year; }
+function emptyGoalsForYear(owner, year){
+  const zero = { website:0, software:0 };
+  return { year, targets: owner==="admin" ? {} : { Q1:{...zero}, Q2:{...zero}, Q3:{...zero}, Q4:{...zero} }, items:[], wins:[] };
+}
+function activeGoals(){
+  const owner = goalsOwner(), main = mainGoalsFor(owner), year = selectedGoalsYear();
+  if(year===main.year) return main;
+  return (state.settings[goalYearsKey(owner)]||{})[year] || emptyGoalsForYear(owner, year);
+}
+function saveActiveGoals(goals){
+  const owner = goalsOwner();
+  if(goals.year===mainGoalsFor(owner).year){
+    if(owner!=="admin") return saveDevGoals(goals);
+    state.settings.adminGoals = goals;
+    upsert("settings","access", { adminGoals: goals });
+    return render();
+  }
+  const key = goalYearsKey(owner);
+  state.settings[key] = { ...(state.settings[key]||{}), [goals.year]: goals };
+  upsert("settings","access", { [key]: state.settings[key] });
+  render();
+}
+// Buttons run from the earliest year with goals (or this calendar year)
+// through the latest; "+" adds the next year (saved once a goal is added).
+function goalYearOptions(){
+  const owner = goalsOwner();
+  const years = [mainGoalsFor(owner).year, new Date().getFullYear(), selectedGoalsYear(),
+    ...Object.keys(state.settings[goalYearsKey(owner)]||{}).map(Number), ...(state.goalsExtraYears||[])].filter(Number.isFinite);
+  const lo = Math.min(...years), hi = Math.max(...years);
+  const out = [];
+  for(let y=lo; y<=hi && out.length<20; y++) out.push(y);
+  return out;
+}
+function setGoalsYear(year){ state.goalsYear = year; state.devGoalEditingId = null; state.devWinDraft = ""; render(); }
+function addGoalsYear(){
+  const next = Math.max(...goalYearOptions()) + 1;
+  state.goalsExtraYears = [...(state.goalsExtraYears||[]), next];
+  setGoalsYear(next);
+}
 // Website/software classification for goal counting. Explicit pick wins;
 // otherwise inferred from the catalog category, and a Custom Build stays
 // unset (could be either) until someone picks.
@@ -9692,14 +9749,14 @@ function countCompletedBuilds(type, start, end){
   }).length;
 }
 function updateDevGoalItem(id, patch){
-  const g = devGoals();
-  saveDevGoals({ ...g, items: g.items.map(i=>i.id===id ? { ...i, ...patch } : i) });
+  const g = activeGoals();
+  saveActiveGoals({ ...g, items: g.items.map(i=>i.id===id ? { ...i, ...patch } : i) });
 }
 function addDevGoalItem(section){
   const text = (prompt("New goal:", "") || "").trim();
   if(!text) return;
-  const g = devGoals();
-  saveDevGoals({ ...g, items: [...g.items, { id:newId("goal"), section, text, done:false, doneAt:"" }] });
+  const g = activeGoals();
+  saveActiveGoals({ ...g, items: [...g.items, { id:newId("goal"), section, text, done:false, doneAt:"" }] });
 }
 // Goal sections: "Q1".."Q4" (quarter-wide), "M1".."M12" (a specific month,
 // shown inside its quarter's card), "year", "personal".
@@ -9723,40 +9780,40 @@ function saveDevGoalEdit(id){
   updateDevGoalItem(id, { text, section });
 }
 function editDevGoalWin(id){
-  const g = devGoals();
+  const g = activeGoals();
   const win = (g.wins||[]).find(w=>w.id===id);
   if(!win) return;
   const text = prompt("Edit win:", win.text);
   if(text===null || !text.trim()) return;
-  saveDevGoals({ ...g, wins: g.wins.map(w=>w.id===id ? { ...w, text: text.trim() } : w) });
+  saveActiveGoals({ ...g, wins: g.wins.map(w=>w.id===id ? { ...w, text: text.trim() } : w) });
 }
 function removeDevGoalItem(id){
   if(!confirm("Remove this goal?")) return;
-  const g = devGoals();
-  saveDevGoals({ ...g, items: g.items.filter(i=>i.id!==id) });
+  const g = activeGoals();
+  saveActiveGoals({ ...g, items: g.items.filter(i=>i.id!==id) });
 }
 function updateDevGoalTarget(q, type, value){
-  const g = devGoals();
-  saveDevGoals({ ...g, targets: { ...g.targets, [q]: { ...g.targets[q], [type]: Math.max(0, parseInt(value,10)||0) } } });
+  const g = activeGoals();
+  saveActiveGoals({ ...g, targets: { ...g.targets, [q]: { ...g.targets[q], [type]: Math.max(0, parseInt(value,10)||0) } } });
 }
 function addDevGoalWin(){
   const text = (state.devWinDraft||"").trim();
   if(!text) return;
-  const g = devGoals();
+  const g = activeGoals();
   state.devWinDraft = "";
-  saveDevGoals({ ...g, wins: [{ id:newId("win"), date: ymd(new Date()), text }, ...(g.wins||[])] });
+  saveActiveGoals({ ...g, wins: [{ id:newId("win"), date: ymd(new Date()), text }, ...(g.wins||[])] });
 }
 function removeDevGoalWin(id){
   if(!confirm("Remove this win?")) return;
-  const g = devGoals();
-  saveDevGoals({ ...g, wins: (g.wins||[]).filter(w=>w.id!==id) });
+  const g = activeGoals();
+  saveActiveGoals({ ...g, wins: (g.wins||[]).filter(w=>w.id!==id) });
 }
 function renderGoalBar(done, target, color){
   const pct = target ? Math.min(100, Math.round(done/target*100)) : 0;
   return `<div class="progress-bar" style="margin:4px 0;"><div style="width:${pct}%;background:${done>=target&&target?'var(--ok)':color||'var(--rose-dark)'};"></div></div>`;
 }
 function renderGoalsTab(){
-  const g = devGoals();
+  const g = activeGoals();
   const year = g.year;
   const yStart = new Date(year,0,1), yEnd = new Date(year+1,0,1);
   const now = new Date();
@@ -9767,6 +9824,9 @@ function renderGoalsTab(){
   const unclassified = completedBuilds().filter(({addOn})=>!addOnBuildType(addOn));
   const typeLabel = { website:"Website builds", software:"Software builds" };
   const isAdmin = state.role==="admin";
+  const mine = goalsOwner()==="admin";
+  const showBuilds = !mine;
+  const directorName = (state.settings.assistants.find(a=>a.isDevDirector)||{}).name || "Dev Director";
   const items = section => g.items.filter(i=>i.section===section);
   const addLabel = section => /^M\d+$/.test(section) ? `+ Add goal for ${DEV_GOAL_MONTHS[+section.slice(1)-1]}` : "+ Add goal";
   const checklist = section => `
@@ -9787,11 +9847,23 @@ function renderGoalsTab(){
       </div>`).join("") || (/^M\d+$/.test(section) ? "" : `<div class="small">Nothing here yet.</div>`)}
     <button class="secondary" style="margin-top:6px;padding:4px 10px;" onclick="addDevGoalItem('${section}')">${addLabel(section)}</button>`;
   return `
-    <h2>${year} Goals</h2>
-    <div class="small" style="margin-bottom:14px;">Director of Software Development &amp; Web Design${isAdmin ? ` · ${escHtml((state.settings.assistants.find(a=>a.isDevDirector)||{}).name||'')}` : ''}. Build counts fill in automatically from builds marked <strong>Completed</strong> on a client's Software Build tab (yours and your team's), using their completed date and "Counts toward goals as".${inYear ? '' : ` These goals start January ${year} — counts will show from then.`}</div>
-    ${unclassified.length ? `<div class="alert warn">${unclassified.length} completed build${unclassified.length===1?' isn\'t':'s aren\'t'} counted yet — pick Website or Software under "Counts toward goals as": ${unclassified.map(({client,addOn})=>`<a href="#" onclick="viewClientSoftwareBuild('${client.id}');return false;">${escHtml(client.name)} — ${escHtml(addOn.label||'build')}</a>`).join(", ")}</div>` : ""}
+    <div class="goals-switch-row">
+      ${isAdmin ? `<div class="goals-owner-switch" role="tablist" aria-label="Whose goals">
+        <button class="${mine?'':'secondary'}" role="tab" aria-selected="${mine}" onclick="setGoalsOwner('admin')">My goals</button>
+        <button class="${mine?'secondary':''}" role="tab" aria-selected="${!mine}" onclick="setGoalsOwner('dev')">${escHtml(directorName)}'s goals</button>
+      </div>` : ""}
+      <div class="goals-owner-switch" role="tablist" aria-label="Year">
+        ${goalYearOptions().map(y=>`<button class="${y===year?'':'secondary'}" role="tab" aria-selected="${y===year}" onclick="setGoalsYear(${y})">${y}</button>`).join("")}
+        <button class="secondary" title="Add next year" aria-label="Add next year" onclick="addGoalsYear()">+</button>
+      </div>
+    </div>
+    <h2>${mine ? `My ${year} Goals` : `${year} Goals`}</h2>
+    ${mine
+      ? `<div class="small" style="margin-bottom:14px;">Your own goals for ${year}. Only the admin login shows this view.</div>`
+      : `<div class="small" style="margin-bottom:14px;">Director of Software Development &amp; Web Design${isAdmin ? ` · ${escHtml(directorName)}` : ''}. Build counts fill in automatically from builds marked <strong>Completed</strong> on a client's Software Build tab (yours and your team's), using their completed date and "Counts toward goals as".${inYear ? '' : ` These goals start January ${year} — counts will show from then.`}</div>`}
+    ${showBuilds && unclassified.length ? `<div class="alert warn">${unclassified.length} completed build${unclassified.length===1?' isn\'t':'s aren\'t'} counted yet — pick Website or Software under "Counts toward goals as": ${unclassified.map(({client,addOn})=>`<a href="#" onclick="viewClientSoftwareBuild('${client.id}');return false;">${escHtml(client.name)} — ${escHtml(addOn.label||'build')}</a>`).join(", ")}</div>` : ""}
     <h3 class="goals-section-title">Monthly goals</h3>
-    ${inYear ? `<div class="stat-row">
+    ${showBuilds && inYear ? `<div class="stat-row">
       ${["website","software"].map(type=>{
         const mStart = new Date(now.getFullYear(), now.getMonth(), 1), mEnd = new Date(now.getFullYear(), now.getMonth()+1, 1);
         const done = countCompletedBuilds(type, mStart, mEnd), target = g.targets[quarterOf(now.getMonth())]?.[type]||0;
@@ -9806,7 +9878,7 @@ function renderGoalsTab(){
         return `
         <div class="card goals-month-card" style="${isThisMonth?'border:2px solid var(--rose);':''}">
           <div class="flex-between"><h4 style="margin:0;">${name}</h4>${isThisMonth?'<span class="badge">This month</span>':''}</div>
-          <div class="small" style="margin:4px 0 6px;">${["website","software"].map(type=>`${type==="website"?"Website":"Software"} ${countCompletedBuilds(type, mStart, mEnd)} / ${g.targets[q]?.[type]||0}`).join(" · ")}</div>
+          ${showBuilds ? `<div class="small" style="margin:4px 0 6px;">${["website","software"].map(type=>`${type==="website"?"Website":"Software"} ${countCompletedBuilds(type, mStart, mEnd)} / ${g.targets[q]?.[type]||0}`).join(" · ")}</div>` : `<div style="height:6px;"></div>`}
           ${checklist("M"+(m+1))}
         </div>`;
       }).join("")}
@@ -9818,7 +9890,7 @@ function renderGoalsTab(){
       return `
       <div class="card" style="${isNow?'border:2px solid var(--rose);':''}">
         <div class="flex-between"><h3 style="margin:0;">${DEV_GOALS_SECTIONS[qi][1]}</h3>${isNow?'<span class="badge">This quarter</span>':''}</div>
-        <div class="row" style="margin:8px 0 4px;">
+        ${showBuilds ? `<div class="row" style="margin:8px 0 4px;">
           ${["website","software"].map(type=>{
             const done = countCompletedBuilds(type, qStart, qEnd);
             return `<div>
@@ -9827,23 +9899,23 @@ function renderGoalsTab(){
             </div>`;
           }).join("")}
         </div>
-        <div class="small" style="font-weight:600;margin-top:8px;">Goals</div>
+        <div class="small" style="font-weight:600;margin-top:8px;">Goals</div>` : `<div style="height:6px;"></div>`}
         ${checklist(q)}
       </div>`;
     }).join("")}
     <h3 class="goals-section-title">Annual goals</h3>
-    <div class="stat-row">
+    ${showBuilds ? `<div class="stat-row">
       ${["website","software"].map(type=>{
         const done = countCompletedBuilds(type, yStart, yEnd), target = yearTarget(type);
         return `<div class="stat-tile"><div class="stat-label">${typeLabel[type]} — ${year}</div><div class="stat-value">${done} <span class="small">/ ${target}</span></div>${renderGoalBar(done,target)}</div>`;
       }).join("")}
-    </div>
+    </div>` : ""}
     <div class="card">${checklist("year")}</div>
     <h3 class="goals-section-title">Personal goals</h3>
     <div class="card">${checklist("personal")}</div>
     <div class="card">
       <h3>Wins log</h3>
-      <div class="small" style="margin-bottom:6px;">Builds completed, clients brought in, hires made, positive client feedback — a running record to bring to the annual recap.</div>
+      <div class="small" style="margin-bottom:6px;">${mine ? "Big and small wins for the business — a running record to look back on at the end of the year." : "Builds completed, clients brought in, hires made, positive client feedback — a running record to bring to the annual recap."}</div>
       <div style="display:flex;gap:6px;">
         <input id="dev_win_draft" value="${escHtml(state.devWinDraft||'')}" oninput="state.devWinDraft=this.value" placeholder="e.g. Client loved the new booking page">
         <button onclick="addDevGoalWin()">Add</button>
