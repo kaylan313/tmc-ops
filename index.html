@@ -266,6 +266,41 @@
   html[data-theme="dark"] [style*="color:var(--brown-dark)"]{color:#f3e7dc !important;}
   html[data-theme="dark"] #preview-bar [style*="color:#241a17"]{color:#241a17 !important;}
   .theme-toggle{display:block;margin-top:6px;background:transparent;border:1px solid rgba(255,255,255,0.25);color:var(--cream);font-size:12px;padding:4px 10px;border-radius:14px;}
+
+  /* ---- Calendar tab (dlcal-*; .cal-* belongs to the Content Calendar) ---- */
+  .dlcal-toggles{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;}
+  .dlcal-toggles label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:14px;}
+  .dlcal-toggles input[type=checkbox]{width:auto;margin:0;}
+  .dlcal-swatch{width:10px;height:10px;border-radius:3px;display:inline-block;flex-shrink:0;}
+  .dlcal-google{margin-top:12px;padding-top:12px;border-top:1px solid var(--cream-dark);}
+  .dlcal-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:10px;}
+  .dlcal-grid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+  .dlcal-dow{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#8a7a72;text-align:center;padding:4px 0;}
+  .dlcal-day{min-height:96px;min-width:0;background:var(--surface,#fff);border:1px solid var(--cream-dark);border-radius:8px;padding:4px;cursor:pointer;overflow:hidden;}
+  .dlcal-day.other{opacity:.45;}
+  .dlcal-day.sel{outline:2px solid var(--rose);outline-offset:-1px;}
+  .dlcal-num{display:inline-block;min-width:22px;text-align:center;font-size:12px;font-weight:600;border-radius:11px;padding:1px 4px;}
+  .dlcal-day.today .dlcal-num{background:var(--brown);color:var(--cream);}
+  .dlcal-chip{font-size:11px;line-height:1.35;margin-top:2px;padding:1px 4px;border-left:3px solid var(--c,var(--rose));background:var(--cream-dark);border-radius:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .dlcal-chip.done{text-decoration:line-through;opacity:.55;}
+  .dlcal-chip.overdue{border-left-color:var(--danger);color:var(--danger);}
+  .dlcal-more{font-size:11px;color:#8a7a72;margin-top:2px;}
+  .dlcal-lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}
+  .dlcal-row{gap:10px;align-items:flex-start;}
+  .dlcal-row .dlcal-swatch{margin-top:6px;}
+  .dlcal-del{padding:3px 10px;font-size:12px;flex-shrink:0;}
+  .dlcal-form{display:flex;flex-direction:column;gap:8px;margin-top:10px;padding:12px;border:1px solid var(--cream-dark);border-radius:8px;}
+  .dlcal-form-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;}
+  .dlcal-form input,.dlcal-form select,.dlcal-form textarea{width:100%;}
+  .dlcal-check{display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;}
+  .dlcal-check input{width:auto;margin:0;}
+  @media (max-width:640px){
+    .dlcal-day{min-height:58px;padding:3px;}
+    .dlcal-dow{font-size:10px;letter-spacing:0;}
+    .dlcal-chip{font-size:0;height:5px;padding:0;border-left:0;background:var(--c,var(--rose));}
+    .dlcal-chip.overdue{background:var(--danger);}
+    .dlcal-more{font-size:10px;}
+  }
 </style>
 <script>
   // Applied before the page paints so a dark-mode user doesn't get a flash
@@ -794,6 +829,7 @@ function seedPreviewData(){
     { id:"task_preview_1", title:"Organize pantry", clientId:c2.id, status:"In progress", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Sort, label, and restock the pantry.", createdAt: hoursAgo(72) },
     { id:"task_preview_2", title:"Book anniversary dinner", clientId:c2.id, status:"Done", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Reserved a table for two.", completedAt: hoursAgo(40) },
     { id:"task_preview_3", title:"Monthly invoice cleanup", clientId:c3.id, status:"Researching", category:"Business", assignees:["asst_4"], subtasks:[{text:"Pull open invoices",done:true},{text:"Email follow-ups",done:false}], discussion:[], description:"Chase down unpaid invoices.", createdAt: hoursAgo(100) },
+    { id:"task_preview_5", title:"Draft homepage copy", clientId:c3.id, status:"In progress", category:"Business", assignees:["asst_3"], subtasks:[], discussion:[], description:"", dueDate: daysFromNow(5) },
     { id:"task_preview_4", title:"Inbox triage", clientId:c3.id, status:"To do", category:"Business", assignees:["asst_5"], subtasks:[], discussion:[], description:"", dueDate: daysFromNow(2), repeat:{ type:"weekly", days:[1,4] } }
   ];
   const timeEntries = [...base.timeEntries,
@@ -3332,12 +3368,12 @@ function renderAppShell(){
     ? [{ label:null, tabs:[["content","Content Calendar"],["techSupport","Tech Support"]] }]
     : state.role==="admin"
     ? [
-        { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
+        { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Dev Goals"],["techSupport","Tech Support"]] }
       ]
-    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
+    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
        ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []),
        ...(isDevDirector() ? [["goals","Goals"]] : []), ["techSupport","Tech Support"]] }];
 
@@ -3387,6 +3423,7 @@ function renderMain(){
     case "vendorTickets": return renderVendorTicketsTab();
     case "cardPurchases": return state.role==="admin" ? renderCardPurchasesTab() : "";
     case "builds": return renderBuildsTab();
+    case "calendar": return (state.role==="admin" || state.role==="team") ? renderCalendarTab() : "";
     case "goals": return (state.role==="admin" || isDevDirector()) ? renderGoalsTab() : "";
     case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
     case "onboarding": return renderOnboarding();
@@ -9878,6 +9915,467 @@ function renderBuildsTab(){
         </div>`;
       }).join("")}
   `;
+}
+
+// --- Calendar tab ---
+// One month view of everything with a date on it for the signed-in
+// assistant: build to-do deadlines (Builds tab — computed live from each
+// build's Day 1, so a new build shows up here the moment it's assigned)
+// and Task Board due dates, plus their own Google Calendar if they've
+// connected it. Each layer — and each individual Google calendar — has its
+// own on/off toggle, saved on the assistant record (calendarPrefs, same
+// pattern as notifyPrefs) so it follows them to any device. The two-way
+// Google side lives in functions/index.js ("Google Calendar — per-assistant").
+//
+// Admin sees deadlines for everyone (or one assistant via the filter) but
+// never anyone's Google Calendar — those stay private to each assistant.
+const DEFAULT_CALENDAR_PREFS = { builds:true, tasks:true, google:true, hiddenGoogleCalendars:[] };
+const CALENDAR_LAYER_COLORS = { builds:"#c9a3a0", tasks:"#7c93b0", google:"#8ba888" };
+function calYMD(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+function myCalendarPrefs(){
+  if(state.role==="admin"){
+    if(!state.adminCalendarPrefs){
+      let saved = null;
+      try{ saved = JSON.parse(localStorage.getItem("tmcAdminCalendarPrefs")||"null"); }catch(e){}
+      state.adminCalendarPrefs = { ...DEFAULT_CALENDAR_PREFS, ...(saved||{}) };
+    }
+    return state.adminCalendarPrefs;
+  }
+  return { ...DEFAULT_CALENDAR_PREFS, ...(state.currentAssistant && state.currentAssistant.calendarPrefs || {}) };
+}
+function saveMyCalendarPrefs(prefs){
+  if(state.role==="admin"){
+    state.adminCalendarPrefs = prefs;
+    try{ localStorage.setItem("tmcAdminCalendarPrefs", JSON.stringify(prefs)); }catch(e){}
+  } else if(state.currentAssistant){
+    const id = state.currentAssistant.id;
+    state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,calendarPrefs:prefs}:a);
+    state.currentAssistant = { ...state.currentAssistant, calendarPrefs:prefs };
+    upsert("settings","access", { assistants: state.settings.assistants });
+  }
+  render();
+}
+function toggleCalendarLayer(key, on){ saveMyCalendarPrefs({ ...myCalendarPrefs(), [key]: !!on }); }
+function toggleGoogleSubCalendar(index, on){
+  const cal = (state.googleCal && state.googleCal.calendars || [])[index];
+  if(!cal) return;
+  const prefs = myCalendarPrefs();
+  const hidden = new Set(prefs.hiddenGoogleCalendars||[]);
+  if(on) hidden.delete(cal.id); else hidden.add(cal.id);
+  saveMyCalendarPrefs({ ...prefs, hiddenGoogleCalendars:[...hidden] });
+}
+
+// Deadlines straight from app state — nothing stored, so there's nothing to
+// keep in sync on this side. assistantId null = everyone (admin).
+function calendarDeadlineItems(assistantId){
+  const items = [];
+  allAssignedBuilds().forEach(({client, addOn})=>{
+    if(assistantId && addOn.buildAssistantId!==assistantId) return;
+    (addOn.buildTodos||[]).forEach(t=>{
+      const due = buildTodoDueDate(addOn, t);
+      if(!due) return;
+      items.push({ kind:"builds", date:calYMD(due), title:t.text, sub:`${client.name} — ${addOn.label}`, done:!!t.done,
+        who:[addOn.buildAssistantId], open:`openBuildFromCalendar('${client.id}')` });
+    });
+  });
+  state.tasks.forEach(t=>{
+    if(!t.dueDate) return;
+    if(assistantId && !(t.assignees||[]).includes(assistantId)) return;
+    if(t.status!=="Done" && !taskBelongsToActiveClient(t)) return;
+    const client = state.clients.find(c=>c.id===t.clientId);
+    items.push({ kind:"tasks", date:String(t.dueDate).slice(0,10), title:t.title, sub: client ? client.name : "", done:t.status==="Done",
+      who:t.assignees||[], open:`openTaskEditor('${t.id}',null)` });
+  });
+  return items;
+}
+function buildsMissingDayOne(assistantId){
+  return allAssignedBuilds().filter(({addOn})=>(!assistantId || addOn.buildAssistantId===assistantId) && !addOn.buildStartDate && (addOn.buildTodos||[]).length);
+}
+function openBuildFromCalendar(clientId){
+  if(state.role==="admin" && typeof viewClientSoftwareBuild==="function") viewClientSoftwareBuild(clientId);
+  else setTab("builds");
+}
+
+// Google events, expanded to one entry per day they cover.
+function googleCalendarItems(){
+  const g = state.googleCal;
+  if(!g || !g.status || !g.status.connected) return [];
+  const hidden = new Set(myCalendarPrefs().hiddenGoogleCalendars||[]);
+  const calsById = {};
+  (g.calendars||[]).forEach(c=>{ calsById[c.id] = c; });
+  const items = [];
+  (g.events||[]).forEach((ev, i)=>{
+    if(hidden.has(ev.calendarId) || !calsById[ev.calendarId]) return;
+    const color = calsById[ev.calendarId].color || CALENDAR_LAYER_COLORS.google;
+    const base = { kind:"google", title:ev.title, sub:calsById[ev.calendarId].name, color, open:`openGoogleCalEvent(${i})`,
+      del: (calsById[ev.calendarId].canEdit && ev.id) ? `deleteGoogleCalEvent(${i})` : null };
+    if(ev.allDay){
+      const start = parseYMD(ev.start), end = ev.end ? parseYMD(ev.end) : new Date(start.getTime()+86400000);
+      for(let d = new Date(start), n = 0; d < end && n < 62; d.setDate(d.getDate()+1), n++) items.push({ ...base, date:calYMD(d) });
+    } else {
+      const s = new Date(ev.start);
+      items.push({ ...base, date:calYMD(s), time:s.toLocaleTimeString([], { hour:"numeric", minute:"2-digit" }), sortTime:s.getTime() });
+    }
+  });
+  return items;
+}
+function openGoogleCalEvent(i){
+  const ev = state.googleCal && state.googleCal.events && state.googleCal.events[i];
+  if(ev && ev.link && /^https:\/\/(www\.)?google\.com\//.test(ev.link)) window.open(ev.link, "_blank", "noopener");
+}
+// Delete always asks first — this removes it from their real Google Calendar.
+async function deleteGoogleCalEvent(i){
+  const ev = state.googleCal && state.googleCal.events && state.googleCal.events[i];
+  if(!ev) return;
+  const msg = `Are you sure you want to delete "${ev.title}"?\n\nThis removes it from your Google Calendar`
+    + (ev.recurring ? " (just this one occurrence, not the whole series)." : ".")
+    + " This can't be undone from here.";
+  if(!confirm(msg)) return;
+  if(!PREVIEW_MODE){
+    try{
+      await fns.httpsCallable("deleteGoogleCalendarEvent")({ assistantId: state.currentAssistant.id, calendarId: ev.calendarId, eventId: ev.id });
+    }catch(err){
+      console.error(err);
+      alert((err && err.message) || "Couldn't delete that event — check the console for details.");
+      return;
+    }
+  }
+  state.googleCal = { ...state.googleCal, events: state.googleCal.events.filter(e=>e!==ev) };
+  render();
+}
+function editableGoogleCalendars(){
+  return ((state.googleCal && state.googleCal.calendars) || []).filter(c=>c.canEdit);
+}
+function openCalendarEventForm(){
+  const cals = editableGoogleCalendars();
+  const primary = cals.find(c=>c.primary) || cals[0];
+  state.calEventDraft = { calendarId: primary ? primary.id : "", title:"", date: state.calSelectedDay, allDay:false, startTime:"09:00", endTime:"10:00", notes:"" };
+  render();
+  setTimeout(()=>{ const el = document.getElementById("calev_title"); if(el) el.focus(); }, 0);
+}
+function cancelCalendarEventForm(){ state.calEventDraft = null; render(); }
+// Typing just updates the draft (no re-render, so focus isn't lost);
+// only the all-day switch re-renders, to show/hide the time fields.
+function updateCalEventDraft(field, value, rerender){
+  if(!state.calEventDraft) return;
+  state.calEventDraft[field] = value;
+  if(rerender) render();
+}
+async function saveCalendarEvent(){
+  const d = state.calEventDraft;
+  if(!d || state.calEventSaving) return;
+  if(!d.title.trim()){ alert("Give the event a title."); return; }
+  if(!d.date){ alert("Pick a date."); return; }
+  if(!d.allDay && (!d.startTime || !d.endTime || d.endTime <= d.startTime)){ alert("The end time has to be after the start time."); return; }
+  if(!d.calendarId){ alert("Pick which Google calendar to add it to."); return; }
+  if(PREVIEW_MODE){
+    const next = calYMD(new Date(parseYMD(d.date).getTime()+86400000));
+    const ev = { id:"preview_ev_"+Date.now(), calendarId:d.calendarId, title:d.title.trim(), allDay:d.allDay,
+      start: d.allDay ? d.date : new Date(`${d.date}T${d.startTime}`).toISOString(),
+      end: d.allDay ? next : new Date(`${d.date}T${d.endTime}`).toISOString(), link:"" };
+    state.googleCal = { ...state.googleCal, events:[...(state.googleCal.events||[]), ev] };
+    state.calEventDraft = null; state.calSelectedDay = d.date;
+    render();
+    return;
+  }
+  state.calEventSaving = true; render();
+  try{
+    await fns.httpsCallable("createGoogleCalendarEvent")({
+      assistantId: state.currentAssistant.id, calendarId:d.calendarId, title:d.title.trim(), date:d.date, allDay:d.allDay,
+      startTime:d.startTime, endTime:d.endTime, notes:d.notes, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    });
+    state.calEventDraft = null;
+    state.calSelectedDay = d.date;
+    state.calMonth = d.date.slice(0,7);
+    refreshGoogleCalendar();
+  }catch(err){
+    console.error(err);
+    alert((err && err.message) || "Couldn't add that event — check the console for details.");
+  }finally{
+    state.calEventSaving = false; render();
+  }
+}
+function renderCalendarEventForm(){
+  const d = state.calEventDraft;
+  const cals = editableGoogleCalendars();
+  return `<div class="dlcal-form">
+    <div><label class="small">Title</label><input id="calev_title" value="${escHtml(d.title)}" oninput="updateCalEventDraft('title',this.value)" placeholder="What's happening?"></div>
+    <div class="dlcal-form-row">
+      <div><label class="small">Date</label><input type="date" value="${d.date}" onchange="updateCalEventDraft('date',this.value)"></div>
+      ${d.allDay ? "" : `
+      <div><label class="small">Start</label><input type="time" value="${d.startTime}" onchange="updateCalEventDraft('startTime',this.value)"></div>
+      <div><label class="small">End</label><input type="time" value="${d.endTime}" onchange="updateCalEventDraft('endTime',this.value)"></div>`}
+    </div>
+    <label class="dlcal-check"><input type="checkbox" ${d.allDay?'checked':''} onchange="updateCalEventDraft('allDay',this.checked,true)"> All day</label>
+    ${cals.length>1 ? `<div><label class="small">Add to</label><select onchange="updateCalEventDraft('calendarId',this.value)">
+      ${cals.map(c=>`<option value="${escHtml(c.id)}" ${c.id===d.calendarId?'selected':''}>${escHtml(c.name)}</option>`).join("")}
+    </select></div>` : ""}
+    <div><label class="small">Notes (optional)</label><textarea rows="2" oninput="updateCalEventDraft('notes',this.value)">${escHtml(d.notes)}</textarea></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <button onclick="saveCalendarEvent()" ${state.calEventSaving?'disabled':''}>${state.calEventSaving?"Adding…":"Add event"}</button>
+      <button class="secondary" onclick="cancelCalendarEventForm()">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function calendarMonthRange(month){
+  const [y,m] = month.split("-").map(Number);
+  return { timeMin: new Date(y, m-1, 1-7).toISOString(), timeMax: new Date(y, m, 1+7).toISOString() };
+}
+function previewGoogleCalendarData(month){
+  const [y,m] = month.split("-").map(Number);
+  const day = d => calYMD(new Date(y, m-1, d));
+  const at = (d,h) => new Date(y, m-1, d, h).toISOString();
+  const today = new Date();
+  const td = (today.getFullYear()===y && today.getMonth()===m-1) ? today.getDate() : 10;
+  return {
+    status:{ connected:true, email:"you@example.com", lastSyncAt:new Date().toISOString(), lastSyncError:null },
+    calendars:[ { id:"preview_primary", name:"My calendar", color:"#7986cb", primary:true, canEdit:true }, { id:"preview_family", name:"Family", color:"#e67c73", canEdit:true },
+      { id:"preview_holidays", name:"US Holidays", color:"#33b679", canEdit:false } ],
+    events:[
+      { id:"pv1", calendarId:"preview_primary", title:"Client discovery call", allDay:false, start:at(td,10), end:at(td,11), link:"" },
+      { id:"pv2", calendarId:"preview_primary", title:"Design review", allDay:false, start:at(Math.min(td+2,28),14), end:at(Math.min(td+2,28),15), link:"", recurring:true },
+      { id:"pv3", calendarId:"preview_family", title:"Dentist", allDay:false, start:at(Math.min(td+4,28),8), end:at(Math.min(td+4,28),9), link:"" },
+      { id:"pv4", calendarId:"preview_family", title:"Weekend trip", allDay:true, start:day(Math.min(td+6,26)), end:day(Math.min(td+8,28)), link:"" },
+      { id:"pv5", calendarId:"preview_holidays", title:"Sample holiday", allDay:true, start:day(Math.min(td+3,27)), end:day(Math.min(td+4,28)), link:"" }
+    ]
+  };
+}
+async function loadGoogleCalendarFromServer(assistantId, month){
+  if(!fns) throw new Error("Cloud Functions unavailable");
+  const { data } = await fns.httpsCallable("getGoogleCalendarEvents")({ assistantId, ...calendarMonthRange(month) });
+  return { status:data.status||{connected:false}, calendars:data.calendars||[], events:data.events||[] };
+}
+// Called during render; guarded so it only fetches once per assistant+month.
+function ensureGoogleCalendarLoaded(){
+  const id = state.currentAssistant && state.currentAssistant.id;
+  if(!id) return;
+  const month = state.calMonth;
+  const g = state.googleCal;
+  if(g && g.assistantId===id && g.loadedMonth===month) return;
+  state.googleCal = { ...(g && g.assistantId===id ? g : {}), assistantId:id, loadedMonth:month, loading:true, error:null };
+  (PREVIEW_MODE ? Promise.resolve(previewGoogleCalendarData(month)) : loadGoogleCalendarFromServer(id, month))
+    .then(data=>{
+      if(!state.googleCal || state.googleCal.assistantId!==id || state.googleCal.loadedMonth!==month) return;
+      state.googleCal = { ...state.googleCal, ...data, loading:false };
+      render();
+    })
+    .catch(err=>{
+      console.error("Google Calendar load failed:", err);
+      if(!state.googleCal || state.googleCal.assistantId!==id) return;
+      state.googleCal = { ...state.googleCal, loading:false, error:(err && err.message) || "Couldn't load Google Calendar." };
+      render();
+    });
+}
+function refreshGoogleCalendar(){
+  if(state.googleCal) state.googleCal.loadedMonth = null;
+  render();
+}
+async function connectGoogleCalendar(){
+  if(PREVIEW_MODE){ alert("Connecting Google only works in the real app — preview shows sample events instead."); return; }
+  if(!fns || !state.currentAssistant){ alert("This isn't available right now — try reloading the page."); return; }
+  // Open the tab synchronously so it can't get popup-blocked while we wait
+  // on the network (same as connectGmailNotifications).
+  const authTab = window.open("", "_blank");
+  try{
+    const { data } = await fns.httpsCallable("getGoogleCalendarAuthConfig")({ assistantId: state.currentAssistant.id });
+    const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
+      + "?client_id=" + encodeURIComponent(data.clientId)
+      + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
+      + "&response_type=code"
+      + "&scope=" + encodeURIComponent(data.scope)
+      + "&access_type=offline"
+      + "&prompt=consent"
+      + (state.currentAssistant.email ? "&login_hint=" + encodeURIComponent(state.currentAssistant.email) : "")
+      + "&state=" + encodeURIComponent(data.state);
+    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
+    // Pick up the new connection when they come back to this tab.
+    window.addEventListener("focus", ()=>{ if(state.activeTab==="calendar") refreshGoogleCalendar(); }, { once:true });
+  }catch(err){
+    console.error(err);
+    if(authTab) authTab.close();
+    alert("Couldn't start the Google Calendar connection — check the console for details.");
+  }
+}
+async function disconnectGoogleCalendarAccount(){
+  if(!confirm("Disconnect Google Calendar? Your Google events will stop showing here, and the \"TMC Deadlines\" calendar this app made in your Google account will be removed.")) return;
+  if(PREVIEW_MODE){ state.googleCal = { ...state.googleCal, status:{ connected:false }, calendars:[], events:[] }; render(); return; }
+  try{
+    await fns.httpsCallable("disconnectGoogleCalendar")({ assistantId: state.currentAssistant.id });
+    state.googleCal = { ...state.googleCal, status:{ connected:false }, calendars:[], events:[] };
+    render();
+  }catch(err){
+    console.error(err);
+    alert("Couldn't disconnect — check the console for details.");
+  }
+}
+async function syncGoogleCalendarNow(){
+  if(PREVIEW_MODE){ state.googleCal = { ...state.googleCal, status:{ ...state.googleCal.status, lastSyncAt:new Date().toISOString() } }; render(); return; }
+  if(!fns || !state.currentAssistant) return;
+  state.googleCalSyncing = true; render();
+  try{
+    const { data } = await fns.httpsCallable("syncGoogleCalendarDeadlines")({ assistantId: state.currentAssistant.id });
+    state.googleCal = { ...state.googleCal, status:data.status };
+  }catch(err){
+    console.error(err);
+    alert("Couldn't sync right now — check the console for details.");
+  }finally{
+    state.googleCalSyncing = false; render();
+  }
+}
+
+function shiftCalendarMonth(delta){
+  const [y,m] = state.calMonth.split("-").map(Number);
+  state.calMonth = calYMD(new Date(y, m-1+delta, 1)).slice(0,7);
+  render();
+}
+function calendarGoToToday(){ const t = calYMD(new Date()); state.calMonth = t.slice(0,7); state.calSelectedDay = t; render(); }
+function selectCalendarDay(ymd){ state.calSelectedDay = ymd; render(); }
+function setCalendarAssistantFilter(id){ state.calendarAssistantFilter = id; render(); }
+
+function renderCalendarItemRow(it, todayKey, showWho){
+  const overdue = it.kind!=="google" && !it.done && it.date < todayKey;
+  const color = it.color || CALENDAR_LAYER_COLORS[it.kind];
+  const label = it.kind==="builds" ? "Build" : it.kind==="tasks" ? "Task" : "Google";
+  const whoNames = showWho && it.who ? it.who.map(assistantName).filter(Boolean).join(", ") : "";
+  return `<div class="list-item dlcal-row" style="cursor:pointer;" onclick="${it.open}">
+    <span class="dlcal-swatch" style="background:${escHtml(color)};"></span>
+    <div style="flex:1;min-width:0;">
+      <div style="${it.done?'text-decoration:line-through;opacity:.6;':''}">${it.time?`<strong>${it.time}</strong> · `:""}${escHtml(it.title||"")}</div>
+      <div class="small">${label}${it.sub?` · ${escHtml(it.sub)}`:""}${whoNames?` · ${escHtml(whoNames)}`:""}${overdue?` · <span style="color:var(--danger);">overdue</span>`:""}${it.done?" · done":""}</div>
+    </div>
+    ${it.del ? `<button class="secondary dlcal-del" onclick="event.stopPropagation();${it.del}" aria-label="Delete event">Delete</button>` : ""}
+  </div>`;
+}
+function sortCalendarItems(list){
+  const order = { google:0, builds:1, tasks:2 };
+  return list.slice().sort((a,b)=> a.date<b.date?-1:a.date>b.date?1 : (a.sortTime||0)-(b.sortTime||0) || order[a.kind]-order[b.kind]);
+}
+
+function renderCalendarTab(){
+  const todayKey = calYMD(new Date());
+  if(!state.calMonth) state.calMonth = todayKey.slice(0,7);
+  if(!state.calSelectedDay) state.calSelectedDay = todayKey;
+  const isAdmin = state.role==="admin";
+  const ownerId = isAdmin ? (state.calendarAssistantFilter||"") : (state.currentAssistant && state.currentAssistant.id);
+  const prefs = myCalendarPrefs();
+  const googleAllowed = !isAdmin && !!state.currentAssistant;
+  if(googleAllowed && prefs.google) ensureGoogleCalendarLoaded();
+  const g = state.googleCal && state.googleCal.assistantId===(state.currentAssistant && state.currentAssistant.id) ? state.googleCal : null;
+
+  let items = calendarDeadlineItems(ownerId || null).filter(it=>prefs[it.kind]);
+  if(googleAllowed && prefs.google) items = items.concat(googleCalendarItems());
+  const byDay = {};
+  items.forEach(it=>{ (byDay[it.date] = byDay[it.date] || []).push(it); });
+  Object.keys(byDay).forEach(k=>{ byDay[k] = sortCalendarItems(byDay[k]); });
+
+  const [y,m] = state.calMonth.split("-").map(Number);
+  const first = new Date(y, m-1, 1);
+  const gridStart = new Date(y, m-1, 1-first.getDay());
+  const weeks = Math.ceil((first.getDay() + new Date(y, m, 0).getDate())/7);
+  const cells = [];
+  for(let i=0;i<weeks*7;i++){
+    const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate()+i);
+    const key = calYMD(d);
+    const dayItems = byDay[key] || [];
+    const shown = dayItems.slice(0,3);
+    cells.push(`<div class="dlcal-day ${d.getMonth()!==m-1?'other':''} ${key===todayKey?'today':''} ${key===state.calSelectedDay?'sel':''}" onclick="selectCalendarDay('${key}')">
+      <span class="dlcal-num">${d.getDate()}</span>
+      ${shown.map(it=>{
+        const overdue = it.kind!=="google" && !it.done && it.date < todayKey;
+        return `<div class="dlcal-chip ${it.done?'done':''} ${overdue?'overdue':''}" style="--c:${escHtml(it.color||CALENDAR_LAYER_COLORS[it.kind])};" title="${escHtml(it.title||'')}">${it.time?`${it.time} `:""}${escHtml(it.title||"")}</div>`;
+      }).join("")}
+      ${dayItems.length>3 ? `<div class="dlcal-more">+${dayItems.length-3} more</div>` : ""}
+    </div>`);
+  }
+
+  const selectedItems = byDay[state.calSelectedDay] || [];
+  const in14 = calYMD(new Date(Date.now()+14*86400000));
+  const upcoming = sortCalendarItems(items.filter(it=>it.kind!=="google" && !it.done && it.date<=in14));
+  const missing = prefs.builds ? buildsMissingDayOne(ownerId||null) : [];
+  const monthLabel = first.toLocaleDateString([], { month:"long", year:"numeric" });
+  const selectedLabel = parseYMD(state.calSelectedDay).toLocaleDateString([], { weekday:"long", month:"long", day:"numeric" });
+  const assistants = (state.settings.assistants||[]).filter(a=>a.active!==false);
+  const canAddEvents = googleAllowed && prefs.google && !!(g && g.status && g.status.connected) && editableGoogleCalendars().length>0;
+
+  const layerToggle = (key, label) => `<label><input type="checkbox" ${prefs[key]?'checked':''} onchange="toggleCalendarLayer('${key}',this.checked)"><span class="dlcal-swatch" style="background:${CALENDAR_LAYER_COLORS[key]};"></span>${label}</label>`;
+
+  return `
+    <h2>Calendar</h2>
+    <div class="small" style="margin-bottom:14px;">${isAdmin
+      ? "Every build to-do deadline and Task Board due date, updated automatically as builds and tasks change. Each assistant's Google Calendar stays private to them."
+      : "Your build deadlines and task due dates, updated automatically as builds and tasks change — plus your Google Calendar if you connect it. Use the switches to hide any of them."}</div>
+
+    <div class="card">
+      <div class="dlcal-toggles">
+        <span class="small" style="font-weight:600;">Show:</span>
+        ${layerToggle("builds","Builds")}
+        ${layerToggle("tasks","Tasks")}
+        ${googleAllowed ? layerToggle("google","Google Calendar") : ""}
+        ${isAdmin ? `<label style="margin-left:auto;">For
+          <select onchange="setCalendarAssistantFilter(this.value)">
+            <option value="">Everyone</option>
+            ${assistants.map(a=>`<option value="${a.id}" ${ownerId===a.id?'selected':''}>${escHtml(a.name)}</option>`).join("")}
+          </select></label>` : ""}
+      </div>
+      ${googleAllowed && prefs.google ? renderGoogleCalendarPanel(g, prefs) : ""}
+    </div>
+
+    <div class="card">
+      <div class="dlcal-toolbar">
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="secondary" onclick="shiftCalendarMonth(-1)" aria-label="Previous month">‹</button>
+          <button class="secondary" onclick="shiftCalendarMonth(1)" aria-label="Next month">›</button>
+          <button class="secondary" onclick="calendarGoToToday()">Today</button>
+        </div>
+        <h3 style="margin:0;">${monthLabel}</h3>
+      </div>
+      <div class="dlcal-grid">
+        ${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div class="dlcal-dow">${d}</div>`).join("")}
+        ${cells.join("")}
+      </div>
+    </div>
+
+    <div class="dlcal-lists">
+      <div class="card">
+        <div class="flex-between" style="gap:8px;flex-wrap:wrap;">
+          <h3 style="margin:0;">${selectedLabel}</h3>
+          ${canAddEvents && !state.calEventDraft ? `<button onclick="openCalendarEventForm()">+ Add event</button>` : ""}
+        </div>
+        ${canAddEvents && state.calEventDraft ? renderCalendarEventForm() : ""}
+        <div style="margin-top:8px;">
+        ${selectedItems.length ? selectedItems.map(it=>renderCalendarItemRow(it, todayKey, isAdmin && !ownerId)).join("") : `<div class="small">Nothing on this day.${googleAllowed && !canAddEvents && !(g && g.loading) ? " Connect Google Calendar above (and switch it on) to add your own events." : ""}</div>`}
+        </div>
+      </div>
+      <div class="card">
+        <h3>Overdue &amp; due in the next 2 weeks</h3>
+        ${upcoming.length ? upcoming.map(it=>`<div class="small" style="margin-top:6px;">${parseYMD(it.date).toLocaleDateString([], { weekday:"short", month:"short", day:"numeric" })}</div>${renderCalendarItemRow(it, todayKey, isAdmin && !ownerId)}`).join("") : `<div class="small">No open deadlines in the next two weeks${prefs.builds||prefs.tasks?"":" (Builds and Tasks are both switched off above)"}.</div>`}
+        ${missing.length ? `<div class="small" style="margin-top:10px;">${missing.length===1?"1 build doesn't":`${missing.length} builds don't`} have a Day 1 date yet, so ${missing.length===1?"its":"their"} deadlines can't go on the calendar: ${missing.map(({client,addOn})=>escHtml(`${client.name} — ${addOn.label}`)).join(", ")}.</div>` : ""}
+      </div>
+    </div>
+  `;
+}
+function renderGoogleCalendarPanel(g, prefs){
+  if(!g || (g.loading && !g.status)) return `<div class="dlcal-google small">Loading your Google Calendar…</div>`;
+  if(g.error) return `<div class="dlcal-google"><div class="small" style="color:var(--danger);">${escHtml(g.error)}</div><button class="secondary" style="margin-top:6px;" onclick="refreshGoogleCalendar()">Try again</button></div>`;
+  const st = g.status || { connected:false };
+  if(!st.connected) return `<div class="dlcal-google">
+      <div class="small" style="margin-bottom:8px;">Connect your Google account to see your Google Calendar events here. Your build and task deadlines will also be added to a separate <strong>TMC Deadlines</strong> calendar in Google and kept up to date automatically. You'll also be able to add and delete events from here (deleting always asks first).</div>
+      <button onclick="connectGoogleCalendar()">Connect Google Calendar</button>
+    </div>`;
+  const hidden = new Set(prefs.hiddenGoogleCalendars||[]);
+  return `<div class="dlcal-google">
+    <div class="small">Connected${st.email?` as <strong>${escHtml(st.email)}</strong>`:""}. Deadlines ${st.lastSyncAt?`last copied to your "TMC Deadlines" Google calendar ${new Date(st.lastSyncAt).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })}`:"haven't been copied to Google yet"}.${g.loading?" Refreshing…":""}</div>
+    ${st.lastSyncError ? `<div class="small" style="color:var(--danger);margin-top:4px;">Last sync problem: ${escHtml(st.lastSyncError)}</div>` : ""}
+    ${(g.calendars||[]).length ? `<div class="dlcal-toggles" style="margin-top:8px;">
+      ${(g.calendars||[]).map((c,i)=>`<label><input type="checkbox" ${hidden.has(c.id)?'':'checked'} onchange="toggleGoogleSubCalendar(${i},this.checked)"><span class="dlcal-swatch" style="background:${escHtml(c.color||CALENDAR_LAYER_COLORS.google)};"></span>${escHtml(c.name)}</label>`).join("")}
+    </div>` : ""}
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+      <button class="secondary" onclick="syncGoogleCalendarNow()" ${state.googleCalSyncing?'disabled':''}>${state.googleCalSyncing?"Syncing…":"Sync deadlines now"}</button>
+      <button class="secondary" onclick="refreshGoogleCalendar()">Refresh events</button>
+      <button class="secondary" onclick="disconnectGoogleCalendarAccount()">Disconnect</button>
+    </div>
+  </div>`;
 }
 
 // --- Weekly client reports (admin only) ---

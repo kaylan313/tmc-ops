@@ -117,6 +117,18 @@ Checked against Intuit's published security requirements for App Store listing:
   - No app-wide XSS/session-management penetration test has been run — this review only covered the QuickBooks integration surface, not the whole ~7,000-line app. The existing "Known remaining gap" under Security above (no per-role server-side access control) is the biggest related item.
   - Committing to Intuit's ongoing obligations (allowing vulnerability scans within 2 weeks of request, completing a security affidavit, annual re-review once published or over 500 connections) is a business decision for Kaylan, not something resolved by code.
 
+## Calendar tab + Google Calendar (per-assistant, two-way)
+
+- **Calendar tab** (Work section, admin + every team member): month view of build to-do deadlines (computed live from each build's Day 1 via `buildTodoDueDate`) and Task Board due dates. Nothing is stored for this — a new build or task shows up the moment it exists. Admin sees everyone (with an assistant filter) but never anyone's Google Calendar.
+- **Toggles:** Builds / Tasks / Google Calendar, plus one per Google calendar. Saved on the assistant record as `calendarPrefs` (same pattern as `notifyPrefs`); admin's are per-browser (localStorage).
+- **Google side** (`functions/index.js`, "Google Calendar — per-assistant"): each assistant connects their OWN Google account. Their events are read on demand (`getGoogleCalendarEvents`); their open deadlines are written to a separate **"TMC Deadlines"** calendar the app creates, kept in sync by `syncCalendarOnTaskWrite` / `syncCalendarOnClientWrite` triggers (plus a "Sync deadlines now" button). Assistants can also **add events** (title, date, all-day or start/end time, notes) to any of their Google calendars they can edit, and **delete events** — always behind an "are you sure?" confirm, one occurrence at a time for repeating events (`createGoogleCalendarEvent` / `deleteGoogleCalendarEvent`; both refuse the app-managed TMC Deadlines calendar). Scopes: `calendar.readonly` + `calendar.events` + `calendar.app.created`. Tokens in `calendarTokens/{assistantId}` (encrypted, rules-denied); OAuth CSRF states in `calendarOAuthStates`.
+- **Setup still needed (Kaylan, one time) before Connect works:**
+  1. Google Cloud Console (project `modern-co-dashboard`) → enable **Google Calendar API**.
+  2. The OAuth client already used for Gmail (`GMAIL_CLIENT_ID`) → add Authorized redirect URI `https://us-central1-modern-co-dashboard.cloudfunctions.net/googleCalendarOAuthCallback`.
+  3. OAuth consent screen → add the three calendar scopes above. If the app is "External/Testing", add each assistant's Google address as a test user (or set it to Internal if everyone is on the themodernconcierge.co Workspace).
+  4. `firebase deploy --only functions,firestore:rules,hosting` from `tmc-ops/` on the machine with `functions/.env.modern-co-dashboard` (hosting = `public/calendar-connected.html`).
+- Same per-role gap as everything else: the callables trust the `assistantId` the app sends (see Security → Known remaining gap).
+
 ## Working Conventions
 
 - This is a single-file app — keep it that way unless explicitly asked to split it up.

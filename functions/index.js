@@ -1193,3 +1193,487 @@ exports.notifyAssistantsOnTaskComment = onDocumentUpdated("tasks/{taskId}", asyn
     if (comment.author === "Admin") threadHasAdminComment = true;
   }
 });
+
+/**
+ * Google Calendar — per-assistant, two-way (Calendar tab in index.html).
+ *
+ *  - Each assistant connects THEIR OWN Google account (unlike Gmail above,
+ *    which is one shared support@ connection). Tokens live in
+ *    calendarTokens/{assistantId}, encrypted the same way as gmailTokens,
+ *    and — like qbTokens/gmailTokens — are unreachable from client-side
+ *    code (see firestore.rules).
+ *  - Their Google events are read on demand (getGoogleCalendarEvents) and
+ *    shown in the Calendar tab, where each calendar can be toggled off.
+ *  - Their open build to-do deadlines + Task Board due dates are written
+ *    into a separate "TMC Deadlines" calendar this app creates in their
+ *    Google account — never into their main calendar — and kept in sync
+ *    automatically by the two Firestore triggers below whenever a task or a
+ *    client's build changes (calendar.app.created lets the app create and
+ *    own that one calendar).
+ *  - They can also add events to, and delete events from, any of their own
+ *    Google calendars they can edit (createGoogleCalendarEvent /
+ *    deleteGoogleCalendarEvent) — that's what the calendar.events scope is
+ *    for. Deleting always goes through an "are you sure?" confirm in the
+ *    app, and the app-managed TMC Deadlines events can't be added/deleted
+ *    by hand (they'd just be re-synced).
+ *  - Reuses the Gmail OAuth client (GMAIL_CLIENT_ID/SECRET). The
+ *    CALENDAR_REDIRECT_URI below must be added to that OAuth client's
+ *    Authorized redirect URIs in Google Cloud Console, and the Google
+ *    Calendar API enabled on the project, before Connect will work.
+ *
+ * Same caveat as every other callable here (see "Known remaining gap" in
+ * CLAUDE.md): the app has no per-user server-side identity yet, so these
+ * trust the assistantId the app sends. Any signed-in session could, in
+ * principle, ask for another assistant's events. Fixing that is part of
+ * the validateLogin/custom-claims project, not this feature.
+ */
+const CALENDAR_REDIRECT_URI = defineString("CALENDAR_REDIRECT_URI", { default: "https://us-central1-modern-co-dashboard.cloudfunctions.net/googleCalendarOAuthCallback" });
+const CALENDAR_REQUIRED_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.app.created",
+];
+const WRITABLE_ROLES = ["owner", "writer"];
+const CALENDAR_SCOPES = [...CALENDAR_REQUIRED_SCOPES, "openid", "email"];
+const DEADLINES_CALENDAR_NAME = "TMC Deadlines";
+const DEADLINES_TIMEZONE = "America/Chicago";
+
+function calendarTokenRef(assistantId) {
+  return admin.firestore().collection("calendarTokens").doc(assistantId);
+}
+function requireSignedIn(request) {
+  if (!request.auth) throw new HttpsError("unauthenticated", "Sign in first.");
+}
+async function requireKnownAssistant(assistantId) {
+  if (!assistantId || typeof assistantId !== "string") throw new HttpsError("invalid-argument", "Missing assistantId.");
+  const snap = await admin.firestore().collection("settings").doc("access").get();
+  const known = ((snap.exists && snap.data().assistants) || []).some((a) => a.id === assistantId);
+  if (!known) throw new HttpsError("invalid-argument", "Unknown assistant.");
+}
+function newCalendarOAuthClient() {
+  return new google.auth.OAuth2(GMAIL_CLIENT_ID.value(), GMAIL_CLIENT_SECRET.value(), CALENDAR_REDIRECT_URI.value());
+}
+async function getCalendarConnection(assistantId) {
+  const ref = calendarTokenRef(assistantId);
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data();
+  const oauth2Client = newCalendarOAuthClient();
+  oauth2Client.setCredentials({
+    refresh_token: decryptSecret(data.refreshToken),
+    access_token: data.accessToken ? decryptSecret(data.accessToken) : undefined,
+    expiry_date: data.accessTokenExpiresAt || undefined,
+  });
+  oauth2Client.on("tokens", (tokens) => {
+    const update = {};
+    if (tokens.access_token) update.accessToken = encryptSecret(tokens.access_token);
+    if (tokens.expiry_date) update.accessTokenExpiresAt = tokens.expiry_date;
+    if (tokens.refresh_token) update.refreshToken = encryptSecret(tokens.refresh_token);
+    if (Object.keys(update).length) ref.set(update, { merge: true }).catch((e) => console.warn("Failed to persist refreshed Calendar token:", e));
+  });
+  return { ref, data, oauth2Client, calendar: google.calendar({ version: "v3", auth: oauth2Client }) };
+}
+function calendarStatusFrom(data) {
+  if (!data) return { connected: false };
+  return { connected: true, email: data.email || null, lastSyncAt: data.lastSyncAt || null, lastSyncError: data.lastSyncError || null };
+}
+
+// ---- Deadlines -> "TMC Deadlines" calendar ----
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+function addDaysYMD(ymd, days) {
+  const d = new Date(ymd.slice(0, 10) + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+// Mirrors calendarDeadlineItems() in index.html (open items only — done
+// ones are dropped from Google rather than shown struck through).
+async function desiredDeadlineEvents(assistantId) {
+  const db = admin.firestore();
+  const [clientsSnap, tasksSnap] = await Promise.all([
+    db.collection("clients").get(),
+    db.collection("tasks").where("assignees", "array-contains", assistantId).get(),
+  ]);
+  const clientsById = {};
+  clientsSnap.forEach((d) => { clientsById[d.id] = d.data(); });
+  const out = new Map();
+  Object.entries(clientsById).forEach(([clientId, client]) => {
+    (client.addOns || []).forEach((a) => {
+      if (a.buildAssistantId !== assistantId || !YMD_RE.test(String(a.buildStartDate || "").slice(0, 10))) return;
+      (a.buildTodos || []).forEach((t) => {
+        if (t.done || t.dueDayOffset == null || isNaN(Number(t.dueDayOffset))) return;
+        out.set(`build:${clientId}:${a.id}:${t.id}`, {
+          date: addDaysYMD(a.buildStartDate, Number(t.dueDayOffset)),
+          summary: `${t.text || "Build to-do"} — ${client.name || "Client"} (${a.label || "Build"})`,
+          description: `Build to-do${t.phase ? ` (${t.phase})` : ""} from TMC Ops. Check it off in the Builds tab — this calendar updates automatically.`,
+        });
+      });
+    });
+  });
+  tasksSnap.forEach((doc) => {
+    const t = doc.data();
+    const due = String(t.dueDate || "").slice(0, 10);
+    if (!YMD_RE.test(due) || t.status === "Done") return;
+    const client = clientsById[t.clientId];
+    if (client && client.clientStatus && client.clientStatus !== "active") return;
+    out.set(`task:${doc.id}`, {
+      date: due,
+      summary: `${t.title || "Task"}${client && client.name ? ` — ${client.name}` : ""}`,
+      description: "Task due date from TMC Ops (Task Board) — this calendar updates automatically.",
+    });
+  });
+  return out;
+}
+// Deterministic Google event IDs (hex is valid base32hex) so a re-sync —
+// or two triggers racing each other — updates the same event instead of
+// creating duplicates.
+function deadlineEventId(key) {
+  return "tmc" + crypto.createHash("sha1").update(key).digest("hex");
+}
+async function ensureDeadlinesCalendar(conn, allowCreate) {
+  const existingId = conn.data.deadlinesCalendarId;
+  if (existingId) {
+    try {
+      await conn.calendar.calendars.get({ calendarId: existingId });
+      return existingId;
+    } catch (err) {
+      if (err.code !== 404 && err.code !== 410) throw err;
+    }
+  }
+  // Only the connect callback and the manual "Sync now" button may create
+  // the calendar — the Firestore triggers can fire in parallel, and letting
+  // them create it would risk two "TMC Deadlines" calendars.
+  if (!allowCreate) throw new Error("The TMC Deadlines calendar is missing in Google — click \"Sync deadlines now\" to recreate it.");
+  const created = await conn.calendar.calendars.insert({
+    requestBody: {
+      summary: DEADLINES_CALENDAR_NAME,
+      description: "Build and task deadlines from TMC Ops. Updated automatically — changes made here get overwritten.",
+      timeZone: DEADLINES_TIMEZONE,
+    },
+  });
+  await conn.ref.set({ deadlinesCalendarId: created.data.id }, { merge: true });
+  conn.data.deadlinesCalendarId = created.data.id;
+  return created.data.id;
+}
+// Never throws — records the error on the token doc (shown in the app)
+// and returns null instead, so a Google hiccup can't break the Firestore
+// write that triggered it.
+async function syncDeadlinesForAssistant(assistantId, { allowCreate = false } = {}) {
+  let conn;
+  try {
+    conn = await getCalendarConnection(assistantId);
+  } catch (err) {
+    console.error("syncDeadlinesForAssistant: couldn't load credentials for", assistantId, err);
+    return null;
+  }
+  if (!conn) return null;
+  try {
+    const calendarId = await ensureDeadlinesCalendar(conn, allowCreate);
+    const desired = await desiredDeadlineEvents(assistantId);
+    const existing = new Map();
+    let pageToken;
+    do {
+      const r = await conn.calendar.events.list({ calendarId, privateExtendedProperty: ["tmc=1"], maxResults: 2500, pageToken });
+      (r.data.items || []).forEach((ev) => { if (ev.status !== "cancelled") existing.set(ev.id, ev); });
+      pageToken = r.data.nextPageToken;
+    } while (pageToken);
+
+    let added = 0, updated = 0, removed = 0;
+    for (const [key, d] of desired) {
+      const id = deadlineEventId(key);
+      const hash = crypto.createHash("sha1").update(JSON.stringify(d)).digest("hex").slice(0, 16);
+      const body = {
+        id,
+        summary: d.summary,
+        description: d.description,
+        start: { date: d.date },
+        end: { date: addDaysYMD(d.date, 1) },
+        transparency: "transparent", // a deadline shouldn't block the day as "busy"
+        status: "confirmed",
+        extendedProperties: { private: { tmc: "1", h: hash } },
+      };
+      const cur = existing.get(id);
+      existing.delete(id);
+      if (cur) {
+        const curHash = cur.extendedProperties && cur.extendedProperties.private && cur.extendedProperties.private.h;
+        if (curHash === hash) continue;
+        await conn.calendar.events.update({ calendarId, eventId: id, requestBody: body });
+        updated++;
+      } else {
+        try {
+          await conn.calendar.events.insert({ calendarId, requestBody: body });
+        } catch (err) {
+          // 409 = this ID existed before and was deleted (Google keeps the
+          // cancelled tombstone) — updating it brings it back.
+          if (err.code !== 409) throw err;
+          await conn.calendar.events.update({ calendarId, eventId: id, requestBody: body });
+        }
+        added++;
+      }
+    }
+    for (const id of existing.keys()) {
+      await conn.calendar.events.delete({ calendarId, eventId: id }).catch((err) => {
+        if (err.code !== 404 && err.code !== 410) throw err;
+      });
+      removed++;
+    }
+    await conn.ref.set({ lastSyncAt: new Date().toISOString(), lastSyncError: null }, { merge: true });
+    return { added, updated, removed };
+  } catch (err) {
+    console.error("syncDeadlinesForAssistant failed for", assistantId, err);
+    await conn.ref.set({ lastSyncAt: new Date().toISOString(), lastSyncError: String((err && err.message) || err).slice(0, 300) }, { merge: true }).catch(() => {});
+    return null;
+  }
+}
+async function syncConnectedAssistants(ids) {
+  for (const id of ids) {
+    if (!id || typeof id !== "string") continue;
+    const snap = await calendarTokenRef(id).get();
+    if (snap.exists) await syncDeadlinesForAssistant(id);
+  }
+}
+
+// Only the fields that change what lands on the calendar — tasks get
+// written constantly (comments, subtasks, timers), and none of that should
+// cost a Google round-trip.
+const TASK_CALENDAR_FIELDS = ["dueDate", "title", "status", "assignees", "clientId"];
+exports.syncCalendarOnTaskWrite = onDocumentWritten("tasks/{taskId}", async (event) => {
+  const before = event.data.before.exists ? event.data.before.data() : null;
+  const after = event.data.after.exists ? event.data.after.data() : null;
+  const pick = (t) => (t ? JSON.stringify(TASK_CALENDAR_FIELDS.map((f) => (t[f] === undefined ? null : t[f]))) : "null");
+  if (pick(before) === pick(after)) return;
+  if (!(before && before.dueDate) && !(after && after.dueDate)) return;
+  await syncConnectedAssistants(new Set([...((before && before.assignees) || []), ...((after && after.assignees) || [])]));
+});
+exports.syncCalendarOnClientWrite = onDocumentWritten("clients/{clientId}", async (event) => {
+  const before = event.data.before.exists ? event.data.before.data() : null;
+  const after = event.data.after.exists ? event.data.after.data() : null;
+  const builds = (c) => JSON.stringify(((c && c.addOns) || []).filter((a) => a.buildAssistantId).map((a) => ({
+    id: a.id, label: a.label || "", who: a.buildAssistantId, start: a.buildStartDate || "",
+    todos: (a.buildTodos || []).map((t) => [t.id, t.text, t.phase, t.dueDayOffset, !!t.done]),
+  })));
+  const header = (c) => JSON.stringify(c ? [c.name || "", c.clientStatus || ""] : null);
+  const buildsChanged = builds(before) !== builds(after);
+  const headerChanged = header(before) !== header(after);
+  if (!buildsChanged && !headerChanged) return;
+  const ids = new Set();
+  [before, after].forEach((c) => ((c && c.addOns) || []).forEach((a) => { if (a.buildAssistantId) ids.add(a.buildAssistantId); }));
+  if (headerChanged) {
+    // The client's name is in task event titles, and an inactive client's
+    // tasks drop off — so resync everyone with a dated task for it too.
+    const tasks = await admin.firestore().collection("tasks").where("clientId", "==", event.params.clientId).get();
+    tasks.forEach((d) => { const t = d.data(); if (t.dueDate) (t.assignees || []).forEach((id) => ids.add(id)); });
+  }
+  await syncConnectedAssistants(ids);
+});
+
+// ---- Callables used by the Calendar tab ----
+exports.getGoogleCalendarAuthConfig = onCall(async (request) => {
+  requireSignedIn(request);
+  const assistantId = request.data && request.data.assistantId;
+  await requireKnownAssistant(assistantId);
+  const state = crypto.randomBytes(24).toString("base64url");
+  await admin.firestore().collection("calendarOAuthStates").doc(state).set({ assistantId, expiresAt: Date.now() + 10 * 60 * 1000 });
+  return { clientId: GMAIL_CLIENT_ID.value(), redirectUri: CALENDAR_REDIRECT_URI.value(), scope: CALENDAR_SCOPES.join(" "), state };
+});
+
+// Same "redirect to a clean page with no sensitive params" pattern as
+// gmailOAuthCallback above.
+exports.googleCalendarOAuthCallback = onRequest(async (req, res) => {
+  const { code, state, error } = req.query;
+  const redirectTo = (ok, reason) => res.redirect(302, `https://modern-co-dashboard.web.app/calendar-connected.html?ok=${ok ? "1" : "0"}${reason ? `&reason=${reason}` : ""}`);
+  if (error || !code || !state || typeof state !== "string") {
+    if (error) console.warn("Calendar OAuth callback received an error param:", error);
+    return redirectTo(false);
+  }
+  const pendingRef = admin.firestore().collection("calendarOAuthStates").doc(state);
+  const pendingSnap = await pendingRef.get();
+  const pending = pendingSnap.exists ? pendingSnap.data() : null;
+  await pendingRef.delete().catch(() => {});
+  if (!pending || pending.expiresAt < Date.now()) {
+    console.warn("Calendar OAuth callback: unknown or expired state — possible CSRF attempt or stale link.");
+    return redirectTo(false);
+  }
+  try {
+    const oauth2Client = newCalendarOAuthClient();
+    const { tokens } = await oauth2Client.getToken(code);
+    if (!tokens.refresh_token) {
+      console.error("Calendar OAuth callback: no refresh_token — connect flow must include access_type=offline&prompt=consent.");
+      return redirectTo(false);
+    }
+    // Google's consent screen lets people untick individual permissions.
+    const granted = String(tokens.scope || "").split(" ");
+    if (!CALENDAR_REQUIRED_SCOPES.every((s) => granted.includes(s))) {
+      await oauth2Client.revokeToken(tokens.refresh_token).catch(() => {});
+      return redirectTo(false, "scopes");
+    }
+    oauth2Client.setCredentials(tokens);
+    let email = null;
+    try {
+      email = (await google.oauth2({ version: "v2", auth: oauth2Client }).userinfo.get()).data.email || null;
+    } catch (e) {
+      console.warn("Calendar OAuth callback: couldn't read account email (non-fatal):", e.message);
+    }
+    await calendarTokenRef(pending.assistantId).set({
+      refreshToken: encryptSecret(tokens.refresh_token),
+      accessToken: tokens.access_token ? encryptSecret(tokens.access_token) : null,
+      accessTokenExpiresAt: tokens.expiry_date || null,
+      email,
+      deadlinesCalendarId: null,
+      connectedAt: new Date().toISOString(),
+      lastSyncAt: null,
+      lastSyncError: null,
+    });
+    await syncDeadlinesForAssistant(pending.assistantId, { allowCreate: true });
+    return redirectTo(true);
+  } catch (err) {
+    console.error("googleCalendarOAuthCallback failed:", err);
+    return redirectTo(false);
+  }
+});
+
+exports.getGoogleCalendarEvents = onCall(async (request) => {
+  requireSignedIn(request);
+  const { assistantId, timeMin, timeMax } = request.data || {};
+  await requireKnownAssistant(assistantId);
+  const min = new Date(timeMin), max = new Date(timeMax);
+  if (isNaN(min) || isNaN(max) || max <= min || max - min > 75 * 24 * 3600000) throw new HttpsError("invalid-argument", "Bad date range.");
+  const conn = await getCalendarConnection(assistantId);
+  if (!conn) return { status: { connected: false }, calendars: [], events: [] };
+  let calendars;
+  try {
+    const list = await conn.calendar.calendarList.list({ maxResults: 50 });
+    calendars = (list.data.items || [])
+      .filter((c) => c.id !== conn.data.deadlinesCalendarId && !c.hidden && !c.deleted)
+      .slice(0, 15);
+  } catch (err) {
+    console.error("getGoogleCalendarEvents: calendarList failed for", assistantId, err);
+    const revoked = err.code === 401 || (err.response && err.response.data && err.response.data.error === "invalid_grant");
+    throw new HttpsError("failed-precondition", revoked ? "Google access was revoked — disconnect and connect again." : "Couldn't reach Google Calendar.");
+  }
+  const events = [];
+  await Promise.all(calendars.map(async (c) => {
+    try {
+      const r = await conn.calendar.events.list({ calendarId: c.id, timeMin: min.toISOString(), timeMax: max.toISOString(), singleEvents: true, orderBy: "startTime", maxResults: 250 });
+      (r.data.items || []).forEach((ev) => {
+        if (ev.status === "cancelled" || !ev.start) return;
+        events.push({
+          id: ev.id,
+          calendarId: c.id,
+          recurring: !!ev.recurringEventId,
+          title: ev.summary || "(busy)",
+          allDay: !!ev.start.date,
+          start: ev.start.date || ev.start.dateTime,
+          end: (ev.end && (ev.end.date || ev.end.dateTime)) || null,
+          link: ev.htmlLink || "",
+        });
+      });
+    } catch (err) {
+      console.warn("getGoogleCalendarEvents: events.list failed for one calendar (skipped):", err.message);
+    }
+  }));
+  return {
+    status: calendarStatusFrom(conn.data),
+    calendars: calendars.map((c) => ({
+      id: c.id, name: c.summaryOverride || c.summary || c.id, color: c.backgroundColor || "#8ba888", primary: !!c.primary,
+      canEdit: WRITABLE_ROLES.includes(c.accessRole),
+    })),
+    events,
+  };
+});
+
+// Shared guard for add/delete: the calendar must be one of THEIR calendars
+// they can actually edit, and never the app-managed TMC Deadlines one.
+async function requireEditableCalendar(conn, calendarId) {
+  if (!calendarId || typeof calendarId !== "string") throw new HttpsError("invalid-argument", "Missing calendar.");
+  if (calendarId === conn.data.deadlinesCalendarId) throw new HttpsError("failed-precondition", "TMC Deadlines events come from builds and tasks — change those instead.");
+  let entry;
+  try {
+    entry = (await conn.calendar.calendarList.get({ calendarId })).data;
+  } catch (err) {
+    throw new HttpsError("not-found", "That calendar isn't in your Google account.");
+  }
+  if (!WRITABLE_ROLES.includes(entry.accessRole)) throw new HttpsError("permission-denied", "You don't have permission to change that calendar.");
+}
+function calendarWriteError(err, what) {
+  if (err instanceof HttpsError) return err;
+  console.error(`${what} failed:`, err);
+  if (err.code === 403) return new HttpsError("permission-denied", "Google said no — try disconnecting and connecting Google Calendar again.");
+  if (err.code === 404 || err.code === 410) return new HttpsError("not-found", "That event no longer exists in Google.");
+  return new HttpsError("internal", "Couldn't reach Google Calendar.");
+}
+const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+exports.createGoogleCalendarEvent = onCall(async (request) => {
+  requireSignedIn(request);
+  const { assistantId, calendarId, title, date, allDay, startTime, endTime, notes, timeZone } = request.data || {};
+  await requireKnownAssistant(assistantId);
+  const cleanTitle = String(title || "").trim().slice(0, 300);
+  if (!cleanTitle) throw new HttpsError("invalid-argument", "Give the event a title.");
+  if (!YMD_RE.test(String(date || ""))) throw new HttpsError("invalid-argument", "Pick a date.");
+  const tz = typeof timeZone === "string" && timeZone.length < 64 ? timeZone : DEADLINES_TIMEZONE;
+  let start, end;
+  if (allDay) {
+    start = { date };
+    end = { date: addDaysYMD(date, 1) };
+  } else {
+    if (!HM_RE.test(String(startTime || "")) || !HM_RE.test(String(endTime || ""))) throw new HttpsError("invalid-argument", "Pick a start and end time.");
+    if (endTime <= startTime) throw new HttpsError("invalid-argument", "The end time has to be after the start time.");
+    start = { dateTime: `${date}T${startTime}:00`, timeZone: tz };
+    end = { dateTime: `${date}T${endTime}:00`, timeZone: tz };
+  }
+  const conn = await getCalendarConnection(assistantId);
+  if (!conn) throw new HttpsError("failed-precondition", "Connect Google Calendar first.");
+  try {
+    await requireEditableCalendar(conn, calendarId);
+    const created = await conn.calendar.events.insert({
+      calendarId,
+      requestBody: { summary: cleanTitle, description: String(notes || "").slice(0, 5000) || undefined, start, end },
+    });
+    return { id: created.data.id };
+  } catch (err) {
+    throw calendarWriteError(err, "createGoogleCalendarEvent");
+  }
+});
+
+exports.deleteGoogleCalendarEvent = onCall(async (request) => {
+  requireSignedIn(request);
+  const { assistantId, calendarId, eventId } = request.data || {};
+  await requireKnownAssistant(assistantId);
+  if (!eventId || typeof eventId !== "string") throw new HttpsError("invalid-argument", "Missing event.");
+  const conn = await getCalendarConnection(assistantId);
+  if (!conn) throw new HttpsError("failed-precondition", "Connect Google Calendar first.");
+  try {
+    await requireEditableCalendar(conn, calendarId);
+    // For a repeating event this is one occurrence's ID (events are listed
+    // with singleEvents:true), so only that occurrence is removed.
+    await conn.calendar.events.delete({ calendarId, eventId });
+    return { deleted: true };
+  } catch (err) {
+    throw calendarWriteError(err, "deleteGoogleCalendarEvent");
+  }
+});
+
+exports.syncGoogleCalendarDeadlines = onCall(async (request) => {
+  requireSignedIn(request);
+  const assistantId = request.data && request.data.assistantId;
+  await requireKnownAssistant(assistantId);
+  const result = await syncDeadlinesForAssistant(assistantId, { allowCreate: true });
+  const snap = await calendarTokenRef(assistantId).get();
+  return { result, status: calendarStatusFrom(snap.exists ? snap.data() : null) };
+});
+
+exports.disconnectGoogleCalendar = onCall(async (request) => {
+  requireSignedIn(request);
+  const assistantId = request.data && request.data.assistantId;
+  await requireKnownAssistant(assistantId);
+  const conn = await getCalendarConnection(assistantId).catch(() => null);
+  if (conn) {
+    // Only ever the calendar this app created — never one of theirs.
+    if (conn.data.deadlinesCalendarId) {
+      await conn.calendar.calendars.delete({ calendarId: conn.data.deadlinesCalendarId }).catch((e) => console.warn("disconnectGoogleCalendar: couldn't delete TMC Deadlines calendar:", e.message));
+    }
+    await conn.oauth2Client.revokeToken(decryptSecret(conn.data.refreshToken)).catch((e) => console.warn("disconnectGoogleCalendar: revoke failed:", e.message));
+  }
+  await calendarTokenRef(assistantId).delete();
+  return { status: { connected: false } };
+});
