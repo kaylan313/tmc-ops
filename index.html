@@ -142,7 +142,8 @@
   .flex-between{display:flex;justify-content:space-between;align-items:center;}
   .stat-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
   .goals-section-title{margin:26px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--rose);font-size:20px;}
-  .goals-owner-switch{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;}
+  .goals-switch-row{display:flex;flex-wrap:wrap;gap:10px 16px;justify-content:space-between;align-items:center;margin-bottom:12px;}
+  .goals-owner-switch{display:flex;gap:6px;flex-wrap:wrap;}
   .goals-month-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;}
   .goals-month-grid .goals-month-card{margin:0;}
   .stat-tile{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;flex:1;min-width:170px;}
@@ -9682,12 +9683,51 @@ function defaultAdminGoals(){ return { year: devGoals().year, targets:{}, items:
 function adminGoals(){ return state.settings.adminGoals || defaultAdminGoals(); }
 function goalsOwner(){ return state.role==="admin" && state.goalsOwner!=="dev" ? "admin" : "dev"; }
 function setGoalsOwner(owner){ state.goalsOwner = owner; state.devGoalEditingId = null; state.devWinDraft = ""; render(); }
-function activeGoals(){ return goalsOwner()==="admin" ? adminGoals() : devGoals(); }
+// Years: each owner's original goal set (devGoals / adminGoals) stays
+// exactly where it is, for its own .year. Every other year lives in a
+// map keyed by year (devGoalYears / adminGoalYears), so adding years never
+// moves or rewrites the existing data.
+function mainGoalsFor(owner){ return owner==="admin" ? adminGoals() : devGoals(); }
+function goalYearsKey(owner){ return owner==="admin" ? "adminGoalYears" : "devGoalYears"; }
+function selectedGoalsYear(){ return state.goalsYear || mainGoalsFor(goalsOwner()).year; }
+function emptyGoalsForYear(owner, year){
+  const zero = { website:0, software:0 };
+  return { year, targets: owner==="admin" ? {} : { Q1:{...zero}, Q2:{...zero}, Q3:{...zero}, Q4:{...zero} }, items:[], wins:[] };
+}
+function activeGoals(){
+  const owner = goalsOwner(), main = mainGoalsFor(owner), year = selectedGoalsYear();
+  if(year===main.year) return main;
+  return (state.settings[goalYearsKey(owner)]||{})[year] || emptyGoalsForYear(owner, year);
+}
 function saveActiveGoals(goals){
-  if(goalsOwner()!=="admin") return saveDevGoals(goals);
-  state.settings.adminGoals = goals;
-  upsert("settings","access", { adminGoals: goals });
+  const owner = goalsOwner();
+  if(goals.year===mainGoalsFor(owner).year){
+    if(owner!=="admin") return saveDevGoals(goals);
+    state.settings.adminGoals = goals;
+    upsert("settings","access", { adminGoals: goals });
+    return render();
+  }
+  const key = goalYearsKey(owner);
+  state.settings[key] = { ...(state.settings[key]||{}), [goals.year]: goals };
+  upsert("settings","access", { [key]: state.settings[key] });
   render();
+}
+// Buttons run from the earliest year with goals (or this calendar year)
+// through the latest; "+" adds the next year (saved once a goal is added).
+function goalYearOptions(){
+  const owner = goalsOwner();
+  const years = [mainGoalsFor(owner).year, new Date().getFullYear(), selectedGoalsYear(),
+    ...Object.keys(state.settings[goalYearsKey(owner)]||{}).map(Number), ...(state.goalsExtraYears||[])].filter(Number.isFinite);
+  const lo = Math.min(...years), hi = Math.max(...years);
+  const out = [];
+  for(let y=lo; y<=hi && out.length<20; y++) out.push(y);
+  return out;
+}
+function setGoalsYear(year){ state.goalsYear = year; state.devGoalEditingId = null; state.devWinDraft = ""; render(); }
+function addGoalsYear(){
+  const next = Math.max(...goalYearOptions()) + 1;
+  state.goalsExtraYears = [...(state.goalsExtraYears||[]), next];
+  setGoalsYear(next);
 }
 // Website/software classification for goal counting. Explicit pick wins;
 // otherwise inferred from the catalog category, and a Custom Build stays
@@ -9807,10 +9847,16 @@ function renderGoalsTab(){
       </div>`).join("") || (/^M\d+$/.test(section) ? "" : `<div class="small">Nothing here yet.</div>`)}
     <button class="secondary" style="margin-top:6px;padding:4px 10px;" onclick="addDevGoalItem('${section}')">${addLabel(section)}</button>`;
   return `
-    ${isAdmin ? `<div class="goals-owner-switch" role="tablist">
-      <button class="${mine?'':'secondary'}" role="tab" aria-selected="${mine}" onclick="setGoalsOwner('admin')">My goals</button>
-      <button class="${mine?'secondary':''}" role="tab" aria-selected="${!mine}" onclick="setGoalsOwner('dev')">${escHtml(directorName)}'s goals</button>
-    </div>` : ""}
+    <div class="goals-switch-row">
+      ${isAdmin ? `<div class="goals-owner-switch" role="tablist" aria-label="Whose goals">
+        <button class="${mine?'':'secondary'}" role="tab" aria-selected="${mine}" onclick="setGoalsOwner('admin')">My goals</button>
+        <button class="${mine?'secondary':''}" role="tab" aria-selected="${!mine}" onclick="setGoalsOwner('dev')">${escHtml(directorName)}'s goals</button>
+      </div>` : ""}
+      <div class="goals-owner-switch" role="tablist" aria-label="Year">
+        ${goalYearOptions().map(y=>`<button class="${y===year?'':'secondary'}" role="tab" aria-selected="${y===year}" onclick="setGoalsYear(${y})">${y}</button>`).join("")}
+        <button class="secondary" title="Add next year" aria-label="Add next year" onclick="addGoalsYear()">+</button>
+      </div>
+    </div>
     <h2>${mine ? `My ${year} Goals` : `${year} Goals`}</h2>
     ${mine
       ? `<div class="small" style="margin-bottom:14px;">Your own goals for ${year}. Only the admin login shows this view.</div>`
