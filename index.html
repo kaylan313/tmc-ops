@@ -288,6 +288,12 @@
   .dlcal-lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;}
   .dlcal-row{gap:10px;align-items:flex-start;}
   .dlcal-row .dlcal-swatch{margin-top:6px;}
+  .dlcal-del{padding:3px 10px;font-size:12px;flex-shrink:0;}
+  .dlcal-form{display:flex;flex-direction:column;gap:8px;margin-top:10px;padding:12px;border:1px solid var(--cream-dark);border-radius:8px;}
+  .dlcal-form-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;}
+  .dlcal-form input,.dlcal-form select,.dlcal-form textarea{width:100%;}
+  .dlcal-check{display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;}
+  .dlcal-check input{width:auto;margin:0;}
   @media (max-width:640px){
     .dlcal-day{min-height:58px;padding:3px;}
     .dlcal-dow{font-size:10px;letter-spacing:0;}
@@ -10001,7 +10007,8 @@ function googleCalendarItems(){
   (g.events||[]).forEach((ev, i)=>{
     if(hidden.has(ev.calendarId) || !calsById[ev.calendarId]) return;
     const color = calsById[ev.calendarId].color || CALENDAR_LAYER_COLORS.google;
-    const base = { kind:"google", title:ev.title, sub:calsById[ev.calendarId].name, color, open:`openGoogleCalEvent(${i})` };
+    const base = { kind:"google", title:ev.title, sub:calsById[ev.calendarId].name, color, open:`openGoogleCalEvent(${i})`,
+      del: (calsById[ev.calendarId].canEdit && ev.id) ? `deleteGoogleCalEvent(${i})` : null };
     if(ev.allDay){
       const start = parseYMD(ev.start), end = ev.end ? parseYMD(ev.end) : new Date(start.getTime()+86400000);
       for(let d = new Date(start), n = 0; d < end && n < 62; d.setDate(d.getDate()+1), n++) items.push({ ...base, date:calYMD(d) });
@@ -10016,6 +10023,100 @@ function openGoogleCalEvent(i){
   const ev = state.googleCal && state.googleCal.events && state.googleCal.events[i];
   if(ev && ev.link && /^https:\/\/(www\.)?google\.com\//.test(ev.link)) window.open(ev.link, "_blank", "noopener");
 }
+// Delete always asks first — this removes it from their real Google Calendar.
+async function deleteGoogleCalEvent(i){
+  const ev = state.googleCal && state.googleCal.events && state.googleCal.events[i];
+  if(!ev) return;
+  const msg = `Are you sure you want to delete "${ev.title}"?\n\nThis removes it from your Google Calendar`
+    + (ev.recurring ? " (just this one occurrence, not the whole series)." : ".")
+    + " This can't be undone from here.";
+  if(!confirm(msg)) return;
+  if(!PREVIEW_MODE){
+    try{
+      await fns.httpsCallable("deleteGoogleCalendarEvent")({ assistantId: state.currentAssistant.id, calendarId: ev.calendarId, eventId: ev.id });
+    }catch(err){
+      console.error(err);
+      alert((err && err.message) || "Couldn't delete that event — check the console for details.");
+      return;
+    }
+  }
+  state.googleCal = { ...state.googleCal, events: state.googleCal.events.filter(e=>e!==ev) };
+  render();
+}
+function editableGoogleCalendars(){
+  return ((state.googleCal && state.googleCal.calendars) || []).filter(c=>c.canEdit);
+}
+function openCalendarEventForm(){
+  const cals = editableGoogleCalendars();
+  const primary = cals.find(c=>c.primary) || cals[0];
+  state.calEventDraft = { calendarId: primary ? primary.id : "", title:"", date: state.calSelectedDay, allDay:false, startTime:"09:00", endTime:"10:00", notes:"" };
+  render();
+  setTimeout(()=>{ const el = document.getElementById("calev_title"); if(el) el.focus(); }, 0);
+}
+function cancelCalendarEventForm(){ state.calEventDraft = null; render(); }
+// Typing just updates the draft (no re-render, so focus isn't lost);
+// only the all-day switch re-renders, to show/hide the time fields.
+function updateCalEventDraft(field, value, rerender){
+  if(!state.calEventDraft) return;
+  state.calEventDraft[field] = value;
+  if(rerender) render();
+}
+async function saveCalendarEvent(){
+  const d = state.calEventDraft;
+  if(!d || state.calEventSaving) return;
+  if(!d.title.trim()){ alert("Give the event a title."); return; }
+  if(!d.date){ alert("Pick a date."); return; }
+  if(!d.allDay && (!d.startTime || !d.endTime || d.endTime <= d.startTime)){ alert("The end time has to be after the start time."); return; }
+  if(!d.calendarId){ alert("Pick which Google calendar to add it to."); return; }
+  if(PREVIEW_MODE){
+    const next = calYMD(new Date(parseYMD(d.date).getTime()+86400000));
+    const ev = { id:"preview_ev_"+Date.now(), calendarId:d.calendarId, title:d.title.trim(), allDay:d.allDay,
+      start: d.allDay ? d.date : new Date(`${d.date}T${d.startTime}`).toISOString(),
+      end: d.allDay ? next : new Date(`${d.date}T${d.endTime}`).toISOString(), link:"" };
+    state.googleCal = { ...state.googleCal, events:[...(state.googleCal.events||[]), ev] };
+    state.calEventDraft = null; state.calSelectedDay = d.date;
+    render();
+    return;
+  }
+  state.calEventSaving = true; render();
+  try{
+    await fns.httpsCallable("createGoogleCalendarEvent")({
+      assistantId: state.currentAssistant.id, calendarId:d.calendarId, title:d.title.trim(), date:d.date, allDay:d.allDay,
+      startTime:d.startTime, endTime:d.endTime, notes:d.notes, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    });
+    state.calEventDraft = null;
+    state.calSelectedDay = d.date;
+    state.calMonth = d.date.slice(0,7);
+    refreshGoogleCalendar();
+  }catch(err){
+    console.error(err);
+    alert((err && err.message) || "Couldn't add that event — check the console for details.");
+  }finally{
+    state.calEventSaving = false; render();
+  }
+}
+function renderCalendarEventForm(){
+  const d = state.calEventDraft;
+  const cals = editableGoogleCalendars();
+  return `<div class="dlcal-form">
+    <div><label class="small">Title</label><input id="calev_title" value="${escHtml(d.title)}" oninput="updateCalEventDraft('title',this.value)" placeholder="What's happening?"></div>
+    <div class="dlcal-form-row">
+      <div><label class="small">Date</label><input type="date" value="${d.date}" onchange="updateCalEventDraft('date',this.value)"></div>
+      ${d.allDay ? "" : `
+      <div><label class="small">Start</label><input type="time" value="${d.startTime}" onchange="updateCalEventDraft('startTime',this.value)"></div>
+      <div><label class="small">End</label><input type="time" value="${d.endTime}" onchange="updateCalEventDraft('endTime',this.value)"></div>`}
+    </div>
+    <label class="dlcal-check"><input type="checkbox" ${d.allDay?'checked':''} onchange="updateCalEventDraft('allDay',this.checked,true)"> All day</label>
+    ${cals.length>1 ? `<div><label class="small">Add to</label><select onchange="updateCalEventDraft('calendarId',this.value)">
+      ${cals.map(c=>`<option value="${escHtml(c.id)}" ${c.id===d.calendarId?'selected':''}>${escHtml(c.name)}</option>`).join("")}
+    </select></div>` : ""}
+    <div><label class="small">Notes (optional)</label><textarea rows="2" oninput="updateCalEventDraft('notes',this.value)">${escHtml(d.notes)}</textarea></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <button onclick="saveCalendarEvent()" ${state.calEventSaving?'disabled':''}>${state.calEventSaving?"Adding…":"Add event"}</button>
+      <button class="secondary" onclick="cancelCalendarEventForm()">Cancel</button>
+    </div>
+  </div>`;
+}
 
 function calendarMonthRange(month){
   const [y,m] = month.split("-").map(Number);
@@ -10029,12 +10130,14 @@ function previewGoogleCalendarData(month){
   const td = (today.getFullYear()===y && today.getMonth()===m-1) ? today.getDate() : 10;
   return {
     status:{ connected:true, email:"you@example.com", lastSyncAt:new Date().toISOString(), lastSyncError:null },
-    calendars:[ { id:"preview_primary", name:"My calendar", color:"#7986cb", primary:true }, { id:"preview_family", name:"Family", color:"#e67c73" } ],
+    calendars:[ { id:"preview_primary", name:"My calendar", color:"#7986cb", primary:true, canEdit:true }, { id:"preview_family", name:"Family", color:"#e67c73", canEdit:true },
+      { id:"preview_holidays", name:"US Holidays", color:"#33b679", canEdit:false } ],
     events:[
-      { calendarId:"preview_primary", title:"Client discovery call", allDay:false, start:at(td,10), end:at(td,11), link:"" },
-      { calendarId:"preview_primary", title:"Design review", allDay:false, start:at(Math.min(td+2,28),14), end:at(Math.min(td+2,28),15), link:"" },
-      { calendarId:"preview_family", title:"Dentist", allDay:false, start:at(Math.min(td+4,28),8), end:at(Math.min(td+4,28),9), link:"" },
-      { calendarId:"preview_family", title:"Weekend trip", allDay:true, start:day(Math.min(td+6,26)), end:day(Math.min(td+8,28)), link:"" }
+      { id:"pv1", calendarId:"preview_primary", title:"Client discovery call", allDay:false, start:at(td,10), end:at(td,11), link:"" },
+      { id:"pv2", calendarId:"preview_primary", title:"Design review", allDay:false, start:at(Math.min(td+2,28),14), end:at(Math.min(td+2,28),15), link:"", recurring:true },
+      { id:"pv3", calendarId:"preview_family", title:"Dentist", allDay:false, start:at(Math.min(td+4,28),8), end:at(Math.min(td+4,28),9), link:"" },
+      { id:"pv4", calendarId:"preview_family", title:"Weekend trip", allDay:true, start:day(Math.min(td+6,26)), end:day(Math.min(td+8,28)), link:"" },
+      { id:"pv5", calendarId:"preview_holidays", title:"Sample holiday", allDay:true, start:day(Math.min(td+3,27)), end:day(Math.min(td+4,28)), link:"" }
     ]
   };
 }
@@ -10141,6 +10244,7 @@ function renderCalendarItemRow(it, todayKey, showWho){
       <div style="${it.done?'text-decoration:line-through;opacity:.6;':''}">${it.time?`<strong>${it.time}</strong> · `:""}${escHtml(it.title||"")}</div>
       <div class="small">${label}${it.sub?` · ${escHtml(it.sub)}`:""}${whoNames?` · ${escHtml(whoNames)}`:""}${overdue?` · <span style="color:var(--danger);">overdue</span>`:""}${it.done?" · done":""}</div>
     </div>
+    ${it.del ? `<button class="secondary dlcal-del" onclick="event.stopPropagation();${it.del}" aria-label="Delete event">Delete</button>` : ""}
   </div>`;
 }
 function sortCalendarItems(list){
@@ -10192,6 +10296,7 @@ function renderCalendarTab(){
   const monthLabel = first.toLocaleDateString([], { month:"long", year:"numeric" });
   const selectedLabel = parseYMD(state.calSelectedDay).toLocaleDateString([], { weekday:"long", month:"long", day:"numeric" });
   const assistants = (state.settings.assistants||[]).filter(a=>a.active!==false);
+  const canAddEvents = googleAllowed && prefs.google && !!(g && g.status && g.status.connected) && editableGoogleCalendars().length>0;
 
   const layerToggle = (key, label) => `<label><input type="checkbox" ${prefs[key]?'checked':''} onchange="toggleCalendarLayer('${key}',this.checked)"><span class="dlcal-swatch" style="background:${CALENDAR_LAYER_COLORS[key]};"></span>${label}</label>`;
 
@@ -10233,8 +10338,14 @@ function renderCalendarTab(){
 
     <div class="dlcal-lists">
       <div class="card">
-        <h3>${selectedLabel}</h3>
-        ${selectedItems.length ? selectedItems.map(it=>renderCalendarItemRow(it, todayKey, isAdmin && !ownerId)).join("") : `<div class="small">Nothing on this day.</div>`}
+        <div class="flex-between" style="gap:8px;flex-wrap:wrap;">
+          <h3 style="margin:0;">${selectedLabel}</h3>
+          ${canAddEvents && !state.calEventDraft ? `<button onclick="openCalendarEventForm()">+ Add event</button>` : ""}
+        </div>
+        ${canAddEvents && state.calEventDraft ? renderCalendarEventForm() : ""}
+        <div style="margin-top:8px;">
+        ${selectedItems.length ? selectedItems.map(it=>renderCalendarItemRow(it, todayKey, isAdmin && !ownerId)).join("") : `<div class="small">Nothing on this day.${googleAllowed && !canAddEvents && !(g && g.loading) ? " Connect Google Calendar above (and switch it on) to add your own events." : ""}</div>`}
+        </div>
       </div>
       <div class="card">
         <h3>Overdue &amp; due in the next 2 weeks</h3>
@@ -10249,7 +10360,7 @@ function renderGoogleCalendarPanel(g, prefs){
   if(g.error) return `<div class="dlcal-google"><div class="small" style="color:var(--danger);">${escHtml(g.error)}</div><button class="secondary" style="margin-top:6px;" onclick="refreshGoogleCalendar()">Try again</button></div>`;
   const st = g.status || { connected:false };
   if(!st.connected) return `<div class="dlcal-google">
-      <div class="small" style="margin-bottom:8px;">Connect your Google account to see your Google Calendar events here. Your build and task deadlines will also be added to a separate <strong>TMC Deadlines</strong> calendar in Google and kept up to date automatically. This app can only change that one calendar. It can't edit anything else in your Google Calendar.</div>
+      <div class="small" style="margin-bottom:8px;">Connect your Google account to see your Google Calendar events here. Your build and task deadlines will also be added to a separate <strong>TMC Deadlines</strong> calendar in Google and kept up to date automatically. You'll also be able to add and delete events from here (deleting always asks first).</div>
       <button onclick="connectGoogleCalendar()">Connect Google Calendar</button>
     </div>`;
   const hidden = new Set(prefs.hiddenGoogleCalendars||[]);

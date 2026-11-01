@@ -26,7 +26,7 @@ const reason = params.get("reason");
 document.getElementById("status").innerHTML = ok
   ? '<span class="ok">✓ Google Calendar connected!</span><br>Your deadlines are now in a "TMC Deadlines" calendar in Google. You can close this tab and go back to the Calendar tab.'
   : reason === "scopes"
-  ? '<span class="err">Google Calendar wasn\'t connected.</span><br>Both calendar permissions need to stay checked on Google\'s screen — close this tab and click Connect again from the Calendar tab.'
+  ? '<span class="err">Google Calendar wasn\'t connected.</span><br>All the calendar permissions need to stay checked on Google\'s screen — close this tab and click Connect again from the Calendar tab.'
   : '<span class="err">Something went wrong connecting Google Calendar.</span><br>Close this tab and try again from the Calendar tab.';
 </script>
 </body>

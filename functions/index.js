@@ -1208,9 +1208,14 @@ exports.notifyAssistantsOnTaskComment = onDocumentUpdated("tasks/{taskId}", asyn
  *    into a separate "TMC Deadlines" calendar this app creates in their
  *    Google account — never into their main calendar — and kept in sync
  *    automatically by the two Firestore triggers below whenever a task or a
- *    client's build changes. The write scope used (calendar.app.created)
- *    only lets this app touch calendars it created itself, so it can never
- *    edit or delete anything else in their Google Calendar.
+ *    client's build changes (calendar.app.created lets the app create and
+ *    own that one calendar).
+ *  - They can also add events to, and delete events from, any of their own
+ *    Google calendars they can edit (createGoogleCalendarEvent /
+ *    deleteGoogleCalendarEvent) — that's what the calendar.events scope is
+ *    for. Deleting always goes through an "are you sure?" confirm in the
+ *    app, and the app-managed TMC Deadlines events can't be added/deleted
+ *    by hand (they'd just be re-synced).
  *  - Reuses the Gmail OAuth client (GMAIL_CLIENT_ID/SECRET). The
  *    CALENDAR_REDIRECT_URI below must be added to that OAuth client's
  *    Authorized redirect URIs in Google Cloud Console, and the Google
@@ -1225,8 +1230,10 @@ exports.notifyAssistantsOnTaskComment = onDocumentUpdated("tasks/{taskId}", asyn
 const CALENDAR_REDIRECT_URI = defineString("CALENDAR_REDIRECT_URI", { default: "https://us-central1-modern-co-dashboard.cloudfunctions.net/googleCalendarOAuthCallback" });
 const CALENDAR_REQUIRED_SCOPES = [
   "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
   "https://www.googleapis.com/auth/calendar.app.created",
 ];
+const WRITABLE_ROLES = ["owner", "writer"];
 const CALENDAR_SCOPES = [...CALENDAR_REQUIRED_SCOPES, "openid", "email"];
 const DEADLINES_CALENDAR_NAME = "TMC Deadlines";
 const DEADLINES_TIMEZONE = "America/Chicago";
@@ -1550,7 +1557,9 @@ exports.getGoogleCalendarEvents = onCall(async (request) => {
       (r.data.items || []).forEach((ev) => {
         if (ev.status === "cancelled" || !ev.start) return;
         events.push({
+          id: ev.id,
           calendarId: c.id,
+          recurring: !!ev.recurringEventId,
           title: ev.summary || "(busy)",
           allDay: !!ev.start.date,
           start: ev.start.date || ev.start.dateTime,
@@ -1564,9 +1573,84 @@ exports.getGoogleCalendarEvents = onCall(async (request) => {
   }));
   return {
     status: calendarStatusFrom(conn.data),
-    calendars: calendars.map((c) => ({ id: c.id, name: c.summaryOverride || c.summary || c.id, color: c.backgroundColor || "#8ba888", primary: !!c.primary })),
+    calendars: calendars.map((c) => ({
+      id: c.id, name: c.summaryOverride || c.summary || c.id, color: c.backgroundColor || "#8ba888", primary: !!c.primary,
+      canEdit: WRITABLE_ROLES.includes(c.accessRole),
+    })),
     events,
   };
+});
+
+// Shared guard for add/delete: the calendar must be one of THEIR calendars
+// they can actually edit, and never the app-managed TMC Deadlines one.
+async function requireEditableCalendar(conn, calendarId) {
+  if (!calendarId || typeof calendarId !== "string") throw new HttpsError("invalid-argument", "Missing calendar.");
+  if (calendarId === conn.data.deadlinesCalendarId) throw new HttpsError("failed-precondition", "TMC Deadlines events come from builds and tasks — change those instead.");
+  let entry;
+  try {
+    entry = (await conn.calendar.calendarList.get({ calendarId })).data;
+  } catch (err) {
+    throw new HttpsError("not-found", "That calendar isn't in your Google account.");
+  }
+  if (!WRITABLE_ROLES.includes(entry.accessRole)) throw new HttpsError("permission-denied", "You don't have permission to change that calendar.");
+}
+function calendarWriteError(err, what) {
+  if (err instanceof HttpsError) return err;
+  console.error(`${what} failed:`, err);
+  if (err.code === 403) return new HttpsError("permission-denied", "Google said no — try disconnecting and connecting Google Calendar again.");
+  if (err.code === 404 || err.code === 410) return new HttpsError("not-found", "That event no longer exists in Google.");
+  return new HttpsError("internal", "Couldn't reach Google Calendar.");
+}
+const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+exports.createGoogleCalendarEvent = onCall(async (request) => {
+  requireSignedIn(request);
+  const { assistantId, calendarId, title, date, allDay, startTime, endTime, notes, timeZone } = request.data || {};
+  await requireKnownAssistant(assistantId);
+  const cleanTitle = String(title || "").trim().slice(0, 300);
+  if (!cleanTitle) throw new HttpsError("invalid-argument", "Give the event a title.");
+  if (!YMD_RE.test(String(date || ""))) throw new HttpsError("invalid-argument", "Pick a date.");
+  const tz = typeof timeZone === "string" && timeZone.length < 64 ? timeZone : DEADLINES_TIMEZONE;
+  let start, end;
+  if (allDay) {
+    start = { date };
+    end = { date: addDaysYMD(date, 1) };
+  } else {
+    if (!HM_RE.test(String(startTime || "")) || !HM_RE.test(String(endTime || ""))) throw new HttpsError("invalid-argument", "Pick a start and end time.");
+    if (endTime <= startTime) throw new HttpsError("invalid-argument", "The end time has to be after the start time.");
+    start = { dateTime: `${date}T${startTime}:00`, timeZone: tz };
+    end = { dateTime: `${date}T${endTime}:00`, timeZone: tz };
+  }
+  const conn = await getCalendarConnection(assistantId);
+  if (!conn) throw new HttpsError("failed-precondition", "Connect Google Calendar first.");
+  try {
+    await requireEditableCalendar(conn, calendarId);
+    const created = await conn.calendar.events.insert({
+      calendarId,
+      requestBody: { summary: cleanTitle, description: String(notes || "").slice(0, 5000) || undefined, start, end },
+    });
+    return { id: created.data.id };
+  } catch (err) {
+    throw calendarWriteError(err, "createGoogleCalendarEvent");
+  }
+});
+
+exports.deleteGoogleCalendarEvent = onCall(async (request) => {
+  requireSignedIn(request);
+  const { assistantId, calendarId, eventId } = request.data || {};
+  await requireKnownAssistant(assistantId);
+  if (!eventId || typeof eventId !== "string") throw new HttpsError("invalid-argument", "Missing event.");
+  const conn = await getCalendarConnection(assistantId);
+  if (!conn) throw new HttpsError("failed-precondition", "Connect Google Calendar first.");
+  try {
+    await requireEditableCalendar(conn, calendarId);
+    // For a repeating event this is one occurrence's ID (events are listed
+    // with singleEvents:true), so only that occurrence is removed.
+    await conn.calendar.events.delete({ calendarId, eventId });
+    return { deleted: true };
+  } catch (err) {
+    throw calendarWriteError(err, "deleteGoogleCalendarEvent");
+  }
 });
 
 exports.syncGoogleCalendarDeadlines = onCall(async (request) => {
