@@ -2132,6 +2132,9 @@ function respondToClientReview(taskId, response, note){
     clientReviewResponse: response,
     clientReviewResponseNote: note || "",
     clientReviewRespondedAt: new Date().toISOString(),
+    // The server only emails assignees about answers from the client portal,
+    // not staff marking a phone/text answer by hand (notifyAssistantsOnClientResponse).
+    clientReviewRespondedByRole: state.role,
     // Changes requested puts it back into active work rather than letting
     // it sit in "Needs Client Review" showing a note nobody's acting on.
     ...(response==="changesRequested" ? { status: "In progress" } : {})
@@ -2154,7 +2157,7 @@ function clientRequestTaskChanges(taskId){
   respondToClientReview(taskId, "changesRequested", note.trim());
 }
 function respondToPushToNextMonth(taskId, response){
-  const payload = { pushToNextMonthResponse: response, pushToNextMonthRespondedAt: new Date().toISOString() };
+  const payload = { pushToNextMonthResponse: response, pushToNextMonthRespondedAt: new Date().toISOString(), pushToNextMonthRespondedByRole: state.role };
   upsert("tasks", taskId, payload);
   const task = state.tasks.find(t=>t.id===taskId);
   if(task) Object.assign(task, payload);
@@ -10501,7 +10504,7 @@ function renderTeamAdmin(){
 // this toggle existed; "comments" is new behavior but defaults on too since
 // that's what was actually requested, with the toggle there for whoever
 // finds it too noisy.
-const DEFAULT_NOTIFY_PREFS = { clientRequest:true, vendorScheduled:true, comments:true };
+const DEFAULT_NOTIFY_PREFS = { clientRequest:true, vendorScheduled:true, comments:true, clientResponse:true };
 function assistantNotifyPrefs(a){
   return { ...DEFAULT_NOTIFY_PREFS, ...(a && a.notifyPrefs || {}) };
 }
@@ -10541,6 +10544,10 @@ function renderTeamDirectory(){
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
           <input type="checkbox" ${prefs.comments?'checked':''} onchange="updateMyNotifyPref('comments',this.checked)">
           Someone comments on one of your tasks
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${prefs.clientResponse?'checked':''} onchange="updateMyNotifyPref('clientResponse',this.checked)">
+          A client approves, requests changes, or answers "push to next month?"
         </label>
       </div>
     </div>` : ""}

@@ -952,7 +952,7 @@ async function sendEmailViaGmail(to, subject, bodyText) {
 // assistant who has never touched the toggle has no notifyPrefs field at
 // all, so every key here defaults to "on" (preserves the always-on behavior
 // these notifications had before the toggle existed).
-const DEFAULT_NOTIFY_PREFS = { clientRequest: true, vendorScheduled: true, comments: true };
+const DEFAULT_NOTIFY_PREFS = { clientRequest: true, vendorScheduled: true, comments: true, clientResponse: true };
 function assistantWantsNotification(assistant, key) {
   const prefs = (assistant && assistant.notifyPrefs) || {};
   return prefs[key] !== undefined ? !!prefs[key] : DEFAULT_NOTIFY_PREFS[key];
@@ -1078,6 +1078,68 @@ exports.notifyAssistantOnClientRequest = onDocumentCreated("tasks/{taskId}", asy
         `\n\nOpen TMC Ops -> Task Board to accept or decline it.`
     );
     console.log(`notifyAssistantOnClientRequest: task ${event.params.taskId} -> ${assistant.email} -> ${sent ? "sent" : "not sent"}`);
+  }
+});
+
+// Which client answers are new in this task update: a review response
+// (approved / changes requested) and/or a push-to-next-month answer (keep /
+// push). A new answer = a response is set AND its respondedAt changed, so a
+// second review round answered the same way still counts, while a task
+// editor re-save (same values) or a reset back to null doesn't.
+// respondedByRole is stamped by the app; staff marking a client's phone/text
+// answer by hand ("Mark approved (manual)") isn't a client response worth
+// emailing the assignees about. A missing role (written before the app sent
+// it) is treated as the client.
+function clientResponseEvents(before, after) {
+  const events = [];
+  const fromClient = (role) => !role || role === "client";
+  if (after.clientReviewResponse && after.clientReviewRespondedAt !== before.clientReviewRespondedAt &&
+      fromClient(after.clientReviewRespondedByRole)) {
+    events.push(after.clientReviewResponse === "approved"
+      ? { kind: "approved" }
+      : { kind: "changesRequested", note: after.clientReviewResponseNote || "" });
+  }
+  if (after.pushToNextMonthResponse && after.pushToNextMonthRespondedAt !== before.pushToNextMonthRespondedAt &&
+      fromClient(after.pushToNextMonthRespondedByRole)) {
+    events.push({ kind: after.pushToNextMonthResponse === "push" ? "push" : "keep" });
+  }
+  return events;
+}
+
+// Fires when a client answers in the portal — Approve / Request changes on
+// a task sent for review, or Keep / Push on "push to next month?". Those
+// only change fields on the task (no comment), so notifyAssistantsOnTaskComment
+// never saw them and nobody got told.
+exports.notifyAssistantsOnClientResponse = onDocumentUpdated("tasks/{taskId}", async (event) => {
+  const before = event.data.before.data() || {};
+  const after = event.data.after.data() || {};
+  const events = clientResponseEvents(before, after);
+  if (!events.length) return;
+  const assigneeIds = after.assignees || [];
+  if (!assigneeIds.length) return;
+  const [settingsDoc, clientDoc] = await Promise.all([
+    admin.firestore().collection("settings").doc("access").get(),
+    after.clientId ? admin.firestore().collection("clients").doc(after.clientId).get() : Promise.resolve(null),
+  ]);
+  const assistants = (settingsDoc.exists && settingsDoc.data().assistants) || [];
+  const clientName = (clientDoc && clientDoc.exists && clientDoc.data().name) || "Your client";
+  const title = after.title || "(no title)";
+  const toNotify = assistants.filter((a) => assigneeIds.includes(a.id) && a.email && assistantWantsNotification(a, "clientResponse"));
+  for (const ev of events) {
+    const subject =
+      ev.kind === "approved" ? `${clientName} approved: ${title}` :
+      ev.kind === "changesRequested" ? `${clientName} requested changes on: ${title}` :
+      ev.kind === "push" ? `${clientName} wants to push to next month: ${title}` :
+      `${clientName} wants to keep this month: ${title}`;
+    const body =
+      ev.kind === "approved" ? `${clientName} approved "${title}".\n\nOpen TMC Ops -> Task Board to wrap it up.` :
+      ev.kind === "changesRequested" ? `${clientName} asked for changes on "${title}"` + (ev.note ? `:\n\n"${ev.note}"` : ".") + `\n\nIt's been moved back to In progress. Open TMC Ops -> Task Board to pick it up.` :
+      ev.kind === "push" ? `${clientName} would like "${title}" pushed to next month's hours.\n\nOpen TMC Ops -> Task Board to update it.` :
+      `${clientName} would like to keep "${title}" on this month's list.\n\nOpen TMC Ops -> Task Board for details.`;
+    for (const assistant of toNotify) {
+      const sent = await sendEmailViaGmail(assistant.email, subject, body);
+      console.log(`notifyAssistantsOnClientResponse (${ev.kind}): task ${event.params.taskId} -> ${assistant.email} -> ${sent ? "sent" : "not sent"}`);
+    }
   }
 });
 
