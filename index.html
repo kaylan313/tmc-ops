@@ -142,6 +142,8 @@
   .flex-between{display:flex;justify-content:space-between;align-items:center;}
   .stat-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
   .goals-section-title{margin:26px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--rose);font-size:20px;}
+  .goals-month-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;}
+  .goals-month-grid .goals-month-card{margin:0;}
   .stat-tile{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;flex:1;min-width:170px;}
   .stat-tile .stat-label{font-size:12px;color:#8a7a72;margin-bottom:6px;}
   .stat-tile .stat-value{font-weight:600;font-size:28px;color:var(--brown-dark);}
@@ -9703,13 +9705,12 @@ function addDevGoalItem(section){
 // shown inside its quarter's card), "year", "personal".
 const DEV_GOAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 function devGoalSectionOptions(){
-  const opts = [];
-  [1,2,3,4].forEach(q=>{
-    opts.push(["Q"+q, `Q${q} — whole quarter`]);
-    [0,1,2].forEach(k=>{ const m = (q-1)*3+k+1; opts.push(["M"+m, `Q${q} — ${DEV_GOAL_MONTHS[m-1]}`]); });
-  });
-  opts.push(["year","Annual goals"], ["personal","Personal goals"]);
-  return opts;
+  // Same order as the page: months, quarters, annual, personal.
+  return [
+    ...DEV_GOAL_MONTHS.map((name,i)=>["M"+(i+1), name]),
+    ...[1,2,3,4].map(q=>["Q"+q, DEV_GOALS_SECTIONS[q-1][1]]),
+    ["year","Annual goals"], ["personal","Personal goals"]
+  ];
 }
 // Inline edit: wording + "Move to" section, Save / Cancel.
 function editDevGoalItem(id){ state.devGoalEditingId = id; render(); }
@@ -9789,7 +9790,7 @@ function renderGoalsTab(){
     <h2>${year} Goals</h2>
     <div class="small" style="margin-bottom:14px;">Director of Software Development &amp; Web Design${isAdmin ? ` · ${escHtml((state.settings.assistants.find(a=>a.isDevDirector)||{}).name||'')}` : ''}. Build counts fill in automatically from builds marked <strong>Completed</strong> on a client's Software Build tab (yours and your team's), using their completed date and "Counts toward goals as".${inYear ? '' : ` These goals start January ${year} — counts will show from then.`}</div>
     ${unclassified.length ? `<div class="alert warn">${unclassified.length} completed build${unclassified.length===1?' isn\'t':'s aren\'t'} counted yet — pick Website or Software under "Counts toward goals as": ${unclassified.map(({client,addOn})=>`<a href="#" onclick="viewClientSoftwareBuild('${client.id}');return false;">${escHtml(client.name)} — ${escHtml(addOn.label||'build')}</a>`).join(", ")}</div>` : ""}
-    <h3 class="goals-section-title">Quarterly goals</h3>
+    <h3 class="goals-section-title">Monthly goals</h3>
     ${inYear ? `<div class="stat-row">
       ${["website","software"].map(type=>{
         const mStart = new Date(now.getFullYear(), now.getMonth(), 1), mEnd = new Date(now.getFullYear(), now.getMonth()+1, 1);
@@ -9797,6 +9798,20 @@ function renderGoalsTab(){
         return `<div class="stat-tile"><div class="stat-label">${typeLabel[type]} — ${now.toLocaleDateString(undefined,{month:'long'})}</div><div class="stat-value">${done} <span class="small">/ ${target}</span></div>${renderGoalBar(done,target)}</div>`;
       }).join("")}
     </div>` : ""}
+    <div class="goals-month-grid">
+      ${DEV_GOAL_MONTHS.map((name,m)=>{
+        const isThisMonth = now.getFullYear()===year && now.getMonth()===m;
+        const mStart = new Date(year, m, 1), mEnd = new Date(year, m+1, 1);
+        const q = quarterOf(m);
+        return `
+        <div class="card goals-month-card" style="${isThisMonth?'border:2px solid var(--rose);':''}">
+          <div class="flex-between"><h4 style="margin:0;">${name}</h4>${isThisMonth?'<span class="badge">This month</span>':''}</div>
+          <div class="small" style="margin:4px 0 6px;">${["website","software"].map(type=>`${type==="website"?"Website":"Software"} ${countCompletedBuilds(type, mStart, mEnd)} / ${g.targets[q]?.[type]||0}`).join(" · ")}</div>
+          ${checklist("M"+(m+1))}
+        </div>`;
+      }).join("")}
+    </div>
+    <h3 class="goals-section-title">Quarterly goals</h3>
     ${["Q1","Q2","Q3","Q4"].map((q,qi)=>{
       const qStart = new Date(year, qi*3, 1), qEnd = new Date(year, qi*3+3, 1);
       const isNow = now >= qStart && now < qEnd;
@@ -9812,17 +9827,8 @@ function renderGoalsTab(){
             </div>`;
           }).join("")}
         </div>
-        <div class="small" style="font-weight:600;margin-top:8px;">Quarter goals</div>
+        <div class="small" style="font-weight:600;margin-top:8px;">Goals</div>
         ${checklist(q)}
-        ${[0,1,2].map(k=>{
-          const m = qi*3+k;
-          const isThisMonth = now.getFullYear()===year && now.getMonth()===m;
-          return `
-          <div style="margin-top:12px;padding-top:8px;border-top:1px dashed var(--cream-dark);">
-            <div class="small" style="font-weight:600;${isThisMonth?'color:var(--rose-dark);':''}">${DEV_GOAL_MONTHS[m]}${isThisMonth?' · this month':''}</div>
-            ${checklist("M"+(m+1))}
-          </div>`;
-        }).join("")}
       </div>`;
     }).join("")}
     <h3 class="goals-section-title">Annual goals</h3>
