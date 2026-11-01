@@ -843,7 +843,7 @@ function switchPreviewRole(key){
   // Mirror a real login: team roles start on their own tasks only.
   state.kanbanFilter.onlyMine = key==="team" || key==="director" || key==="newHire";
   if(key==="admin"){ state.role = "admin"; state.activeTab = "dashboard"; }
-  else if(key==="team"){ state.role = "team"; state.currentAssistant = state.settings.assistants.find(a=>a.id==="asst_3"); state.activeTab = "dashboard"; }
+  else if(key==="team"){ state.role = "team"; state.currentAssistant = state.settings.assistants.find(a=>a.id==="asst_3"); state.activeTab = "dashboard"; if(weeklyRecapPromptDue(state.currentAssistant)) state.modal = { type:"weeklyRecapPrompt" }; }
   else if(key==="director"){ state.role = "team"; state.currentAssistant = { ...state.settings.assistants.find(a=>a.id==="asst_3"), isDevDirector:true }; state.activeTab = "builds"; }
   else if(key==="newHire"){
     // A brand-new hire who hasn't done any onboarding steps yet, so the
@@ -3066,7 +3066,9 @@ function tryTeamLogin(code){
     // Team members start the Task Board on just their own assigned tasks,
     // with a "Show all tasks" tick to widen it.
     state.kanbanFilter.onlyMine = true;
-    state.modal = nextOnboardingGateFor(match);
+    // Onboarding gates always come first; the Friday recap reminder only
+    // shows when there's no gate to get through.
+    state.modal = nextOnboardingGateFor(match) || (weeklyRecapPromptDue(match) ? { type:"weeklyRecapPrompt" } : null);
     subscribeAppData(); render();
   } else alert("Access code not recognized.");
 }
@@ -13074,12 +13076,59 @@ function renderModal(){
     : state.modal.type==="vendorTicketDetail" ? renderVendorTicketDetailModal(state.modal.vendorId, state.modal.ticketId)
     : state.modal.type==="newSupportTicket" ? renderNewSupportTicketModal()
     : state.modal.type==="supportTicketDetail" ? renderSupportTicketDetailModal(state.modal.ticketId)
+    : state.modal.type==="weeklyRecapPrompt" ? renderWeeklyRecapPromptModal()
     : "";
   const NON_DISMISSABLE_MODALS = ["changeCodeGate","waitingOnRateGate","agreementGate","handbookGate","idUploadGate","appGuide"];
   const dismissable = !NON_DISMISSABLE_MODALS.includes(state.modal.type);
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
 }
 function closeModal(){ state.modal = null; render(); }
+
+// ---- Friday weekly-recap reminder ----
+// Every Friday login, an assistant with at least one active client gets
+// asked whether they've sent their weekly recap emails. "Complete" records
+// it for that Friday (settings/access.weeklyRecapDone[assistantId] =
+// "YYYY-MM-DD") so it stops until next Friday; "Dismiss" (or clicking
+// outside) just closes it, and it comes back on their next login that
+// Friday. Written as a single nested key so it never rewrites anyone
+// else's entry (upsert merges maps).
+function recapAssistantClients(assistant){
+  return state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active") && (c.assistantIds||[]).includes(assistant.id));
+}
+function weeklyRecapPromptDue(assistant, now){
+  now = now || new Date();
+  if(!assistant || assistant.isContentCreator) return false;
+  // index.html?preview&friday pretends it's Friday, so the reminder can be
+  // previewed any day of the week.
+  const isFriday = now.getDay()===5 || (PREVIEW_MODE && /[?&]friday(=|&|$)/.test(location.search));
+  if(!isFriday) return false;
+  if(!recapAssistantClients(assistant).length) return false;
+  return (state.settings.weeklyRecapDone||{})[assistant.id] !== ymd(now);
+}
+function completeWeeklyRecap(){
+  const a = state.currentAssistant;
+  if(!a) return closeModal();
+  const today = ymd(new Date());
+  state.settings.weeklyRecapDone = { ...(state.settings.weeklyRecapDone||{}), [a.id]: today };
+  upsert("settings","access", { weeklyRecapDone: { [a.id]: today } });
+  closeModal();
+}
+function renderWeeklyRecapPromptModal(){
+  const a = state.currentAssistant || {};
+  const clients = recapAssistantClients(a);
+  return `
+    <div class="modal">
+      <h3>📬 Weekly recap emails</h3>
+      <p>Happy Friday${a.name ? ', '+escHtml(a.name.split(' ')[0]) : ''}! Have you sent this week's recap emails to your clients?</p>
+      <div class="small" style="margin-bottom:6px;">Your clients:</div>
+      <ul style="margin:0 0 10px 18px;padding:0;">${clients.map(c=>`<li>${escHtml(c.name)}</li>`).join("")}</ul>
+      <div class="small">You can send each one from that client's <strong>Tasks</strong> tab. Click <strong>Complete</strong> once they're all sent — until then this will keep popping up when you log in today.</div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Dismiss — remind me later</button>
+        <button onclick="completeWeeklyRecap()">Complete ✓</button>
+      </div>
+    </div>`;
+}
 
 // ---- Boot ----
 boot();
