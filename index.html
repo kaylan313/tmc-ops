@@ -6456,6 +6456,14 @@ function renderTaskMiniList(tasks){
 
 // --- Clients list ---
 function setClientMarketFilter(val){ state.clientMarketFilter = val; render(); }
+// Team logins open the Clients tab on "My clients" (client.assistantIds
+// includes them), with a "View all clients" button to see everyone.
+// Deliberately not remembered: it starts on My clients every session.
+function onlyMyClients(){
+  if(state.role!=="team" || !state.currentAssistant) return false;
+  return state.onlyMyClients!==false;
+}
+function setOnlyMyClients(on){ state.onlyMyClients = !!on; render(); }
 // Groups active clients into accordion sections. One-Time (the 6hr/12hr
 // Home Reset flat-rate packages) is checked before term type, since those
 // clients don't go through the pilot -> 3month -> 1year membership
@@ -6493,7 +6501,8 @@ function renderClientListItem(c){
     ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
   </div>`;
 }
-function renderClientGroups(activeClients){
+function renderClientGroups(activeClients, opts){
+  opts = opts || {};
   const remaining = new Set(activeClients.map(c=>c.id));
   const groups = CLIENT_GROUP_DEFS.map(def=>{
     const members = activeClients.filter(c=>remaining.has(c.id) && def.match(c));
@@ -6503,7 +6512,7 @@ function renderClientGroups(activeClients){
   const other = activeClients.filter(c=>remaining.has(c.id));
   if(other.length) groups.push({ key:"other", label:"Other", members:other });
   const open = state.clientGroupOpen || {};
-  return groups.map(g=>`
+  return groups.filter(g=>!opts.hideEmpty || g.members.length).map(g=>`
     <div class="card">
       <div class="flex-between" style="cursor:pointer;" onclick="toggleClientGroup('${g.key}')">
         <h3 style="margin:0;">${g.label} (${g.members.length})</h3>
@@ -6517,21 +6526,27 @@ function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
   const marketFilter = state.clientMarketFilter;
   const matchesMarket = c => marketFilter==="all" || (c.market||"Lafayette")===marketFilter;
-  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c));
-  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c));
+  const showToggle = state.role==="team" && !!state.currentAssistant;
+  const mineOnly = onlyMyClients();
+  const matchesMine = c => !mineOnly || (c.assistantIds||[]).includes(state.currentAssistant.id);
+  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c) && matchesMine(c));
+  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c) && matchesMine(c));
   return `
-    <div class="flex-between">
-      <h2>Clients</h2>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <select onchange="setClientMarketFilter(this.value)">
+    <div class="flex-between" style="flex-wrap:wrap;gap:8px;">
+      <h2>${mineOnly ? "My clients" : "Clients"}</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        ${showToggle ? (mineOnly
+          ? `<button class="secondary" onclick="setOnlyMyClients(false)">View all clients</button>`
+          : `<button class="secondary" onclick="setOnlyMyClients(true)">Show my clients only</button>`) : ""}
+        <select style="width:auto;" onchange="setClientMarketFilter(this.value)">
           <option value="all" ${marketFilter==='all'?'selected':''}>All markets</option>
           ${MARKETS.map(m=>`<option value="${m}" ${marketFilter===m?'selected':''}>${m}</option>`).join("")}
         </select>
         <button onclick="openClientEditor(null)">+ New client</button>
       </div>
     </div>
-    ${activeClients.length===0 ? `<div class="card"><div class="small">No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.</div></div>` :
-      renderClientGroups(activeClients)}
+    ${activeClients.length===0 ? `<div class="card"><div class="small">${mineOnly ? `You're not assigned to any active clients${marketFilter!=='all'?' in '+marketFilter:''} yet. Click "View all clients" to see everyone.` : `No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.`}</div></div>` :
+      renderClientGroups(activeClients, { hideEmpty: mineOnly })}
     ${pastClients.length ? `
     <div class="card">
       <div class="flex-between" style="cursor:pointer;" onclick="state.showPastClients=!state.showPastClients;render();">
