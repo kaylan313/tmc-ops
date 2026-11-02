@@ -3758,45 +3758,81 @@ function undoBillingCheck(clientId, key){
   if(!client) return;
   upsert("clients", clientId, { billingChecks: (client.billingChecks||[]).filter(b=>b.key!==key) });
 }
-function toggleBillingChecksDone(){ state.billingChecksDoneOpen = !state.billingChecksDoneOpen; render(); }
+// Dashboard only surfaces clients whose charge date is today — anything
+// overdue or upcoming is tracked instead by the persistent checkbox next to
+// each client's name on the Clients tab (renderClientListItem), so the
+// dashboard doesn't accumulate a growing backlog card.
 function renderBillingChecksCard(){
-  const r = billingCheckRows();
-  const dueLabel = d => d===0 ? "due today" : d===1 ? "due yesterday" : `due ${d} days ago`;
+  const dueToday = billingCheckRows().due.filter(x=>x.days===0);
+  if(!dueToday.length) return "";
   return `
     <div class="card">
       <div class="flex-between">
-        <h3 style="margin:0;">Membership charges — confirm in QuickBooks</h3>
-        <span class="small">${r.due.length ? r.due.length+' to confirm' : 'All caught up ✓'}</span>
+        <h3 style="margin:0;">Membership charges due today</h3>
+        <span class="small">${dueToday.length} to confirm</span>
       </div>
-      <div class="small" style="margin:4px 0 8px;">Each client's charge date is the start of their billing cycle. Once you've checked QuickBooks and the payment went through, click Complete — the whole admin team sees it here. It resets on its own next cycle.</div>
-      ${r.due.length ? r.due.map(({client,date,key,days})=>`
+      <div class="small" style="margin:4px 0 8px;">Confirm in QuickBooks, then click Complete. You can also check any client off from the Clients tab at any time.</div>
+      ${dueToday.map(({client,key})=>`
         <div class="list-item">
-          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${date.toLocaleDateString()} · ${cycleLabel(client.cycleType)}</span></div>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="small" style="${days>0?'color:var(--danger);font-weight:600;':'color:var(--warn);font-weight:600;'}">${dueLabel(days)}</span>
-            <button onclick="markBillingCheckComplete('${client.id}','${key}')">Complete</button>
-          </div>
-        </div>`).join("") : `<div class="small">Nothing waiting — every active client's current charge is marked complete.</div>`}
-      ${r.upcoming.length ? `
-        <div class="small" style="font-weight:600;margin:12px 0 4px;">Coming up (next 7 days)</div>
-        ${r.upcoming.map(({client,date})=>`
-          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
-            <div>${escHtml(client.name)}</div><span class="small">${date.toLocaleDateString()}</span>
-          </div>`).join("")}` : ""}
-      ${r.done.length ? `
-        <div class="flex-between" style="cursor:pointer;margin-top:12px;" onclick="toggleBillingChecksDone()">
-          <span class="small" style="font-weight:600;">Completed this cycle (${r.done.length})</span>
-          <span class="small">${state.billingChecksDoneOpen?'Hide ▲':'Show ▼'}</span>
-        </div>
-        ${state.billingChecksDoneOpen ? r.done.map(({client,date,key,check})=>`
-          <div class="list-item">
-            <div><strong>${escHtml(client.name)}</strong> <span class="small">· charged ${date.toLocaleDateString()}</span></div>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <span class="small" style="color:var(--ok);font-weight:600;">✓ ${escHtml(check.completedBy||'Admin')} · ${new Date(check.completedAt).toLocaleDateString()}</span>
-              <a href="#" class="small" onclick="undoBillingCheck('${client.id}','${key}');return false;">Undo</a>
-            </div>
-          </div>`).join("") : ""}` : ""}
-      ${r.noDate ? `<div class="small" style="margin-top:8px;color:var(--warn);">${r.noDate} active client${r.noDate===1?' has':'s have'} no renewal date set, so no charge date can be shown — set it on their Membership tab.</div>` : ""}
+          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${cycleLabel(client.cycleType)}</span></div>
+          <button onclick="markBillingCheckComplete('${client.id}','${key}')">Complete</button>
+        </div>`).join("")}
+    </div>`;
+}
+// Used by the Clients-tab checkbox (renderClientListItem) — same cycle-start
+// key as the dashboard card above, so checking it off in either place agrees.
+function clientBillingCheckState(client){
+  const period = currentBillingPeriod(client);
+  if(!period) return null;
+  const key = billingCheckKey(period.start);
+  const check = (client.billingChecks||[]).find(b=>b.key===key);
+  return { period, key, check };
+}
+// A native checkbox toggles itself on click before our handler runs; since
+// markBillingCheckComplete can be cancelled (prompt), we preventDefault and
+// drive the checked state entirely from billingChecks via the next render.
+function billingCheckboxClicked(ev, clientId, key, wasChecked){
+  ev.preventDefault();
+  ev.stopPropagation();
+  if(wasChecked) undoBillingCheck(clientId, key);
+  else markBillingCheckComplete(clientId, key);
+}
+// ---- Background check reminder (admin) ----
+// Fires 3 weeks after hireDate so whoever's on the Dashboard remembers to
+// send Tori the background check info — not tied to the Ops/Docs Lead roles
+// since this isn't either of their defined areas, just a shared admin nag
+// like the billing-checks card above. backgroundCheckSentAt stays null until
+// marked, same undo-able pattern as billingChecks.
+const BACKGROUND_CHECK_DUE_DAYS = 21;
+function backgroundCheckDueRows(){
+  const today = new Date();
+  return state.settings.assistants.filter(a=>{
+    if(!a.active || a.backgroundCheckSentAt || !a.hireDate) return false;
+    const hireDate = parseYMD(a.hireDate);
+    return (today - hireDate)/86400000 >= BACKGROUND_CHECK_DUE_DAYS;
+  }).map(a=>({ assistant:a, hireDate: parseYMD(a.hireDate) })).sort((x,y)=>x.hireDate-y.hireDate);
+}
+function markBackgroundCheckSent(assistantId){
+  updateAssistantField(assistantId, "backgroundCheckSentAt", new Date().toISOString());
+}
+function undoBackgroundCheckSent(assistantId){
+  updateAssistantField(assistantId, "backgroundCheckSentAt", null);
+}
+function renderBackgroundCheckCard(){
+  const due = backgroundCheckDueRows();
+  if(!due.length) return "";
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Background checks to send</h3>
+        <span class="small">${due.length} to send</span>
+      </div>
+      <div class="small" style="margin:4px 0 8px;">It's been 3+ weeks since hire date — send Tori the background check info, then click Sent.</div>
+      ${due.map(({assistant,hireDate})=>`
+        <div class="list-item">
+          <div><strong>${escHtml(assistant.name)}</strong><span class="small"> · hired ${hireDate.toLocaleDateString()}</span></div>
+          <button onclick="markBackgroundCheckSent('${assistant.id}')">Sent</button>
+        </div>`).join("")}
     </div>`;
 }
 function renderAdminDashboard(){
@@ -3915,6 +3951,7 @@ function renderAdminDashboard(){
     </div>
 
     ${renderBillingChecksCard()}
+    ${renderBackgroundCheckCard()}
 
     <div class="row">
       ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns:clientCheckInsForOps, renewalCheckInEmails:renewalCheckInEmailsForOps, pending:pendingForOps, notStartedClients:notStartedClientsForOps, atRiskClients:atRiskClientsForOps, awaitingClient:awaitingClientForOps, paused:pausedForOps, overdue, pastDue })}
@@ -6528,6 +6565,7 @@ function renderClientListItem(c){
   const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
   const notStarted = c.id!==INTERNAL_CLIENT_ID && isNotStartedClient(c);
   const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
+  const billing = (c.id!==INTERNAL_CLIENT_ID && state.role==="admin") ? clientBillingCheckState(c) : null;
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
       <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
@@ -6535,7 +6573,13 @@ function renderClientListItem(c){
         const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
       }).join(", ")}</div>
     </div>
-    ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
+    <div style="display:flex;align-items:center;gap:10px;">
+      ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
+      ${billing ? `<label class="small" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;" title="${billing.check ? `Charged ${billing.period.start.toLocaleDateString()} — confirmed by ${(billing.check.completedBy||'Admin').replace(/"/g,'&quot;')}` : `Charge date ${billing.period.start.toLocaleDateString()}`}">
+        <input type="checkbox" ${billing.check?'checked':''} onclick="billingCheckboxClicked(event,'${c.id}','${billing.key}',${!!billing.check})">
+        Charged
+      </label>` : ""}
+    </div>
   </div>`;
 }
 function renderClientGroups(activeClients, opts){
@@ -6706,9 +6750,7 @@ const CLIENT_ONBOARDING_COMMON = [
   { id:"start_date_confirmed", text:"Start date confirmed with client" }
 ];
 const CLIENT_ONBOARDING_HOME = [
-  { id:"home_orientation_done", text:"Home orientation visit scheduled or completed" },
-  { id:"home_access_collected", text:"Home access info collected (WiFi, alarm, entry, parking)" },
-  { id:"home_vendors_collected", text:"Vendor list collected" }
+  { id:"home_orientation_done", text:"Home orientation visit scheduled or completed" }
 ];
 const CLIENT_ONBOARDING_BUSINESS = [
   { id:"biz_intake_done", text:"Business intake call scheduled or completed" },
@@ -11198,7 +11240,7 @@ function renderAssistantRow(a){
         ` : `
         <div><label class="small">Hourly rate ($)</label><input id="asst_hourlyrate_${a.id}" type="number" step="0.5" value="${a.hourlyRate||0}" onchange="updateAssistantPayField('${a.id}','hourlyRate',parseFloat(this.value)||0)"></div>
         `}
-        <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="updateAssistantField('${a.id}','hireDate',this.value)"></div>
+        <div><label class="small">Hire date</label><input type="date" value="${a.hireDate||''}" onchange="setAssistantHireDate('${a.id}',this.value)"></div>
         <div><label class="small">Email (for payroll reports; shown to teammates)</label><input id="asst_email_${a.id}" type="email" value="${a.email||''}" onchange="updateAssistantField('${a.id}','email',this.value)"></div>
         <div><label class="small">Phone (shown to teammates, and to vendors on requests they submit)</label><input id="asst_phone_${a.id}" type="tel" value="${escHtml(a.phone||'')}" onchange="updateAssistantField('${a.id}','phone',this.value.trim())"></div>
         <div><label class="small">Market</label>
@@ -11212,6 +11254,15 @@ function renderAssistantRow(a){
         <span>${a.payRateConfirmed ? "✓ Pay rate confirmed — they can sign their agreement." : "⚠ Pay rate not confirmed yet — they're blocked from signing their agreement until you confirm it's correct."}</span>
         ${a.payRateConfirmed ? "" : `<button class="secondary" style="padding:2px 8px;" onclick="confirmAssistantPayRate('${a.id}')">Confirm rate is correct</button>`}
       </div>` : ""}
+      ${a.backgroundCheckSentAt ? `
+      <div class="small" style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="color:var(--ok);font-weight:600;">✓ Background check sent ${new Date(a.backgroundCheckSentAt).toLocaleDateString()}</span>
+        <a href="#" class="small" onclick="undoBackgroundCheckSent('${a.id}');return false;">Undo</a>
+      </div>` : (a.hireDate && (new Date() - parseYMD(a.hireDate))/86400000 >= BACKGROUND_CHECK_DUE_DAYS ? `
+      <div class="small alert warn" style="display:flex;justify-content:space-between;align-items:center;">
+        <span>⚠ Background check not sent yet — it's been 3+ weeks since hire date.</span>
+        <button class="secondary" style="padding:2px 8px;" onclick="markBackgroundCheckSent('${a.id}')">Sent</button>
+      </div>` : "")}
       <div><label class="small">Document upload folder — their private Google Drive folder link, for License &amp; W9 uploads (Onboarding tab shows them a button that opens this)</label><input id="asst_drivefolder_${a.id}" value="${a.driveUploadFolderUrl||''}" placeholder="https://drive.google.com/drive/folders/..." onchange="updateAssistantField('${a.id}','driveUploadFolderUrl',this.value.trim())"></div>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Roles</label>
@@ -11254,6 +11305,14 @@ function renderAssistantRow(a){
 function updateAssistantCode(id, code){
   state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,accessCode:code}:a);
   upsert("settings","access", { assistants: state.settings.assistants });
+}
+// The native date input can hand back a "00YY" year if someone types a
+// 2-digit year without the picker auto-expanding it (seen in the wild on
+// several hire dates — e.g. "0026-07-31" instead of "2026-07-31"), which
+// would silently wreck date-math like the background-check reminder above.
+function setAssistantHireDate(id, value){
+  const fixed = value.replace(/^00(\d{2})-/, "20$1-");
+  updateAssistantField(id, "hireDate", fixed);
 }
 function updateAssistantField(id, field, value){
   state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,[field]:value}:a);
