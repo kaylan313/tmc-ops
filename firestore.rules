@@ -62,6 +62,11 @@ service cloud.firestore {
     // Same reasoning as qbTokens above — a Gmail refresh token can send
     // email as support@themodernconcierge.co indefinitely until revoked.
     match /gmailTokens/{document=**} { allow read, write: if false; }
+    // Each assistant's own Google Calendar refresh token (can read their
+    // whole calendar) + the short-lived OAuth CSRF states for connecting
+    // it. Cloud Functions only — same reasoning as qbTokens/gmailTokens.
+    match /calendarTokens/{document=**} { allow read, write: if false; }
+    match /calendarOAuthStates/{document=**} { allow read, write: if false; }
     // Auto-written by logSettingsHistory (functions/index.js) after every
     // change to settings/access — a full snapshot trail for recovering from
     // exactly the kind of incident that made this collection necessary in
