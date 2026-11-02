@@ -141,6 +141,11 @@
   .small{font-size:12px;color:#8a7a72;}
   .flex-between{display:flex;justify-content:space-between;align-items:center;}
   .stat-row{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
+  .goals-section-title{margin:26px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--rose);font-size:20px;}
+  .goals-switch-row{display:flex;flex-wrap:wrap;gap:10px 16px;justify-content:space-between;align-items:center;margin-bottom:12px;}
+  .goals-owner-switch{display:flex;gap:6px;flex-wrap:wrap;}
+  .goals-month-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px;}
+  .goals-month-grid .goals-month-card{margin:0;}
   .stat-tile{background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 18px;flex:1;min-width:170px;}
   .stat-tile .stat-label{font-size:12px;color:#8a7a72;margin-bottom:6px;}
   .stat-tile .stat-value{font-weight:600;font-size:28px;color:var(--brown-dark);}
@@ -213,7 +218,65 @@
   .cal-cell.cal-drop-hover{outline:2px dashed var(--rose-dark);outline-offset:-2px;}
   .cal-add{position:absolute;top:2px;right:2px;background:none;border:none;color:#c7b8ae;font-size:13px;cursor:pointer;line-height:1;padding:2px 4px;}
   .cal-add:hover{color:var(--rose-dark);}
+
+  /* ---- Dark mode (sidebar toggle; saved per browser as tmcTheme) ----
+     The light palette's --cream/--brown vars double as BOTH background and
+     text colors in different rules (e.g. button text is var(--cream)), so
+     dark mode overrides specific rules rather than just swapping the vars.
+     The [style*=...] rules catch the handful of colors written inline in
+     templates instead of in a class. */
+  html[data-theme="dark"]{
+    --cream-dark:#3a2e29; --text:#eadfd4; --muted:#b3a49b; --surface:#261d1a; --surface-2:#2f2521; --danger:#e57373;
+    --shadow:0 2px 10px rgba(0,0,0,0.45); color-scheme:dark;
+  }
+  html[data-theme="dark"] body,
+  html[data-theme="dark"] .center-screen{background:#1a1311;color:var(--text);}
+  html[data-theme="dark"] h1,html[data-theme="dark"] h2,html[data-theme="dark"] h3,html[data-theme="dark"] h4,
+  html[data-theme="dark"] .kanban-col h4,html[data-theme="dark"] .stat-tile .stat-value,
+  html[data-theme="dark"] .login-box .logo,html[data-theme="dark"] .orgchart-seat .oc-name,
+  html[data-theme="dark"] .orgchart-seat .oc-resp{color:#f3e7dc;}
+  html[data-theme="dark"] .sidebar{background:#120d0b;}
+  html[data-theme="dark"] .card,html[data-theme="dark"] .stat-tile,html[data-theme="dark"] .modal,
+  html[data-theme="dark"] .task-card,html[data-theme="dark"] .login-box,html[data-theme="dark"] .orgchart-seat,
+  html[data-theme="dark"] .cal-cell{background:var(--surface);}
+  html[data-theme="dark"] .kanban-col{background:#211915;}
+  html[data-theme="dark"] .modal-bg{background:rgba(0,0,0,0.6);}
+  html[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
+  html[data-theme="dark"] select,html[data-theme="dark"] textarea{background:#1f1714;color:var(--text);border-color:#4a3c36;}
+  html[data-theme="dark"] button.secondary{background:var(--cream-dark);color:#f3e7dc;}
+  html[data-theme="dark"] .tabs button{color:#e3d2c4;}
+  html[data-theme="dark"] .tabs button.active{color:#fff;}
+  html[data-theme="dark"] button.danger{background:#b23a3a;}
+  html[data-theme="dark"] a{color:var(--rose);}
+  html[data-theme="dark"] .small,html[data-theme="dark"] .task-card .meta,
+  html[data-theme="dark"] .stat-tile .stat-label,html[data-theme="dark"] .stat-tile .stat-sub,
+  html[data-theme="dark"] table.data-table th,html[data-theme="dark"] .login-box .tagline,
+  html[data-theme="dark"] .orgchart-seat .oc-title,html[data-theme="dark"] .orgchart-seat .oc-flag,
+  html[data-theme="dark"] .cal-daynum,html[data-theme="dark"] .cal-headcell{color:var(--muted);}
+  html[data-theme="dark"] .subtask{color:#cdbdb2;}
+  html[data-theme="dark"] .alert.warn{background:#4a3618;color:#f3d6a6;}
+  html[data-theme="dark"] .alert.danger{background:#4a2020;color:#f2c0c0;}
+  html[data-theme="dark"] .alert.ok{background:#213a28;color:#cfe6d3;}
+  html[data-theme="dark"] .cal-headcell{background:#2a201c;}
+  html[data-theme="dark"] .cal-cell.cal-empty{background:#1f1815;}
+  html[data-theme="dark"] .cal-cell.cal-today{background:#33261f;}
+  html[data-theme="dark"] .cal-pill-content{background:#213a28;color:#cfe6d3;}
+  html[data-theme="dark"] .cal-pill-posted{background:#3a2e29;color:var(--muted);}
+  html[data-theme="dark"] .oc-tag.new{background:#213a28;color:#9fd0ae;}
+  html[data-theme="dark"] .oc-tag.leaving{background:#4a2020;}
+  html[data-theme="dark"] [style*="background:#fff"],
+  html[data-theme="dark"] [style*="background:var(--cream)"]{background:var(--surface-2) !important;}
+  html[data-theme="dark"] [style*="color:#8a7a72"]{color:var(--muted) !important;}
+  html[data-theme="dark"] [style*="color:#241a17"],
+  html[data-theme="dark"] [style*="color:var(--brown-dark)"]{color:#f3e7dc !important;}
+  html[data-theme="dark"] #preview-bar [style*="color:#241a17"]{color:#241a17 !important;}
+  .theme-toggle{display:block;margin-top:6px;background:transparent;border:1px solid rgba(255,255,255,0.25);color:var(--cream);font-size:12px;padding:4px 10px;border-radius:14px;}
 </style>
+<script>
+  // Applied before the page paints so a dark-mode user doesn't get a flash
+  // of the light theme on every load.
+  try { if(localStorage.getItem("tmcTheme")==="dark") document.documentElement.setAttribute("data-theme","dark"); } catch(e){}
+</script>
 </head>
 <body>
 <div id="app"><div style="min-height:100vh;display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;color:#8a7a72;font-size:15px;">Loading The Modern Concierge…</div></div>
@@ -273,7 +336,16 @@ const REPORT_VIEWER_URL = "https://modern-co-dashboard.web.app/report.html";
 let db = null;
 let fns = null;
 let FIREBASE_AVAILABLE = false;
+// Design preview: open the app with ?preview (e.g. index.html?preview) to
+// click through every role and tab on FAKE data with no login. Firebase is
+// never initialized in this mode, so no real client/financial data is ever
+// loaded and nothing is saved anywhere — writes only touch in-memory state
+// and vanish on reload. Built so someone making design edits can check
+// their work without the admin passcode. See seedPreviewData() and
+// renderPreviewBar().
+const PREVIEW_MODE = /[?&]preview(=|&|$)/.test(location.search);
 try{
+  if(PREVIEW_MODE) throw new Error("Preview mode — Firebase intentionally not initialized.");
   if(typeof firebase === "undefined") throw new Error("Firebase SDK did not load (blocked script or no network).");
   firebase.initializeApp(firebaseConfig);
   db = firebase.firestore();
@@ -527,6 +599,13 @@ function subscribe(name, onChange, attempt){
 // e.g. a freshly-created client could never be found. Mirror the write into
 // the matching in-memory array so local/demo mode is actually usable —
 // it still won't survive a page reload until real Firebase config is in place.
+// Set while render() is building the page. Some tabs save as they draw
+// (e.g. the Scorecard's weekly snapshot); with Firebase that write never
+// re-renders synchronously, but the local-only path below calls render()
+// directly — which re-drew the Scorecard, which saved again, forever
+// (stack overflow). A write made mid-render is already reflected in the
+// page being built, so the local path just skips the extra render then.
+let _rendering = false;
 function upsertLocal(name, id, data){
   const arr = state[name];
   if(!Array.isArray(arr)) return;
@@ -548,7 +627,7 @@ function upsert(name, id, data){
   if(!db){
     console.warn("Firebase not connected — saving locally only (won't survive a reload):", name, id, data);
     upsertLocal(name, id, data);
-    render();
+    if(!_rendering) render();
     return Promise.resolve(true);
   }
   return col(name).doc(id).set(data, { merge:true }).then(()=>true).catch(err=>{
@@ -561,7 +640,7 @@ function remove(name, id){
   if(!db){
     console.warn("Firebase not connected — deleting locally only:", name, id);
     removeLocal(name, id);
-    render();
+    if(!_rendering) render();
     return Promise.resolve();
   }
   return col(name).doc(id).delete().catch(err=>{
@@ -670,6 +749,132 @@ function seedDemoData(){
   return { clients:[client], tasks, timeEntries };
 }
 
+// Preview mode's fake world (see PREVIEW_MODE) — seedDemoData() plus enough
+// extra clients, vendors, leads, etc. that every tab has something on it,
+// and fake contact info/codes on the team. Every name, number, code and
+// dollar amount here is made up.
+function seedPreviewData(){
+  const base = seedDemoData();
+  const now = Date.now();
+  const hoursAgo = h => new Date(now - h*3600000).toISOString();
+  const daysFromNow = d => new Date(now + d*24*3600000).toISOString().slice(0,10);
+  const assistants = SEED_ASSISTANTS.map((a,i)=>({
+    ...a,
+    email: a.name.split(" ")[0].toLowerCase() + "@example.com",
+    phone: "555-010-" + String(1000+i).slice(1),
+    accessCode: "preview" + (i+1),
+    handbookSigned: true, idUploadSubmittedAt: hoursAgo(24*90), hasSeenAppGuide: true, payRateConfirmed: true
+  }));
+  const settings = { ...SEED_SETTINGS, adminPasscode: "preview", assistants };
+  const c2 = { id:"client_preview_2", name:"Jordan Sample", packageHours:10, packagePrice:500, cycleType:"monthly",
+    renewalDate: new Date(now - 20*24*3600000).toISOString().slice(0,10), assistantIds:["asst_2"], email:"jordan@example.com",
+    portalCode:"preview-client2", termType:"pilot", clientStatus:"active", createdAt: hoursAgo(24*20), notes:[],
+    profile:{ serviceType:"home", phone:"555-222-3333", homeAddress:"789 Example St, Lafayette, LA", homeAccess:"Garage code 0000. Dog is friendly." } };
+  // Already confirmed in QuickBooks this cycle, so the dashboard's
+  // membership-charge card shows a completed row too.
+  c2.billingChecks = [{ key: c2.renewalDate, completedAt: hoursAgo(24*19), completedBy: "Heidi" }];
+  const c3 = { id:"client_preview_3", name:"Sample Business LLC", packageHours:30, packagePrice:1350, cycleType:"monthly",
+    renewalDate: new Date(now - 5*24*3600000).toISOString().slice(0,10), assistantIds:["asst_4","asst_5"], email:"ops@example.com",
+    portalCode:"preview-client3", termType:"12month", clientStatus:"active", createdAt: hoursAgo(24*200), notes:[],
+    profile:{ serviceType:"business", phone:"555-444-5555", officeAddress:"100 Fake Ave, Baton Rouge, LA" },
+    // A fake assigned build so the Builds tab isn't empty in preview.
+    addOns:[{ id:"addon_preview_1", label:"Website Build", status:"Active", flatFee:3000, buildAssistantId:"asst_3", buildAssistantPercent:30,
+      monthlyMaintenance:150, maintenanceActive:true, maintenanceAssistantId:"asst_3", maintenanceAssistantPercent:30,
+      maintenancePayments:[
+        { id:"maintpay_preview_1", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(new Date(now).getFullYear(), new Date(now).getMonth()-1, 1)), amount:150, paid:true, paidDate: new Date(now - 3*24*3600000).toISOString().slice(0,10) },
+        { id:"maintpay_preview_2", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(now)), amount:150, paid:false, paidDate:"" }
+      ],
+      buildStartDate: new Date(now - 10*24*3600000).toISOString().slice(0,10),
+      payments:[
+        { id:"pay_preview_1", label:"50% Deposit", amount:1500, paid:true, paidDate: new Date(now - 10*24*3600000).toISOString().slice(0,10) },
+        { id:"pay_preview_2", label:"25% Progress Payment", amount:750, paid:false, paidDate:"" },
+        { id:"pay_preview_3", label:"25% Final Payment", amount:750, paid:false, paidDate:"" }
+      ],
+      buildTodos:[
+        { id:"todo_preview_1", phase:"Setup", text:"Review intake details (brand, colors, fonts, logo, content)", dueDayOffset:3, done:true, doneAt: hoursAgo(24*7) },
+        { id:"todo_preview_2", phase:"Build", text:"Build out all pages/features", dueDayOffset:10, done:false, doneAt:"" },
+        { id:"todo_preview_3", phase:"Handoff", text:"Submit all deliverables, confirm launch-ready", dueDayOffset:28, done:false, doneAt:"" }
+      ] }] };
+  const tasks = [...base.tasks,
+    { id:"task_preview_1", title:"Organize pantry", clientId:c2.id, status:"In progress", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Sort, label, and restock the pantry.", createdAt: hoursAgo(72) },
+    { id:"task_preview_2", title:"Book anniversary dinner", clientId:c2.id, status:"Done", category:"Home", assignees:["asst_2"], subtasks:[], discussion:[], description:"Reserved a table for two.", completedAt: hoursAgo(40) },
+    { id:"task_preview_3", title:"Monthly invoice cleanup", clientId:c3.id, status:"Researching", category:"Business", assignees:["asst_4"], subtasks:[{text:"Pull open invoices",done:true},{text:"Email follow-ups",done:false}], discussion:[], description:"Chase down unpaid invoices.", createdAt: hoursAgo(100) },
+    { id:"task_preview_4", title:"Inbox triage", clientId:c3.id, status:"To do", category:"Business", assignees:["asst_5"], subtasks:[], discussion:[], description:"", dueDate: daysFromNow(2), repeat:{ type:"weekly", days:[1,4] } }
+  ];
+  const timeEntries = [...base.timeEntries,
+    { id:"te_preview_1", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(30), clockOut: hoursAgo(26) },
+    { id:"te_preview_2", taskId:"task_preview_2", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(42), clockOut: hoursAgo(37) },
+    { id:"te_preview_3", taskId:"task_preview_3", assistantId:"asst_4", clientId:c3.id, clockIn: hoursAgo(12), clockOut: hoursAgo(9) },
+    { id:"te_preview_4", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(1), clockOut: null }
+  ];
+  const vendors = [{ id:"vendor_preview_1", name:"Sam Handyman", profession:"Handyman", market:"Lafayette", phone:"555-777-8888", email:"sam@example.com",
+    rating:5, commissionPercent:10, portalAccessCode:"preview-vendor", earnings:[],
+    tickets:[
+      { id:"vticket_preview_1", clientId:base.clients[0].id, title:"Replace porch light", description:"Fixture is flickering.", accessInstructions:"Hidden key under the third flowerpot.",
+        requestedByAssistantId:"asst_3", requestedByName:"Heidi Jo Peaden", requestedAt: hoursAgo(50), scheduledAt:"", availableTimesNote:"",
+        vendorCost:null, vendorCostSubmittedAt:null, clientChargeAmount:null, clientChargeSetAt:null, clientCharged:false, clientChargedAt:null, vendorPaid:false, vendorPaidAt:null, receipts:[], discussion:[] },
+      { id:"vticket_preview_2", clientId:c2.id, title:"Mount TV", description:"", accessInstructions:"Garage code 0000.",
+        requestedByAssistantId:"asst_2", requestedByName:"Victoria Haas", requestedAt: hoursAgo(120), scheduledAt: hoursAgo(-24), availableTimesNote:"",
+        vendorCost:85, vendorCostSubmittedAt: hoursAgo(20), clientChargeAmount:120, clientChargeSetAt: hoursAgo(10), clientCharged:false, clientChargedAt:null, vendorPaid:false, vendorPaidAt:null, receipts:[], discussion:[{ id:"vcomment_preview_1", author:"Sam Handyman", text:"Bringing my own mount.", date: hoursAgo(19) }] }
+    ] }];
+  const leads = [
+    { id:"lead_preview_1", name:"Pat Prospect", email:"pat@example.com", phone:"555-123-0000", source:"Instagram", status:"New", nextFollowUpDate: daysFromNow(1), notes:"Interested in 10hr package.", createdDate: daysFromNow(-3) },
+    { id:"lead_preview_2", name:"Casey Curious", email:"casey@example.com", phone:"555-123-1111", source:"Word of Mouth", status:"Follow-up Needed", nextFollowUpDate: daysFromNow(-1), notes:"", createdDate: daysFromNow(-10) }
+  ];
+  const cardPurchases = [
+    { id:"cardpx_preview_1", clientId:c2.id, assistantId:"asst_2", assistantName:"Victoria Haas", amount:42.17, store:"Grocery Store", description:"Pantry restock", receiptPhotoDataUrl:"", submittedAt: hoursAgo(28), reviewed:false }
+  ];
+  const supportTickets = [
+    { id:"support_preview_1", kind:"bug", title:"Save button not working on client notes", description:"Clicked save twice, note didn't show up.", screenshot:null, authorId:"asst_2", authorName:"Victoria Haas", status:"Open", createdAt: hoursAgo(20), comments:[] },
+    { id:"support_preview_2", kind:"feature", title:"Add a filter for overdue tasks", description:"Would help on Mondays.", screenshot:null, authorId:"asst_3", authorName:settings.assistants.find(a=>a.id==="asst_3")?.name||"Assistant", status:"In Progress", createdAt: hoursAgo(50), comments:[] },
+    { id:"support_preview_3", kind:"bug", title:"Timer kept running after clock out", description:"Fixed after refresh.", screenshot:null, authorId:"asst_2", authorName:"Victoria Haas", status:"Resolved", resolvedAt: hoursAgo(30), createdAt: hoursAgo(96), comments:[{ id:"comment_preview_1", authorName:"Admin", text:"Fixed — let me know if it happens again.", date: hoursAgo(30) }] }
+  ];
+  return { settings, clients:[...base.clients, c2, c3], tasks, timeEntries, vendors, leads, cardPurchases, supportTickets };
+}
+// Floating bar shown on every screen in preview mode — makes it obvious the
+// data is fake and lets the viewer jump between roles without codes.
+const PREVIEW_ROLES = [
+  ["admin","Admin"], ["team","Assistant"], ["director","Dev Director"], ["newHire","New hire"], ["client","Client"], ["vendor","Vendor"]
+];
+function previewRoleKey(){
+  if(state.view==="login") return "login";
+  if(isDevDirector()) return "director";
+  if(state.role==="team" && state.currentAssistant && state.currentAssistant.id==="asst_preview_newhire") return "newHire";
+  return state.role;
+}
+function switchPreviewRole(key){
+  state.modal = null; state.selectedClientId = null; state.currentAssistant = null; state.currentClientId = null; state.currentVendorId = null;
+  state.view = "app";
+  // Mirror a real login: team roles start on their own tasks only.
+  state.kanbanFilter.onlyMine = key==="team" || key==="director" || key==="newHire";
+  if(key==="admin"){ state.role = "admin"; state.activeTab = "dashboard"; }
+  else if(key==="team"){ state.role = "team"; state.currentAssistant = state.settings.assistants.find(a=>a.id==="asst_3"); state.activeTab = "dashboard"; if(weeklyRecapPromptDue(state.currentAssistant)) state.modal = { type:"weeklyRecapPrompt" }; }
+  else if(key==="director"){ state.role = "team"; state.currentAssistant = { ...state.settings.assistants.find(a=>a.id==="asst_3"), isDevDirector:true }; state.activeTab = "builds"; }
+  else if(key==="newHire"){
+    // A brand-new hire who hasn't done any onboarding steps yet, so the
+    // onboarding gate screens can be previewed too.
+    let hire = state.settings.assistants.find(a=>a.id==="asst_preview_newhire");
+    if(!hire){
+      hire = { id:"asst_preview_newhire", name:"Nova Newhire", email:"nova@example.com", phone:"555-010-9999", accessCode:"preview-new", active:true,
+        hourlyRate:22, payType:"hourly", hireDate: new Date().toISOString().slice(0,10), market:"Lafayette", agreementSigned:false, payRateConfirmed:true };
+      state.settings.assistants = [...state.settings.assistants, hire];
+    }
+    state.role = "team"; state.currentAssistant = hire; state.activeTab = "dashboard";
+    state.modal = nextOnboardingGateFor(hire);
+  }
+  else if(key==="client"){ state.role = "client"; state.currentClientId = state.clients[0].id; state.activeTab = "portal"; state.clientRequestDraft = { title:"", details:"", category:"Home" }; }
+  else if(key==="vendor"){ state.role = "vendor"; state.currentVendorId = state.vendors[0].id; }
+  else { state.view = "login"; state.role = null; }
+  render();
+}
+function renderPreviewBar(){
+  const current = previewRoleKey();
+  return `<div id="preview-bar" style="position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:10000;background:#241a17;color:#f6efe6;border:2px solid #c9a3a0;border-radius:22px;padding:6px 10px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px;font:12px 'Jost',Arial,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.3);max-width:calc(100vw - 32px);">
+    <strong style="letter-spacing:1px;">PREVIEW · fake data · nothing saves</strong>
+    ${[...PREVIEW_ROLES, ["login","Login screen"]].map(([k,label])=>`<button onclick="switchPreviewRole('${k}')" style="padding:3px 10px;border-radius:14px;font-size:12px;${current===k?'background:#c9a3a0;color:#241a17;':'background:transparent;color:#f6efe6;border:1px solid rgba(246,239,230,.4);'}">${label}</button>`).join("")}
+  </div>`;
+}
+
 async function boot(){
   // Render immediately so the UI is never blank while Firestore connects
   // (or fails to, if firebaseConfig hasn't been filled in yet, or the SDK
@@ -682,7 +887,12 @@ async function boot(){
   // would otherwise trigger a re-render while still waiting on first data.
   setTimeout(()=>{ if(!state.modal && state.view==="login") render(); }, 12000);
 
-  if(!FIREBASE_AVAILABLE || !FIREBASE_CONFIGURED){
+  if(PREVIEW_MODE){
+    const p = seedPreviewData();
+    Object.assign(state, { settings:p.settings, clients:p.clients, tasks:p.tasks, timeEntries:p.timeEntries, vendors:p.vendors,
+      leads:p.leads, cardPurchases:p.cardPurchases, supportTickets:p.supportTickets, settingsReady:true, clientsReady:true, vendorsReady:true });
+    switchPreviewRole("admin");
+  } else if(!FIREBASE_AVAILABLE || !FIREBASE_CONFIGURED){
     console.warn("Running with local seed data only — Firebase is either unavailable or still using placeholder config. Nothing will persist.");
     if(state.clients.length===0){
       const demo = seedDemoData();
@@ -967,7 +1177,7 @@ function clockIn(taskId, assistantId, note){
     clockOut: null,
     note: note || ""
   };
-  upsert("timeEntries", entry.id, entry);
+  return upsert("timeEntries", entry.id, entry);
 }
 // A standing task under Internal / Modern Co. so anyone can clock straight
 // into general admin work without first creating a one-off task for it.
@@ -1003,7 +1213,7 @@ function clockOut(entryId, editedTime){
   // clocking in is always real-time already (see clockIn()), so this is the
   // only point a manually-entered time can slip in, and admin wants visibility
   // into that rather than it blending in with real-time clock-outs.
-  upsert("timeEntries", entryId, { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime });
+  return upsert("timeEntries", entryId, { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime });
 }
 function entryDurationHours(entry){
   const start = new Date(entry.clockIn);
@@ -1927,6 +2137,9 @@ function respondToClientReview(taskId, response, note){
     clientReviewResponse: response,
     clientReviewResponseNote: note || "",
     clientReviewRespondedAt: new Date().toISOString(),
+    // The server only emails assignees about answers from the client portal,
+    // not staff marking a phone/text answer by hand (notifyAssistantsOnClientResponse).
+    clientReviewRespondedByRole: state.role,
     // Changes requested puts it back into active work rather than letting
     // it sit in "Needs Client Review" showing a note nobody's acting on.
     ...(response==="changesRequested" ? { status: "In progress" } : {})
@@ -1949,7 +2162,7 @@ function clientRequestTaskChanges(taskId){
   respondToClientReview(taskId, "changesRequested", note.trim());
 }
 function respondToPushToNextMonth(taskId, response){
-  const payload = { pushToNextMonthResponse: response, pushToNextMonthRespondedAt: new Date().toISOString() };
+  const payload = { pushToNextMonthResponse: response, pushToNextMonthRespondedAt: new Date().toISOString(), pushToNextMonthRespondedByRole: state.role };
   upsert("tasks", taskId, payload);
   const task = state.tasks.find(t=>t.id===taskId);
   if(task) Object.assign(task, payload);
@@ -1980,14 +2193,19 @@ function downloadCsv(filename, rows){
 }
 function exportPayrollCsv(){
   const period = payrollFilterPeriod();
-  const rows = [["Assistant","Pay type","Hours worked","Rate","Amount owed","Status","Payroll period"]];
+  // Build and maintenance pay get their own columns (same as the Payroll
+  // table's separate lines) so each paycheck component is clear.
+  const rows = [["Assistant","Pay type","Hours worked","Rate","Hourly/flat pay","Build pay","Maintenance pay","Total owed","Status","Payroll period"]];
   state.settings.assistants.forEach(a=>{
     const entries = state.timeEntries.filter(e=>e.assistantId===a.id);
     const hrs = hoursInPeriod(entries, period);
+    const basePay = payrollAmountForAssistant(a,hrs);
+    const buildPay = buildPayForAssistantInPeriod(a.id, period);
+    const maintPay = maintenancePayForAssistantInPeriod(a.id, period);
     rows.push([
       a.name + (a.active===false ? " (former)" : ""),
       a.payType==="flat" ? "Flat rate" : "Hourly",
-      hrs.toFixed(2), payrollRateLabel(a), payrollAmountForAssistant(a,hrs).toFixed(2),
+      hrs.toFixed(2), payrollRateLabel(a), basePay.toFixed(2), buildPay.toFixed(2), maintPay.toFixed(2), (basePay+buildPay+maintPay).toFixed(2),
       a.active===false ? "former employee" : "active",
       formatPeriodRange(period)
     ]);
@@ -2853,7 +3071,12 @@ function tryTeamLogin(code){
   if(match){
     state.role = "team"; state.currentAssistant = match; state.view="app";
     state.activeTab = match.isContentCreator ? "content" : "dashboard";
-    state.modal = nextOnboardingGateFor(match);
+    // Team members start the Task Board on just their own assigned tasks,
+    // with a "Show all tasks" tick to widen it.
+    state.kanbanFilter.onlyMine = true;
+    // Onboarding gates always come first; the Friday recap reminder only
+    // shows when there's no gate to get through.
+    state.modal = nextOnboardingGateFor(match) || (weeklyRecapPromptDue(match) ? { type:"weeklyRecapPrompt" } : null);
     subscribeAppData(); render();
   } else alert("Access code not recognized.");
 }
@@ -3005,10 +3228,14 @@ function render(){
   const prevScrollEl = document.querySelector(".main");
   const prevScrollTop = prevScrollEl ? prevScrollEl.scrollTop : 0;
 
-  if(state.view === "login") renderLogin();
-  else if(state.role === "client") renderClientPortal();
-  else if(state.role === "vendor") renderVendorPortal();
-  else renderAppShell();
+  _rendering = true;
+  try{
+    if(state.view === "login") renderLogin();
+    else if(state.role === "client") renderClientPortal();
+    else if(state.role === "vendor") renderVendorPortal();
+    else renderAppShell();
+  } finally { _rendering = false; }
+  if(PREVIEW_MODE) app.insertAdjacentHTML("beforeend", renderPreviewBar());
 
   if(preserved && preserved.id){
     const el = document.getElementById(preserved.id);
@@ -3083,6 +3310,23 @@ function promptLogin(kind){
   else tryClientLogin(code.trim());
 }
 
+// Director of Software Development & Web Design — a team member (not admin)
+// who oversees every build and handles Tech Support, so they get the
+// company-wide Builds view (build finances included, per Kaylan) and every
+// team ticket. Nothing else admin-only opens up. Set via the Team tab.
+function isDevDirector(){
+  return state.role==="team" && !!(state.currentAssistant && state.currentAssistant.isDevDirector);
+}
+// Dark mode is a per-browser preference (localStorage), applied early in
+// <head> so there's no light flash on load; see the dark-mode CSS block.
+function isDarkTheme(){ return document.documentElement.getAttribute("data-theme")==="dark"; }
+function toggleTheme(){
+  const dark = !isDarkTheme();
+  if(dark) document.documentElement.setAttribute("data-theme","dark");
+  else document.documentElement.removeAttribute("data-theme");
+  try { localStorage.setItem("tmcTheme", dark ? "dark" : "light"); } catch(e){}
+  render();
+}
 function renderAppShell(){
   const isContentCreator = state.role==="team" && state.currentAssistant && state.currentAssistant.isContentCreator;
   // Admin's own list grouped into sections — 17 same-level items in one flat
@@ -3096,10 +3340,11 @@ function renderAppShell(){
         { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
-        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["techSupport","Tech Support"]] }
+        { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Goals"],["techSupport","Tech Support"]] }
       ]
     : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
-       ...(state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id) ? [["builds","Builds"]] : []), ["techSupport","Tech Support"]] }];
+       ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []),
+       ...(isDevDirector() ? [["goals","Goals"]] : []), ["techSupport","Tech Support"]] }];
 
   app.innerHTML = `
     <div class="app-shell">
@@ -3111,6 +3356,7 @@ function renderAppShell(){
         <div class="who">
           ${state.role==="admin" ? "Admin" : isContentCreator ? "Content Creator — " + state.currentAssistant.name : "Signed in as " + (state.currentAssistant?state.currentAssistant.name:"")}
           <div><a href="#" onclick="logout();return false;" style="color:#e8d9cf;">Log out</a></div>
+          <button class="theme-toggle" onclick="toggleTheme()">${isDarkTheme() ? '☀ Light mode' : '☾ Dark mode'}</button>
         </div>
         <div class="nav-links">
           ${tabGroups.map(g=>`
@@ -3146,6 +3392,7 @@ function renderMain(){
     case "vendorTickets": return renderVendorTicketsTab();
     case "cardPurchases": return state.role==="admin" ? renderCardPurchasesTab() : "";
     case "builds": return renderBuildsTab();
+    case "goals": return (state.role==="admin" || isDevDirector()) ? renderGoalsTab() : "";
     case "scorecard": return state.role==="admin" ? renderScorecardTab() : "";
     case "onboarding": return renderOnboarding();
     case "team": return state.role==="admin" ? renderTeamAdmin() : renderTeamDirectory();
@@ -3430,6 +3677,91 @@ function renderDocsLeadColumn(assistant, d){
     </div>
   `;
 }
+// ---- Monthly membership charge check-off (admin) ----
+// Each billing cycle's charge date is that cycle's start (renewalDate +
+// cycleType, see currentBillingPeriod). Once someone confirms in
+// QuickBooks that the charge went through, they click Complete — stored
+// per cycle on the client (billingChecks: [{ key: YYYY-MM-DD of cycle
+// start, completedAt, completedBy }]), so the button comes back on its own
+// next cycle. An array, not a map keyed by date: upsert() merges, and a
+// merge can't remove a map key, which would make Undo silently not stick.
+// Admin logins are shared, so it asks for a name rather than just "Admin".
+function billingCheckKey(date){ return toLocalDateInputValue(date.toISOString()); }
+function billingCheckRows(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const weekOut = new Date(today.getTime() + 7*86400000);
+  const rows = { due:[], upcoming:[], done:[], noDate:0 };
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active")).forEach(client=>{
+    const period = currentBillingPeriod(client);
+    if(!period){ rows.noDate++; return; }
+    const key = billingCheckKey(period.start);
+    const check = (client.billingChecks||[]).find(b=>b.key===key);
+    if(check) rows.done.push({ client, date: period.start, key, check });
+    else rows.due.push({ client, date: period.start, key, days: Math.round((today - period.start)/86400000) });
+    if(period.end <= weekOut) rows.upcoming.push({ client, date: period.end });
+  });
+  rows.due.sort((a,b)=>a.date-b.date);
+  rows.upcoming.sort((a,b)=>a.date-b.date);
+  rows.done.sort((a,b)=>new Date(b.check.completedAt)-new Date(a.check.completedAt));
+  return rows;
+}
+function markBillingCheckComplete(clientId, key){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  let lastName = "";
+  try { lastName = localStorage.getItem("tmcBillingCheckName") || ""; } catch(e){}
+  const name = (prompt("Confirmed in QuickBooks that "+client.name+"'s charge went through?\n\nYour name (shows next to the ✓ for the admin team):", lastName) || "").trim();
+  if(!name) return;
+  try { localStorage.setItem("tmcBillingCheckName", name); } catch(e){}
+  const billingChecks = [...(client.billingChecks||[]).filter(b=>b.key!==key), { key, completedAt: new Date().toISOString(), completedBy: name }];
+  upsert("clients", clientId, { billingChecks });
+}
+function undoBillingCheck(clientId, key){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  upsert("clients", clientId, { billingChecks: (client.billingChecks||[]).filter(b=>b.key!==key) });
+}
+function toggleBillingChecksDone(){ state.billingChecksDoneOpen = !state.billingChecksDoneOpen; render(); }
+function renderBillingChecksCard(){
+  const r = billingCheckRows();
+  const dueLabel = d => d===0 ? "due today" : d===1 ? "due yesterday" : `due ${d} days ago`;
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Membership charges — confirm in QuickBooks</h3>
+        <span class="small">${r.due.length ? r.due.length+' to confirm' : 'All caught up ✓'}</span>
+      </div>
+      <div class="small" style="margin:4px 0 8px;">Each client's charge date is the start of their billing cycle. Once you've checked QuickBooks and the payment went through, click Complete — the whole admin team sees it here. It resets on its own next cycle.</div>
+      ${r.due.length ? r.due.map(({client,date,key,days})=>`
+        <div class="list-item">
+          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${date.toLocaleDateString()} · ${cycleLabel(client.cycleType)}</span></div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="small" style="${days>0?'color:var(--danger);font-weight:600;':'color:var(--warn);font-weight:600;'}">${dueLabel(days)}</span>
+            <button onclick="markBillingCheckComplete('${client.id}','${key}')">Complete</button>
+          </div>
+        </div>`).join("") : `<div class="small">Nothing waiting — every active client's current charge is marked complete.</div>`}
+      ${r.upcoming.length ? `
+        <div class="small" style="font-weight:600;margin:12px 0 4px;">Coming up (next 7 days)</div>
+        ${r.upcoming.map(({client,date})=>`
+          <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+            <div>${escHtml(client.name)}</div><span class="small">${date.toLocaleDateString()}</span>
+          </div>`).join("")}` : ""}
+      ${r.done.length ? `
+        <div class="flex-between" style="cursor:pointer;margin-top:12px;" onclick="toggleBillingChecksDone()">
+          <span class="small" style="font-weight:600;">Completed this cycle (${r.done.length})</span>
+          <span class="small">${state.billingChecksDoneOpen?'Hide ▲':'Show ▼'}</span>
+        </div>
+        ${state.billingChecksDoneOpen ? r.done.map(({client,date,key,check})=>`
+          <div class="list-item">
+            <div><strong>${escHtml(client.name)}</strong> <span class="small">· charged ${date.toLocaleDateString()}</span></div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span class="small" style="color:var(--ok);font-weight:600;">✓ ${escHtml(check.completedBy||'Admin')} · ${new Date(check.completedAt).toLocaleDateString()}</span>
+              <a href="#" class="small" onclick="undoBillingCheck('${client.id}','${key}');return false;">Undo</a>
+            </div>
+          </div>`).join("") : ""}` : ""}
+      ${r.noDate ? `<div class="small" style="margin-top:8px;color:var(--warn);">${r.noDate} active client${r.noDate===1?' has':'s have'} no renewal date set, so no charge date can be shown — set it on their Membership tab.</div>` : ""}
+    </div>`;
+}
 function renderAdminDashboard(){
   const period = currentPayrollPeriod();
   const totalPayrollHours = hoursInPeriod(state.timeEntries, period);
@@ -3544,6 +3876,8 @@ function renderAdminDashboard(){
         <div class="stat-sub">${formatPeriodRange(nextCalendarWeek())}</div>
       </div>
     </div>
+
+    ${renderBillingChecksCard()}
 
     <div class="row">
       ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns:clientCheckInsForOps, renewalCheckInEmails:renewalCheckInEmailsForOps, pending:pendingForOps, notStartedClients:notStartedClientsForOps, atRiskClients:atRiskClientsForOps, awaitingClient:awaitingClientForOps, paused:pausedForOps, overdue, pastDue })}
@@ -5071,14 +5405,28 @@ function vendorTicketStage(t){
   if(t.scheduledAt || t.availableTimesNote) return "scheduled";
   return "requested";
 }
+// In order — the list shows a same-width short pill plus a 6-step progress
+// bar and a "Next:" line (see vendorTicketNextStep) instead of one long
+// sentence-style badge per row.
+const VENDOR_TICKET_STAGES = ["requested","scheduled","awaitingMarkup","readyToCharge","chargedAwaitingPayout","paid"];
 const VENDOR_TICKET_STAGE_LABELS = {
-  requested: "Requested — awaiting scheduling",
-  scheduled: "Scheduled — awaiting his cost",
-  awaitingMarkup: "Cost submitted — awaiting markup",
-  readyToCharge: "Ready to charge the client",
-  chargedAwaitingPayout: "Client charged — pay him next payout",
+  requested: "Requested",
+  scheduled: "Scheduled",
+  awaitingMarkup: "Cost submitted",
+  readyToCharge: "Ready to charge",
+  chargedAwaitingPayout: "Client charged",
   paid: "Paid"
 };
+function vendorTicketNextStep(stage, ticket, vendor){
+  const isAdmin = state.role==="admin";
+  const money = n => "$"+(n||0).toFixed(2);
+  if(stage==="requested") return "Next: vendor schedules a time";
+  if(stage==="scheduled") return "Next: vendor submits his cost";
+  if(stage==="awaitingMarkup") return isAdmin ? `Next: set the client charge (his cost ${money(ticket.vendorCost)})` : "Next: admin sets the client charge";
+  if(stage==="readyToCharge") return `Next: charge the client ${money(ticket.clientChargeAmount)}`;
+  if(stage==="chargedAwaitingPayout") return `Next: pay ${escHtml(vendor.name||'the vendor')} at the Friday payout`;
+  return `Paid${ticket.vendorPaidAt ? ' '+new Date(ticket.vendorPaidAt).toLocaleDateString() : ''}`;
+}
 function createVendorTicket(vendorId, clientId, title, description, accessInstructions){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
   if(!vendor) return null;
@@ -5228,23 +5576,25 @@ function renderVendorTicketsTab(){
   `;
 }
 function renderVendorTicketRow({vendor, ticket, client}){
-  const isAdmin = state.role==="admin";
   const stage = vendorTicketStage(ticket);
-  const stageLabel = VENDOR_TICKET_STAGE_LABELS[stage];
+  const step = VENDOR_TICKET_STAGES.indexOf(stage) + 1;
   const stageColor = stage==="paid" ? 'var(--ok)' : stage==="readyToCharge" ? 'var(--warn)' : stage==="chargedAwaitingPayout" ? 'var(--rose-dark)' : '#8a7a72';
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;cursor:pointer;" onclick="openVendorTicketDetail('${vendor.id}','${ticket.id}')">
-      <div class="flex-between">
-        <div>
+      <div class="flex-between" style="align-items:flex-start;gap:10px;">
+        <div style="min-width:0;">
           <strong>${escHtml(ticket.title||'(untitled)')}</strong>
           <div class="small">${client?client.name:'—'} · ${escHtml(vendor.name||'')} · requested by ${ticket.requestedByName||'—'}</div>
         </div>
-        <span class="badge" style="background:${stageColor};">${stageLabel}</span>
+        <span class="badge" style="background:${stageColor};min-width:110px;text-align:center;white-space:nowrap;margin:0;flex-shrink:0;">${VENDOR_TICKET_STAGE_LABELS[stage]}</span>
       </div>
-      ${(isAdmin && ticket.vendorCost!=null) || ticket.clientChargeAmount!=null ? `<div class="small">${[
-        isAdmin && ticket.vendorCost!=null ? 'His cost: $'+ticket.vendorCost.toFixed(2) : '',
-        ticket.clientChargeAmount!=null ? 'Charge client: $'+ticket.clientChargeAmount.toFixed(2) : ''
-      ].filter(Boolean).join(' · ')}</div>` : ""}
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;gap:3px;flex:1;max-width:320px;" title="Step ${step} of ${VENDOR_TICKET_STAGES.length}: ${VENDOR_TICKET_STAGE_LABELS[stage]}">
+          ${VENDOR_TICKET_STAGES.map((s,i)=>`<div style="flex:1;height:6px;border-radius:3px;background:${i<step?stageColor:'var(--cream-dark)'};"></div>`).join("")}
+        </div>
+        <span class="small" style="white-space:nowrap;">step ${step} of ${VENDOR_TICKET_STAGES.length}</span>
+      </div>
+      <div class="small">${vendorTicketNextStep(stage, ticket, vendor)}</div>
     </div>
   `;
 }
@@ -5327,6 +5677,56 @@ function openVendorTicketDetail(vendorId, ticketId){
   state.modal = { type:"vendorTicketDetail", vendorId, ticketId };
   render();
 }
+// Collapsible "where is this request" tracker at the top of the detail
+// window: every stage with ✓ + date once reached, the current one
+// highlighted. Read-only on purpose — each stage is driven by a real
+// action below (vendor schedules, submits cost, charge set, client
+// charged, vendor paid), so jumping stages from a dropdown would leave
+// the request missing the data that stage needs.
+function toggleVendorStageTracker(){ state.vendorStageTrackerOpen = !state.vendorStageTrackerOpen; render(); }
+function renderVendorTicketStageTracker(vendor, ticket){
+  const isAdmin = state.role==="admin";
+  const stage = vendorTicketStage(ticket);
+  const step = VENDOR_TICKET_STAGES.indexOf(stage) + 1;
+  const stageColor = stage==="paid" ? 'var(--ok)' : stage==="readyToCharge" ? 'var(--warn)' : stage==="chargedAwaitingPayout" ? 'var(--rose-dark)' : '#8a7a72';
+  const fmt = d => d ? new Date(d).toLocaleDateString() : "";
+  const money = n => "$"+(n||0).toFixed(2);
+  const details = {
+    requested: fmt(ticket.requestedAt) + (ticket.requestedByName ? " · by "+escHtml(ticket.requestedByName) : ""),
+    scheduled: ticket.scheduledAt ? "for "+new Date(ticket.scheduledAt).toLocaleString() : ticket.availableTimesNote ? "times offered — confirm with the client" : "",
+    awaitingMarkup: ticket.vendorCost!=null ? fmt(ticket.vendorCostSubmittedAt) + (isAdmin ? " · his cost "+money(ticket.vendorCost) : "") : "",
+    readyToCharge: ticket.clientChargeAmount!=null ? fmt(ticket.clientChargeSetAt) + " · charge "+money(ticket.clientChargeAmount) : "",
+    chargedAwaitingPayout: ticket.clientCharged ? fmt(ticket.clientChargedAt) : "",
+    paid: ticket.vendorPaid ? fmt(ticket.vendorPaidAt) : ""
+  };
+  const open = !!state.vendorStageTrackerOpen;
+  return `
+    <div style="border:1px solid var(--cream-dark);border-radius:8px;margin:8px 0;">
+      <div class="flex-between" style="cursor:pointer;padding:8px 10px;gap:10px;" onclick="toggleVendorStageTracker()">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="small" style="font-weight:600;">Stage:</span>
+          <span class="badge" style="background:${stageColor};min-width:110px;text-align:center;white-space:nowrap;margin:0;">${VENDOR_TICKET_STAGE_LABELS[stage]}</span>
+          <span class="small">step ${step} of ${VENDOR_TICKET_STAGES.length}</span>
+        </div>
+        <span class="small" style="white-space:nowrap;">${open?'Hide stages ▲':'All stages ▼'}</span>
+      </div>
+      ${open ? `
+      <div style="padding:2px 10px 8px;">
+        ${VENDOR_TICKET_STAGES.map((s,i)=>{
+          const done = i < step-1 || stage==="paid";
+          const current = i === step-1 && stage!=="paid";
+          const mark = done ? '✓' : current ? '●' : '○';
+          const markColor = done ? 'var(--ok)' : current ? stageColor : '#b8aaa2';
+          return `
+          <div style="display:flex;gap:8px;align-items:baseline;padding:4px 0;${i?'border-top:1px dashed var(--cream-dark);':''}${!done&&!current?'opacity:.55;':''}">
+            <span style="width:14px;text-align:center;color:${markColor};font-weight:700;">${mark}</span>
+            <span style="min-width:120px;${current?'font-weight:600;':''}">${VENDOR_TICKET_STAGE_LABELS[s]}</span>
+            <span class="small">${(done||current) ? details[s] : ''}${current ? `${details[s]?' · ':''}${vendorTicketNextStep(stage, ticket, vendor)}` : ''}</span>
+          </div>`;
+        }).join("")}
+      </div>` : ""}
+    </div>`;
+}
 function renderVendorTicketDetailModal(vendorId, ticketId){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
   const ticket = vendor && (vendor.tickets||[]).find(t=>t.id===ticketId);
@@ -5342,6 +5742,7 @@ function renderVendorTicketDetailModal(vendorId, ticketId){
         <button class="secondary" onclick="closeModal()">Close</button>
       </div>
       <div class="small" style="margin:6px 0;">${client?client.name:'—'} · ${escHtml(vendor.name||'')} · requested by ${ticket.requestedByName||'—'} on ${new Date(ticket.requestedAt).toLocaleDateString()}</div>
+      ${renderVendorTicketStageTracker(vendor, ticket)}
       ${ticket.description ? `<p>${escHtml(ticket.description)}</p>` : ''}
       <label class="small" style="font-weight:600;margin-top:10px;display:block;">How to get into the home <span style="font-weight:400;">(the vendor sees this)</span></label>
       <textarea id="vt_access_${ticket.id}" onchange="updateVendorTicketField('${vendor.id}','${ticket.id}','accessInstructions',this.value.trim())" placeholder="e.g. Lockbox on back door, code 1234. Alarm is off. Park in driveway.">${escHtml(ticket.accessInstructions||'')}</textarea>
@@ -5733,33 +6134,64 @@ async function saveNewSupportTicket(){
 }
 function visibleSupportTickets(){
   const all = (state.supportTickets||[]).slice().sort((a,b)=> b.createdAt < a.createdAt ? -1 : 1);
-  if(state.role==="admin") return all;
+  if(state.role==="admin" || isDevDirector()) return all;
   const me = currentSupportAuthor().id;
   return all.filter(t=>t.authorId===me);
 }
+// Same layout as the Vendor Requests tab: an Open card plus a collapsible
+// Resolved card, each row with a same-width status pill, a progress bar
+// (Open → In Progress → Resolved) and a "Next:" line.
+function toggleSupportTicketsHistory(){ state.supportTicketsHistoryOpen = !state.supportTicketsHistoryOpen; render(); }
 function renderTechSupportTab(){
   const tickets = visibleSupportTickets();
-  const openCount = tickets.filter(t=>t.status!=="Resolved").length;
+  const openRows = tickets.filter(t=>t.status!=="Resolved");
+  const doneRows = tickets.filter(t=>t.status==="Resolved");
   return `
-    <div class="flex-between">
-      <h2>Tech Support</h2>
-      <button onclick="openNewSupportTicketModal()">+ New request</button>
-    </div>
-    <div class="small" style="margin-bottom:12px;">${state.role==="admin" ? "Every bug report and feature idea the team has submitted." : "Bugs, errors, or feature ideas — submit one any time, and check back here for updates."} ${openCount ? openCount + " still open." : "Nothing open right now."}</div>
+    <h2>Tech Support</h2>
+    <div class="small" style="margin-bottom:14px;">${state.role==="admin" || isDevDirector() ? "Every bug report and feature idea the team has submitted." : "Bugs, errors, or feature ideas — submit one any time, and check back here for updates."}</div>
     <div class="card">
-      ${tickets.length===0 ? `<div class="small">Nothing submitted yet.</div>` : tickets.map(renderSupportTicketRow).join("")}
-    </div>`;
+      <div class="flex-between">
+        <h3 style="margin:0;">Open requests <span class="small">(${openRows.length})</span></h3>
+        <button onclick="openNewSupportTicketModal()">+ New request</button>
+      </div>
+      ${openRows.length ? openRows.map(renderSupportTicketRow).join("") : `<div class="small">No open requests right now.</div>`}
+    </div>
+    ${doneRows.length ? `
+    <div class="card">
+      <div class="flex-between" style="cursor:pointer;" onclick="toggleSupportTicketsHistory()">
+        <h3 style="margin:0;">Resolved <span class="small">(${doneRows.length})</span></h3>
+        <span class="small">${state.supportTicketsHistoryOpen?'Hide ▲':'Show ▼'}</span>
+      </div>
+      ${state.supportTicketsHistoryOpen ? doneRows.map(renderSupportTicketRow).join("") : ""}
+    </div>` : ""}`;
+}
+function supportTicketNextStep(t){
+  const handles = state.role==="admin" || isDevDirector();
+  if(t.status==="Resolved") return `Resolved${t.resolvedAt ? ' '+new Date(t.resolvedAt).toLocaleDateString() : ''}`;
+  if(t.status==="In Progress") return handles ? "Next: finish the fix, then mark it Resolved" : "Next: being worked on — check back for updates";
+  return handles ? "Next: review it and move it to In Progress" : "Next: Tech Support reviews it";
 }
 function renderSupportTicketRow(t){
   const statusColor = t.status==="Resolved" ? "var(--ok)" : t.status==="In Progress" ? "var(--warn)" : "#8a7a72";
+  const step = Math.max(SUPPORT_TICKET_STATUSES.indexOf(t.status), 0) + 1;
+  const commentCount = (t.comments||[]).length;
   return `
-    <div class="list-item" style="cursor:pointer;" onclick="openSupportTicketDetail('${t.id}')">
-      <div>
-        <span class="badge">${t.kind==='feature'?'Feature idea':'Bug'}</span>
-        <strong>${escHtml(t.title)}</strong>
-        <div class="small">${t.authorName} &middot; ${new Date(t.createdAt).toLocaleDateString()}</div>
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;cursor:pointer;" onclick="openSupportTicketDetail('${t.id}')">
+      <div class="flex-between" style="align-items:flex-start;gap:10px;">
+        <div style="min-width:0;">
+          <span class="badge">${t.kind==='feature'?'Feature idea':'Bug'}</span>
+          <strong>${escHtml(t.title)}</strong>
+          <div class="small">${escHtml(t.authorName||'')} · ${new Date(t.createdAt).toLocaleDateString()}${commentCount ? ` · 💬 ${commentCount}` : ''}</div>
+        </div>
+        <span class="badge" style="background:${statusColor};min-width:110px;text-align:center;white-space:nowrap;margin:0;flex-shrink:0;">${t.status}</span>
       </div>
-      <span class="small" style="color:${statusColor};font-weight:600;">${t.status}</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <div style="display:flex;gap:3px;flex:1;max-width:320px;" title="Step ${step} of ${SUPPORT_TICKET_STATUSES.length}: ${t.status}">
+          ${SUPPORT_TICKET_STATUSES.map((s,i)=>`<div style="flex:1;height:6px;border-radius:3px;background:${i<step?statusColor:'var(--cream-dark)'};"></div>`).join("")}
+        </div>
+        <span class="small" style="white-space:nowrap;">step ${step} of ${SUPPORT_TICKET_STATUSES.length}</span>
+      </div>
+      <div class="small">${supportTicketNextStep(t)}</div>
     </div>`;
 }
 function openSupportTicketDetail(id){
@@ -5767,7 +6199,7 @@ function openSupportTicketDetail(id){
   render();
 }
 function updateSupportTicketStatus(id, status){
-  upsert("supportTickets", id, { status });
+  upsert("supportTickets", id, { status, resolvedAt: status==="Resolved" ? new Date().toISOString() : null });
 }
 function addSupportTicketComment(id){
   const text = ((state.commentDrafts&&state.commentDrafts[id])||"").trim();
@@ -5792,7 +6224,7 @@ function renderSupportTicketDetailModal(id){
       <div class="small" style="margin-bottom:10px;">Submitted by ${t.authorName} on ${new Date(t.createdAt).toLocaleString()}</div>
       ${t.description ? `<p>${escHtml(t.description)}</p>` : ""}
       ${t.screenshot ? `<img src="${t.screenshot}" style="max-width:100%;max-height:280px;border-radius:8px;margin:8px 0;display:block;cursor:pointer;" onclick="openImageViewer('${t.screenshot}')">` : ""}
-      ${state.role==="admin" ? `
+      ${state.role==="admin" || isDevDirector() ? `
       <div style="margin-top:10px;"><label class="small">Status</label>
         <select onchange="updateSupportTicketStatus('${t.id}',this.value)">
           ${SUPPORT_TICKET_STATUSES.map(s=>`<option ${t.status===s?'selected':''}>${s}</option>`).join("")}
@@ -6014,6 +6446,7 @@ function renderTaskMiniList(tasks){
     return `<div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${t.id}')">
       <div>
         <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
+        ${t.repeat ? `<span class="badge" style="background:#8a7a72;" title="${repeatSummary(t.repeat)}">🔁</span>` : ''}
         ${t.title} <span class="small">(${client?client.name:'Internal'})</span>
       </div>
       <span class="small">${t.status} &middot; ${hoursForTask(t.id).toFixed(1)} hrs logged</span>
@@ -6023,6 +6456,14 @@ function renderTaskMiniList(tasks){
 
 // --- Clients list ---
 function setClientMarketFilter(val){ state.clientMarketFilter = val; render(); }
+// Team logins open the Clients tab on "My clients" (client.assistantIds
+// includes them), with a "View all clients" button to see everyone.
+// Deliberately not remembered: it starts on My clients every session.
+function onlyMyClients(){
+  if(state.role!=="team" || !state.currentAssistant) return false;
+  return state.onlyMyClients!==false;
+}
+function setOnlyMyClients(on){ state.onlyMyClients = !!on; render(); }
 // Groups active clients into accordion sections. One-Time (the 6hr/12hr
 // Home Reset flat-rate packages) is checked before term type, since those
 // clients don't go through the pilot -> 3month -> 1year membership
@@ -6060,7 +6501,8 @@ function renderClientListItem(c){
     ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
   </div>`;
 }
-function renderClientGroups(activeClients){
+function renderClientGroups(activeClients, opts){
+  opts = opts || {};
   const remaining = new Set(activeClients.map(c=>c.id));
   const groups = CLIENT_GROUP_DEFS.map(def=>{
     const members = activeClients.filter(c=>remaining.has(c.id) && def.match(c));
@@ -6070,7 +6512,7 @@ function renderClientGroups(activeClients){
   const other = activeClients.filter(c=>remaining.has(c.id));
   if(other.length) groups.push({ key:"other", label:"Other", members:other });
   const open = state.clientGroupOpen || {};
-  return groups.map(g=>`
+  return groups.filter(g=>!opts.hideEmpty || g.members.length).map(g=>`
     <div class="card">
       <div class="flex-between" style="cursor:pointer;" onclick="toggleClientGroup('${g.key}')">
         <h3 style="margin:0;">${g.label} (${g.members.length})</h3>
@@ -6084,21 +6526,27 @@ function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
   const marketFilter = state.clientMarketFilter;
   const matchesMarket = c => marketFilter==="all" || (c.market||"Lafayette")===marketFilter;
-  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c));
-  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c));
+  const showToggle = state.role==="team" && !!state.currentAssistant;
+  const mineOnly = onlyMyClients();
+  const matchesMine = c => !mineOnly || (c.assistantIds||[]).includes(state.currentAssistant.id);
+  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c) && matchesMine(c));
+  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c) && matchesMine(c));
   return `
-    <div class="flex-between">
-      <h2>Clients</h2>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <select onchange="setClientMarketFilter(this.value)">
+    <div class="flex-between" style="flex-wrap:wrap;gap:8px;">
+      <h2>${mineOnly ? "My clients" : "Clients"}</h2>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        ${showToggle ? (mineOnly
+          ? `<button class="secondary" onclick="setOnlyMyClients(false)">View all clients</button>`
+          : `<button class="secondary" onclick="setOnlyMyClients(true)">Show my clients only</button>`) : ""}
+        <select style="width:auto;" onchange="setClientMarketFilter(this.value)">
           <option value="all" ${marketFilter==='all'?'selected':''}>All markets</option>
           ${MARKETS.map(m=>`<option value="${m}" ${marketFilter===m?'selected':''}>${m}</option>`).join("")}
         </select>
         <button onclick="openClientEditor(null)">+ New client</button>
       </div>
     </div>
-    ${activeClients.length===0 ? `<div class="card"><div class="small">No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.</div></div>` :
-      renderClientGroups(activeClients)}
+    ${activeClients.length===0 ? `<div class="card"><div class="small">${mineOnly ? `You're not assigned to any active clients${marketFilter!=='all'?' in '+marketFilter:''} yet. Click "View all clients" to see everyone.` : `No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.`}</div></div>` :
+      renderClientGroups(activeClients, { hideEmpty: mineOnly })}
     ${pastClients.length ? `
     <div class="card">
       <div class="flex-between" style="cursor:pointer;" onclick="state.showPastClients=!state.showPastClients;render();">
@@ -6175,6 +6623,7 @@ function renderClientCRM(clientId){
   // single Profile tab's behavior before this split.
   const subtabs = [["profileDetails","Details"],["profileNotes","Notes & Dates"],["tasks","Tasks"],["profileContract","Contract & Payment"]];
   if(state.role==="admin") subtabs.push(["membership","Membership"],["softwareBuild","Software Build"]);
+  else if(isDevDirector()) subtabs.push(["softwareBuild","Software Build"]);
   subtabs.push(["emailTemplates","Email Templates"]);
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
@@ -6197,7 +6646,7 @@ function renderClientCRM(clientId){
     ${state.crmSubTab==="profileContract" ? renderClientProfile(client).contract : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
     ${state.crmSubTab==="membership" && state.role==="admin" ? renderClientMembership(client) : ""}
-    ${state.crmSubTab==="softwareBuild" && state.role==="admin" ? renderClientAddOnsSection(client) : ""}
+    ${state.crmSubTab==="softwareBuild" && (state.role==="admin" || isDevDirector()) ? renderClientAddOnsSection(client) : ""}
     ${state.crmSubTab==="emailTemplates" ? renderClientEmailTemplates(client) : ""}
   `;
 }
@@ -7953,6 +8402,12 @@ function renderAddOnRow(clientId, a){
             ${ADDON_STATUSES.map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
+        <div><label class="small">Counts toward goals as</label>
+          <select onchange="updateAddOnField('${clientId}','${a.id}','buildType',this.value||null)">
+            ${[["","— Pick one —"],["website","Website build"],["software","Software build"],["none","Not a build"]].map(([v,l])=>`<option value="${v}" ${addOnBuildType(a)===v||(!addOnBuildType(a)&&!v)?'selected':''}>${l}</option>`).join("")}
+          </select>
+        </div>
+        ${a.status==="Completed" ? `<div><label class="small">Completed on</label><input type="date" value="${a.completedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','completedDate',this.value)"></div>` : ""}
       </div>
       <div class="row">
         <div><label class="small">Flat fee ($)</label><input id="addon_fee_${a.id}" type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
@@ -7987,6 +8442,24 @@ function renderAddOnRow(clientId, a){
           <div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>
         `}
       </div>
+      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Recurring Monthly Maintenance — Assistant Split</label>
+        <div class="small" style="margin-bottom:6px;">${a.monthlyMaintenance>0
+          ? `$${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}. The assigned assistant gets their % of each month's fee once that month is marked paid — it's added to their next regular paycheck automatically, listed separately from build pay.`
+          : `Set a monthly maintenance amount above to track recurring maintenance payments and the assistant's split.`}</div>
+        ${a.monthlyMaintenance>0 ? `
+        <div class="row">
+          <div><label class="small">Maintaining assistant</label>
+            <select onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantId',this.value||null)">
+              <option value="">— None —</option>
+              ${state.settings.assistants.filter(x=>x.active!==false).map(x=>`<option value="${x.id}" ${a.maintenanceAssistantId===x.id?'selected':''}>${x.name}</option>`).join("")}
+            </select>
+          </div>
+          <div><label class="small">Their %</label><input id="addon_maintpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.maintenanceAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
+        </div>
+        ${(a.maintenancePayments||[]).slice().sort((x,y)=> (y.month||'') < (x.month||'') ? -1 : 1).map(p=>renderMaintenancePaymentRow(clientId,a,p)).join("")}
+        <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add month</button></div>` : ""}
+      </div>
       ${a.buildAssistantId ? `
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <div class="flex-between">
@@ -7997,7 +8470,7 @@ function renderAddOnRow(clientId, a){
           <div class="small" style="margin-top:6px;">No to-dos yet. <a href="#" onclick="seedDefaultBuildTodos('${clientId}','${a.id}');return false;">Start from the standard build checklist</a>, or add your own.</div>
         `}
       </div>` : ""}
-      <div><button class="secondary" onclick="removeClientAddOn('${clientId}','${a.id}')">Remove</button></div>
+      <div><button class="danger" onclick="removeClientAddOn('${clientId}','${a.id}')">Delete</button></div>
     </div>
   `;
 }
@@ -8234,6 +8707,10 @@ function updateAddOnField(clientId, addOnId, field, value){
   const addOns = (client.addOns||[]).map(a=>{
     if(a.id!==addOnId) return a;
     const updated = { ...a, [field]: value };
+    // Goals tab counts a build in the month it was completed — stamp that
+    // the moment it's marked Completed (editable after), clear it if it's
+    // moved back out so it stops counting.
+    if(field==="status") updated.completedDate = value==="Completed" ? (a.completedDate || ymd(new Date())) : "";
     // Keep each payment's due date in sync with Day 1 whenever it's set or
     // changed — re-deriving dueDayOffset-tagged payments only (a payment
     // added by hand, with no offset, is left exactly as whoever set it
@@ -8249,10 +8726,77 @@ function updateAddOnField(clientId, addOnId, field, value){
   });
   upsert("clients", clientId, { addOns });
 }
+// ---- Recurring monthly maintenance — one payment row per month, so the
+// maintaining assistant's % is only counted once that month's fee is
+// actually collected (same rule as build pay), in the payroll period it
+// was marked paid.
+function maintenanceAssistantCut(addOn, payment){
+  if(!addOn.maintenanceAssistantId || !addOn.maintenanceAssistantPercent) return 0;
+  return Math.round((payment.amount||0) * (addOn.maintenanceAssistantPercent/100) * 100) / 100;
+}
+function formatMaintenanceMonth(ym){
+  if(!ym) return "Month not set";
+  const [y,m] = ym.split("-").map(Number);
+  return new Date(y, m-1, 1).toLocaleDateString(undefined, { month:"long", year:"numeric" });
+}
+function renderMaintenancePaymentRow(clientId, a, p){
+  const cut = maintenanceAssistantCut(a, p);
+  return `
+    <div class="row" style="align-items:flex-end;margin-top:6px;">
+      <div><label class="small">Month</label><input type="month" value="${p.month||''}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','month',this.value)" style="max-width:160px;"></div>
+      <div><label class="small">Amount ($)</label><input id="addon_maintpay_amt_${p.id}" type="number" step="1" value="${p.amount||0}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
+        <input type="checkbox" ${p.paid?'checked':''} onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','paid',this.checked)">
+        Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+')' : ''}
+      </label>
+      <div style="padding-bottom:6px;"><button class="secondary" style="padding:2px 8px;" onclick="removeMaintenancePayment('${clientId}','${a.id}','${p.id}')">✕</button></div>
+    </div>
+    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${formatMaintenanceMonth(p.month)}: ${assistantName(a.maintenanceAssistantId)} earns $${cut.toFixed(2)} (${a.maintenanceAssistantPercent}%) ${p.paid?'— rolled into the '+formatPeriodRange(currentPayrollPeriod(new Date(p.paidDate)))+' paycheck':'— added to the next regular paycheck once this month is marked paid'}</div>` : ""}
+  `;
+}
+function updateAddOnMaintenancePayments(clientId, addOnId, fn){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? { ...a, maintenancePayments: fn(a.maintenancePayments||[], a) } : a);
+  upsert("clients", clientId, { addOns });
+}
+// Defaults to the month after the latest one logged (or this month if none
+// yet), at the add-on's current monthly maintenance amount.
+function addMaintenancePayment(clientId, addOnId){
+  updateAddOnMaintenancePayments(clientId, addOnId, (list, a)=>{
+    const latest = list.map(p=>p.month).filter(Boolean).sort().pop();
+    let month = new Date().toISOString().slice(0,7);
+    if(latest){
+      const [y,m] = latest.split("-").map(Number);
+      month = new Date(y, m, 1).getFullYear() + "-" + String(new Date(y, m, 1).getMonth()+1).padStart(2,"0");
+    }
+    return [...list, { id:newId("maintpay"), month, amount:a.monthlyMaintenance||0, paid:false, paidDate:"" }];
+  });
+}
+function updateMaintenancePaymentField(clientId, addOnId, paymentId, field, value){
+  updateAddOnMaintenancePayments(clientId, addOnId, list=>list.map(p=>{
+    if(p.id!==paymentId) return p;
+    const updated = { ...p, [field]: value };
+    // Same as build payments: checking Paid stamps today, unchecking clears it.
+    if(field==="paid") updated.paidDate = value ? (p.paidDate || new Date().toISOString().slice(0,10)) : "";
+    return updated;
+  }));
+}
+function removeMaintenancePayment(clientId, addOnId, paymentId){
+  if(!confirm("Remove this month's maintenance payment?")) return;
+  updateAddOnMaintenancePayments(clientId, addOnId, list=>list.filter(p=>p.id!==paymentId));
+}
+// A build carries its payment schedule, assistant pay, maintenance log and
+// to-dos with it, so a stray OK click on a plain confirm() was too easy —
+// deleting takes typing the word "delete".
 function removeClientAddOn(clientId, addOnId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
-  if(!confirm("Remove this add-on from the client's record?")) return;
+  const addOn = (client.addOns||[]).find(a=>a.id===addOnId);
+  if(!addOn) return;
+  const typed = prompt(`Delete "${addOn.label||'this add-on'}" from ${client.name}?\n\nThis also deletes its payment schedule, assistant pay, monthly maintenance log, and build to-dos. It can't be undone.\n\nType delete to confirm:`, "");
+  if(typed===null) return;
+  if(typed.trim().toLowerCase()!=="delete"){ alert('Not deleted — you need to type the word "delete" to confirm.'); return; }
   upsert("clients", clientId, { addOns: (client.addOns||[]).filter(a=>a.id!==addOnId) });
 }
 function updateClientField(id, field, value){ upsert("clients", id, { [field]: value }); }
@@ -8436,7 +8980,7 @@ function renderKanban(){
     if(inactiveHidden(t)) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
     if(!taskMatchesMarketFilter(t, f.market||"all")) return false;
-    if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
+    if(f.onlyMine && state.currentAssistant && !(t.assignees||[]).includes(state.currentAssistant.id)) return false;
     if(f.hideDone && t.status==="Done") return false;
     if(search){
       const hay = (t.title||"").toLowerCase() + " #" + (t.taskNumber||"");
@@ -8450,7 +8994,7 @@ function renderKanban(){
     if(inactiveHidden(t)) return false;
     if(f.category!=="all" && t.category!==f.category) return false;
     if(!taskMatchesMarketFilter(t, f.market||"all")) return false;
-    if(f.onlyMine && !(t.assignees||[]).includes(state.currentAssistant?.id)) return false;
+    if(f.onlyMine && state.currentAssistant && !(t.assignees||[]).includes(state.currentAssistant.id)) return false;
     return true;
   }).length;
   const inactiveHiddenCount = f.clientId==="all" ? state.tasks.filter(t=>t.status!=="Done" && !taskBelongsToActiveClient(t)).length : 0;
@@ -8494,7 +9038,7 @@ function renderKanban(){
       ${state.currentAssistant ? `
       <div style="display:flex;align-items:flex-end;padding-bottom:8px;">
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;">
-          <input type="checkbox" ${f.onlyMine?'checked':''} onchange="setKanbanFilter('onlyMine',this.checked)"> My tasks only
+          <input type="checkbox" ${f.onlyMine?'':'checked'} onchange="setKanbanFilter('onlyMine',!this.checked)"> Show all tasks
         </label>
       </div>` : ""}
       <div style="display:flex;align-items:flex-end;padding-bottom:8px;">
@@ -8558,6 +9102,7 @@ function renderKanbanCard(t){
         <span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>
         ${t.priority ? '<span class="badge" style="background:var(--danger);">⚑ Priority</span>' : ''}
         ${t.requestedByClient ? '<span class="badge" style="background:var(--rose-dark);">Client request</span>' : ''}
+        ${t.repeat ? `<span class="badge" style="background:#8a7a72;">🔁 ${repeatSummary(t.repeat)}</span>` : ''}
         <strong>${t.taskNumber ? `#${t.taskNumber} — ` : ''}${t.title}</strong>
         <div class="meta">${client?client.name:'Internal'} ${ (t.assignees||[]).length ? '· '+t.assignees.map(id=>{const a=state.settings.assistants.find(x=>x.id===id);return a?a.name:id;}).join(", ") : ''}</div>
         ${(t.subtasks||[]).length ? `<div class="meta">${(t.subtasks||[]).filter(s=>s.done).length}/${(t.subtasks||[]).length} subtasks</div>` : ""}
@@ -8836,6 +9381,23 @@ function buildPayForAssistantInPeriod(assistantId, period){
   });
   return Math.round(total*100)/100;
 }
+// Recurring maintenance share — same rule as build pay: counted in the
+// payroll period the month's fee was marked paid.
+function maintenancePayForAssistantInPeriod(assistantId, period){
+  let total = 0;
+  state.clients.forEach(client=>{
+    (client.addOns||[]).forEach(a=>{
+      if(a.maintenanceAssistantId!==assistantId) return;
+      (a.maintenancePayments||[]).forEach(p=>{
+        if(!p.paid || !p.paidDate) return;
+        const paidAt = new Date(p.paidDate);
+        if(period && (paidAt < period.start || paidAt >= period.end)) return;
+        total += maintenanceAssistantCut(a, p);
+      });
+    });
+  });
+  return Math.round(total*100)/100;
+}
 function payrollRateLabel(assistant){
   return assistant.payType==="flat"
     ? "$"+(assistant.flatRatePerPeriod||0).toFixed(2)+"/period (flat)"
@@ -8871,7 +9433,7 @@ function renderPayrollTool(){
   const shownAssistants = state.settings.assistants.filter(a=>{
     if(pf.assistantId!=="all") return a.id===pf.assistantId;
     if(a.active!==false) return true;
-    return payrollHoursForAssistant(a.id, period, pf.adminOnly) > 0 || buildPayForAssistantInPeriod(a.id, period) > 0;
+    return payrollHoursForAssistant(a.id, period, pf.adminOnly) > 0 || buildPayForAssistantInPeriod(a.id, period) > 0 || maintenancePayForAssistantInPeriod(a.id, period) > 0;
   });
   const periodLabel = PAYROLL_FILTER_PRESETS.find(([v])=>v===pf.preset)[1];
   const periodPaidKey = isPayrollPeriodPreset ? period.end.toISOString() : null;
@@ -8961,12 +9523,13 @@ function renderPayrollTool(){
           ${shownAssistants.map(a=>{
             const hrs = payrollHoursForAssistant(a.id, period, pf.adminOnly);
             const buildPay = buildPayForAssistantInPeriod(a.id, period);
+            const maintPay = maintenancePayForAssistantInPeriod(a.id, period);
             const active = activeEntryFor(a.id);
             return `<tr>
               <td>${a.name}${a.active===false?' <span class="small">(former)</span>':''}</td>
               <td>${hrs.toFixed(1)}</td>
               <td>${payrollRateLabel(a)}</td>
-              <td>$${(payrollAmountForAssistant(a,hrs)+buildPay).toFixed(2)}${buildPay>0?`<div class="small">incl. $${buildPay.toFixed(2)} build pay</div>`:''}</td>
+              <td>$${(payrollAmountForAssistant(a,hrs)+buildPay+maintPay).toFixed(2)}${buildPay>0?`<div class="small">incl. $${buildPay.toFixed(2)} build pay</div>`:''}${maintPay>0?`<div class="small">incl. $${maintPay.toFixed(2)} maintenance pay</div>`:''}</td>
               <td>${active
                 ? `<span class="dot-live ${isStale(active)?'stale':''}"></span>clocked in ${entryDurationHours(active).toFixed(1)}h`
                 : `<span class="small">off the clock</span>`}</td>
@@ -8976,7 +9539,7 @@ function renderPayrollTool(){
             <td>Total</td>
             <td>${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly),0).toFixed(1)}</td>
             <td></td>
-            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly))+buildPayForAssistantInPeriod(a.id, period),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly))+buildPayForAssistantInPeriod(a.id, period)+maintenancePayForAssistantInPeriod(a.id, period),0).toFixed(2)}</td>
             <td></td>
           </tr>
         </tbody>
@@ -9084,18 +9647,317 @@ function viewClientSoftwareBuild(clientId){
 // build(s) — her phase checklist and deadlines, no dollar amounts at all.
 // This is deliberately not the normal Task Board: she isn't clocking
 // hourly for this work, so it has no place there.
+// ---- Goals tab (Director of Development + admin) ----
+// Stored in settings/access as devGoals (same place team-side writes like
+// the content calendar already go — no new collection/rules). Build counts
+// aren't typed in: they're counted from add-ons marked Completed, by
+// completedDate and buildType (website/software), company-wide since these
+// are division goals. Everything else is a checklist seeded from the
+// 2027 Goals doc, editable from the tab.
+const DEV_GOALS_SECTIONS = [["Q1","Q1 · January–March"],["Q2","Q2 · April–June"],["Q3","Q3 · July–September"],["Q4","Q4 · October–December"],["year","Annual goals"],["personal","Personal goals"]];
+function defaultDevGoals(){
+  let n = 0;
+  const item = (section, text) => ({ id:"goal_seed_"+(++n), section, text, done:false, doneAt:"" });
+  return {
+    year: 2027,
+    // Builds completed per month, by quarter.
+    targets: { Q1:{website:2,software:1}, Q2:{website:3,software:2}, Q3:{website:4,software:3}, Q4:{website:5,software:4} },
+    items: [
+      item("Q1","Agree on the salary milestones with Kaylan in writing"),
+      item("Q1","Set qualifications for new hires with Kaylan"),
+      item("Q1","Hire team member #1"),
+      item("Q1","Pass the 90-day review (around March 1) and move to the independent rate"),
+      item("Q2","Hire team member #2"),
+      item("Q2","Build a portfolio of projects I can show"),
+      item("Q3","Hire team member #3"),
+      item("Q3","First team members run projects with light oversight"),
+      item("Q3","Check progress toward the salary milestones"),
+      item("Q4","Hire team member #4"),
+      item("Q4","Meet the salary milestones"),
+      item("Q4","Hold an annual recap with Kaylan in December to review the year and discuss salary"),
+      item("Q4","Move the director role to a salary by December 31"),
+      item("Q4","Set 2028 goals with Kaylan"),
+      item("year","Train each new hire on TMC's process and standards"),
+      item("year","Review progress at the monthly goal meetings with Kaylan")
+    ],
+    wins: []
+  };
+}
+function devGoals(){ return state.settings.devGoals || defaultDevGoals(); }
+function saveDevGoals(goals){
+  state.settings.devGoals = goals;
+  upsert("settings","access", { devGoals: goals });
+  render();
+}
+// Admin's own goals: same Monthly / Quarterly / Annual / Personal layout
+// and wins log, minus the build-count targets (those are the dev
+// division's). Stored as settings/access.adminGoals, alongside devGoals.
+// Admin switches between "My goals" and the Dev Director's with the
+// toggle at the top of the tab; the Dev Director only ever sees theirs.
+function defaultAdminGoals(){ return { year: devGoals().year, targets:{}, items:[], wins:[] }; }
+function adminGoals(){ return state.settings.adminGoals || defaultAdminGoals(); }
+function goalsOwner(){ return state.role==="admin" && state.goalsOwner!=="dev" ? "admin" : "dev"; }
+function setGoalsOwner(owner){ state.goalsOwner = owner; state.devGoalEditingId = null; state.devWinDraft = ""; render(); }
+// Years: each owner's original goal set (devGoals / adminGoals) stays
+// exactly where it is, for its own .year. Every other year lives in a
+// map keyed by year (devGoalYears / adminGoalYears), so adding years never
+// moves or rewrites the existing data.
+function mainGoalsFor(owner){ return owner==="admin" ? adminGoals() : devGoals(); }
+function goalYearsKey(owner){ return owner==="admin" ? "adminGoalYears" : "devGoalYears"; }
+function selectedGoalsYear(){ return state.goalsYear || mainGoalsFor(goalsOwner()).year; }
+function emptyGoalsForYear(owner, year){
+  const zero = { website:0, software:0 };
+  return { year, targets: owner==="admin" ? {} : { Q1:{...zero}, Q2:{...zero}, Q3:{...zero}, Q4:{...zero} }, items:[], wins:[] };
+}
+function activeGoals(){
+  const owner = goalsOwner(), main = mainGoalsFor(owner), year = selectedGoalsYear();
+  if(year===main.year) return main;
+  return (state.settings[goalYearsKey(owner)]||{})[year] || emptyGoalsForYear(owner, year);
+}
+function saveActiveGoals(goals){
+  const owner = goalsOwner();
+  if(goals.year===mainGoalsFor(owner).year){
+    if(owner!=="admin") return saveDevGoals(goals);
+    state.settings.adminGoals = goals;
+    upsert("settings","access", { adminGoals: goals });
+    return render();
+  }
+  const key = goalYearsKey(owner);
+  state.settings[key] = { ...(state.settings[key]||{}), [goals.year]: goals };
+  upsert("settings","access", { [key]: state.settings[key] });
+  render();
+}
+// Buttons run from the earliest year with goals (or this calendar year)
+// through the latest; "+" adds the next year (saved once a goal is added).
+function goalYearOptions(){
+  const owner = goalsOwner();
+  const years = [mainGoalsFor(owner).year, new Date().getFullYear(), selectedGoalsYear(),
+    ...Object.keys(state.settings[goalYearsKey(owner)]||{}).map(Number), ...(state.goalsExtraYears||[])].filter(Number.isFinite);
+  const lo = Math.min(...years), hi = Math.max(...years);
+  const out = [];
+  for(let y=lo; y<=hi && out.length<20; y++) out.push(y);
+  return out;
+}
+function setGoalsYear(year){ state.goalsYear = year; state.devGoalEditingId = null; state.devWinDraft = ""; render(); }
+function addGoalsYear(){
+  const next = Math.max(...goalYearOptions()) + 1;
+  state.goalsExtraYears = [...(state.goalsExtraYears||[]), next];
+  setGoalsYear(next);
+}
+// Website/software classification for goal counting. Explicit pick wins;
+// otherwise inferred from the catalog category, and a Custom Build stays
+// unset (could be either) until someone picks.
+function addOnBuildType(a){
+  if(a.buildType) return a.buildType;
+  if(a.category==="SOP") return "none";
+  if(a.category==="Productized Software" || a.category==="AI Integration") return "software";
+  return "";
+}
+function completedBuilds(){
+  return allClientAddOns().filter(({addOn})=>addOn.status==="Completed" && addOn.completedDate);
+}
+function countCompletedBuilds(type, start, end){
+  return completedBuilds().filter(({addOn})=>{
+    if(addOnBuildType(addOn)!==type) return false;
+    const d = parseYMD(addOn.completedDate);
+    return d >= start && d < end;
+  }).length;
+}
+function updateDevGoalItem(id, patch){
+  const g = activeGoals();
+  saveActiveGoals({ ...g, items: g.items.map(i=>i.id===id ? { ...i, ...patch } : i) });
+}
+function addDevGoalItem(section){
+  const text = (prompt("New goal:", "") || "").trim();
+  if(!text) return;
+  const g = activeGoals();
+  saveActiveGoals({ ...g, items: [...g.items, { id:newId("goal"), section, text, done:false, doneAt:"" }] });
+}
+// Goal sections: "Q1".."Q4" (quarter-wide), "M1".."M12" (a specific month,
+// shown inside its quarter's card), "year", "personal".
+const DEV_GOAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+function devGoalSectionOptions(){
+  // Same order as the page: months, quarters, annual, personal.
+  return [
+    ...DEV_GOAL_MONTHS.map((name,i)=>["M"+(i+1), name]),
+    ...[1,2,3,4].map(q=>["Q"+q, DEV_GOALS_SECTIONS[q-1][1]]),
+    ["year","Annual goals"], ["personal","Personal goals"]
+  ];
+}
+// Inline edit: wording + "Move to" section, Save / Cancel.
+function editDevGoalItem(id){ state.devGoalEditingId = id; render(); }
+function cancelDevGoalEdit(){ state.devGoalEditingId = null; render(); }
+function saveDevGoalEdit(id){
+  const text = (document.getElementById("dg_text_"+id).value||"").trim();
+  const section = document.getElementById("dg_section_"+id).value;
+  if(!text){ alert("A goal can't be blank — use ✕ to remove it instead."); return; }
+  state.devGoalEditingId = null;
+  updateDevGoalItem(id, { text, section });
+}
+function editDevGoalWin(id){
+  const g = activeGoals();
+  const win = (g.wins||[]).find(w=>w.id===id);
+  if(!win) return;
+  const text = prompt("Edit win:", win.text);
+  if(text===null || !text.trim()) return;
+  saveActiveGoals({ ...g, wins: g.wins.map(w=>w.id===id ? { ...w, text: text.trim() } : w) });
+}
+function removeDevGoalItem(id){
+  if(!confirm("Remove this goal?")) return;
+  const g = activeGoals();
+  saveActiveGoals({ ...g, items: g.items.filter(i=>i.id!==id) });
+}
+function updateDevGoalTarget(q, type, value){
+  const g = activeGoals();
+  saveActiveGoals({ ...g, targets: { ...g.targets, [q]: { ...g.targets[q], [type]: Math.max(0, parseInt(value,10)||0) } } });
+}
+function addDevGoalWin(){
+  const text = (state.devWinDraft||"").trim();
+  if(!text) return;
+  const g = activeGoals();
+  state.devWinDraft = "";
+  saveActiveGoals({ ...g, wins: [{ id:newId("win"), date: ymd(new Date()), text }, ...(g.wins||[])] });
+}
+function removeDevGoalWin(id){
+  if(!confirm("Remove this win?")) return;
+  const g = activeGoals();
+  saveActiveGoals({ ...g, wins: (g.wins||[]).filter(w=>w.id!==id) });
+}
+function renderGoalBar(done, target, color){
+  const pct = target ? Math.min(100, Math.round(done/target*100)) : 0;
+  return `<div class="progress-bar" style="margin:4px 0;"><div style="width:${pct}%;background:${done>=target&&target?'var(--ok)':color||'var(--rose-dark)'};"></div></div>`;
+}
+function renderGoalsTab(){
+  const g = activeGoals();
+  const year = g.year;
+  const yStart = new Date(year,0,1), yEnd = new Date(year+1,0,1);
+  const now = new Date();
+  const quarterOf = m => "Q"+(Math.floor(m/3)+1);
+  const qTotal = (q,type) => (g.targets[q]?.[type]||0)*3;
+  const yearTarget = type => ["Q1","Q2","Q3","Q4"].reduce((s,q)=>s+qTotal(q,type),0);
+  const inYear = now >= yStart && now < yEnd;
+  const unclassified = completedBuilds().filter(({addOn})=>!addOnBuildType(addOn));
+  const typeLabel = { website:"Website builds", software:"Software builds" };
+  const isAdmin = state.role==="admin";
+  const mine = goalsOwner()==="admin";
+  const showBuilds = !mine;
+  const directorName = (state.settings.assistants.find(a=>a.isDevDirector)||{}).name || "Dev Director";
+  const items = section => g.items.filter(i=>i.section===section);
+  const addLabel = section => /^M\d+$/.test(section) ? `+ Add goal for ${DEV_GOAL_MONTHS[+section.slice(1)-1]}` : "+ Add goal";
+  const checklist = section => `
+    ${items(section).map(i=> state.devGoalEditingId===i.id ? `
+      <div class="checklist-item" style="flex-wrap:wrap;gap:6px;">
+        <input id="dg_text_${i.id}" value="${escHtml(i.text)}" style="flex:2;min-width:200px;" onkeydown="if(event.key==='Enter')saveDevGoalEdit('${i.id}');if(event.key==='Escape')cancelDevGoalEdit();">
+        <select id="dg_section_${i.id}" style="flex:1;min-width:170px;" title="Move to">
+          ${devGoalSectionOptions().map(([v,l])=>`<option value="${v}" ${i.section===v?'selected':''}>Move to: ${l}</option>`).join("")}
+        </select>
+        <button onclick="saveDevGoalEdit('${i.id}')">Save</button>
+        <button class="secondary" onclick="cancelDevGoalEdit()">Cancel</button>
+      </div>` : `
+      <div class="checklist-item">
+        <input type="checkbox" ${i.done?'checked':''} onchange="updateDevGoalItem('${i.id}',{done:this.checked,doneAt:this.checked?new Date().toISOString():''})">
+        <span style="flex:1;${i.done?'text-decoration:line-through;opacity:.65;':''}">${escHtml(i.text)}${i.done&&i.doneAt?` <span class="small">· ${new Date(i.doneAt).toLocaleDateString()}</span>`:''}</span>
+        <button class="secondary" style="padding:2px 8px;" title="Edit" onclick="editDevGoalItem('${i.id}')">✎</button>
+        <button class="secondary" style="padding:2px 8px;" title="Remove" onclick="removeDevGoalItem('${i.id}')">✕</button>
+      </div>`).join("") || (/^M\d+$/.test(section) ? "" : `<div class="small">Nothing here yet.</div>`)}
+    <button class="secondary" style="margin-top:6px;padding:4px 10px;" onclick="addDevGoalItem('${section}')">${addLabel(section)}</button>`;
+  return `
+    <div class="goals-switch-row">
+      ${isAdmin ? `<div class="goals-owner-switch" role="tablist" aria-label="Whose goals">
+        <button class="${mine?'':'secondary'}" role="tab" aria-selected="${mine}" onclick="setGoalsOwner('admin')">My goals</button>
+        <button class="${mine?'secondary':''}" role="tab" aria-selected="${!mine}" onclick="setGoalsOwner('dev')">${escHtml(directorName)}'s goals</button>
+      </div>` : ""}
+      <div class="goals-owner-switch" role="tablist" aria-label="Year">
+        ${goalYearOptions().map(y=>`<button class="${y===year?'':'secondary'}" role="tab" aria-selected="${y===year}" onclick="setGoalsYear(${y})">${y}</button>`).join("")}
+        <button class="secondary" title="Add next year" aria-label="Add next year" onclick="addGoalsYear()">+</button>
+      </div>
+    </div>
+    <h2>${mine ? `My ${year} Goals` : `${year} Goals`}</h2>
+    ${mine
+      ? `<div class="small" style="margin-bottom:14px;">Your own goals for ${year}. Only the admin login shows this view.</div>`
+      : `<div class="small" style="margin-bottom:14px;">Director of Software Development &amp; Web Design${isAdmin ? ` · ${escHtml(directorName)}` : ''}. Build counts fill in automatically from builds marked <strong>Completed</strong> on a client's Software Build tab (yours and your team's), using their completed date and "Counts toward goals as".${inYear ? '' : ` These goals start January ${year} — counts will show from then.`}</div>`}
+    ${showBuilds && unclassified.length ? `<div class="alert warn">${unclassified.length} completed build${unclassified.length===1?' isn\'t':'s aren\'t'} counted yet — pick Website or Software under "Counts toward goals as": ${unclassified.map(({client,addOn})=>`<a href="#" onclick="viewClientSoftwareBuild('${client.id}');return false;">${escHtml(client.name)} — ${escHtml(addOn.label||'build')}</a>`).join(", ")}</div>` : ""}
+    <h3 class="goals-section-title">Monthly goals</h3>
+    ${showBuilds && inYear ? `<div class="stat-row">
+      ${["website","software"].map(type=>{
+        const mStart = new Date(now.getFullYear(), now.getMonth(), 1), mEnd = new Date(now.getFullYear(), now.getMonth()+1, 1);
+        const done = countCompletedBuilds(type, mStart, mEnd), target = g.targets[quarterOf(now.getMonth())]?.[type]||0;
+        return `<div class="stat-tile"><div class="stat-label">${typeLabel[type]} — ${now.toLocaleDateString(undefined,{month:'long'})}</div><div class="stat-value">${done} <span class="small">/ ${target}</span></div>${renderGoalBar(done,target)}</div>`;
+      }).join("")}
+    </div>` : ""}
+    <div class="goals-month-grid">
+      ${DEV_GOAL_MONTHS.map((name,m)=>{
+        const isThisMonth = now.getFullYear()===year && now.getMonth()===m;
+        const mStart = new Date(year, m, 1), mEnd = new Date(year, m+1, 1);
+        const q = quarterOf(m);
+        return `
+        <div class="card goals-month-card" style="${isThisMonth?'border:2px solid var(--rose);':''}">
+          <div class="flex-between"><h4 style="margin:0;">${name}</h4>${isThisMonth?'<span class="badge">This month</span>':''}</div>
+          ${showBuilds ? `<div class="small" style="margin:4px 0 6px;">${["website","software"].map(type=>`${type==="website"?"Website":"Software"} ${countCompletedBuilds(type, mStart, mEnd)} / ${g.targets[q]?.[type]||0}`).join(" · ")}</div>` : `<div style="height:6px;"></div>`}
+          ${checklist("M"+(m+1))}
+        </div>`;
+      }).join("")}
+    </div>
+    <h3 class="goals-section-title">Quarterly goals</h3>
+    ${["Q1","Q2","Q3","Q4"].map((q,qi)=>{
+      const qStart = new Date(year, qi*3, 1), qEnd = new Date(year, qi*3+3, 1);
+      const isNow = now >= qStart && now < qEnd;
+      return `
+      <div class="card" style="${isNow?'border:2px solid var(--rose);':''}">
+        <div class="flex-between"><h3 style="margin:0;">${DEV_GOALS_SECTIONS[qi][1]}</h3>${isNow?'<span class="badge">This quarter</span>':''}</div>
+        ${showBuilds ? `<div class="row" style="margin:8px 0 4px;">
+          ${["website","software"].map(type=>{
+            const done = countCompletedBuilds(type, qStart, qEnd);
+            return `<div>
+              <div class="small" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${typeLabel[type]}: <input type="number" min="0" value="${g.targets[q]?.[type]||0}" onchange="updateDevGoalTarget('${q}','${type}',this.value)" style="width:58px;padding:2px 6px;"> per month · <strong>${done} / ${qTotal(q,type)}</strong> for the quarter</div>
+              ${renderGoalBar(done, qTotal(q,type))}
+            </div>`;
+          }).join("")}
+        </div>
+        <div class="small" style="font-weight:600;margin-top:8px;">Goals</div>` : `<div style="height:6px;"></div>`}
+        ${checklist(q)}
+      </div>`;
+    }).join("")}
+    <h3 class="goals-section-title">Annual goals</h3>
+    ${showBuilds ? `<div class="stat-row">
+      ${["website","software"].map(type=>{
+        const done = countCompletedBuilds(type, yStart, yEnd), target = yearTarget(type);
+        return `<div class="stat-tile"><div class="stat-label">${typeLabel[type]} — ${year}</div><div class="stat-value">${done} <span class="small">/ ${target}</span></div>${renderGoalBar(done,target)}</div>`;
+      }).join("")}
+    </div>` : ""}
+    <div class="card">${checklist("year")}</div>
+    <h3 class="goals-section-title">Personal goals</h3>
+    <div class="card">${checklist("personal")}</div>
+    <div class="card">
+      <h3>Wins log</h3>
+      <div class="small" style="margin-bottom:6px;">${mine ? "Big and small wins for the business — a running record to look back on at the end of the year." : "Builds completed, clients brought in, hires made, positive client feedback — a running record to bring to the annual recap."}</div>
+      <div style="display:flex;gap:6px;">
+        <input id="dev_win_draft" value="${escHtml(state.devWinDraft||'')}" oninput="state.devWinDraft=this.value" placeholder="e.g. Client loved the new booking page">
+        <button onclick="addDevGoalWin()">Add</button>
+      </div>
+      ${(g.wins||[]).map(w=>`
+        <div class="list-item">
+          <div>${escHtml(w.text)}</div>
+          <div style="display:flex;align-items:center;gap:8px;"><span class="small">${parseYMD(w.date).toLocaleDateString()}</span><button class="secondary" style="padding:2px 8px;" title="Edit" onclick="editDevGoalWin('${w.id}')">✎</button><button class="secondary" style="padding:2px 8px;" title="Remove" onclick="removeDevGoalWin('${w.id}')">✕</button></div>
+        </div>`).join("") || `<div class="small" style="margin-top:6px;">No wins logged yet.</div>`}
+    </div>
+  `;
+}
 function allAssignedBuilds(){
   return allClientAddOns().filter(({addOn})=>!!addOn.buildAssistantId);
 }
 function renderBuildsTab(){
-  const isAdmin = state.role==="admin";
-  const builds = isAdmin ? allAssignedBuilds() : allAssignedBuilds().filter(({addOn})=>addOn.buildAssistantId===state.currentAssistant?.id);
+  // seesAll = admin or the Dev Director: every build plus its finances, and
+  // the jump into the client's Software Build sub-tab (Membership stays
+  // admin-only — see renderClientCRM).
+  const seesAll = state.role==="admin" || isDevDirector();
+  const builds = seesAll ? allAssignedBuilds() : allAssignedBuilds().filter(({addOn})=>addOn.buildAssistantId===state.currentAssistant?.id);
   return `
     <h2>Builds</h2>
-    <div class="small" style="margin-bottom:14px;">${isAdmin
+    <div class="small" style="margin-bottom:14px;">${seesAll
       ? "Every flat-fee build assigned to an assistant, company-wide — financials live here and on each client's Software Build tab."
       : "Your assigned build(s) — check off to-dos as you complete them. This is separate from the Task Board since you're not clocking hourly for this work."}</div>
-    ${builds.length===0 ? `<div class="card"><div class="small">${isAdmin?'No assigned builds yet — add one from a client\'s Software Build tab.':'Nothing assigned to you right now.'}</div></div>` :
+    ${builds.length===0 ? `<div class="card"><div class="small">${seesAll?'No assigned builds yet — add one from a client\'s Software Build tab.':'Nothing assigned to you right now.'}</div></div>` :
       builds.map(({client,addOn})=>{
         const todos = addOn.buildTodos||[];
         const doneCount = todos.filter(t=>t.done).length;
@@ -9105,13 +9967,13 @@ function renderBuildsTab(){
         <div class="card">
           <div class="flex-between">
             <h3 style="margin:0;">${client.name} — ${addOn.label}</h3>
-            ${isAdmin ? `<button class="secondary" onclick="viewClientSoftwareBuild('${client.id}')">Open in client profile</button>` : ""}
+            ${seesAll ? `<button class="secondary" onclick="viewClientSoftwareBuild('${client.id}')">Open in client profile</button>` : ""}
           </div>
           <div class="small" style="margin-bottom:8px;">
-            ${isAdmin ? `${assistantName(addOn.buildAssistantId)} · ${addOn.buildAssistantPercent||0}% of $${(addOn.buildAssistantBasisAmount!=null?addOn.buildAssistantBasisAmount:(addOn.flatFee||0)).toFixed(0)} build cost · earned so far: $${paidCut.toFixed(2)} of $${totalCut.toFixed(2)} total` : `${todos.length?doneCount+' of '+todos.length+' to-dos complete':'No to-dos set yet — ask Kaylan to add the checklist.'}`}
+            ${seesAll ? `${assistantName(addOn.buildAssistantId)} · ${addOn.buildAssistantPercent||0}% of $${(addOn.buildAssistantBasisAmount!=null?addOn.buildAssistantBasisAmount:(addOn.flatFee||0)).toFixed(0)} build cost · earned so far: $${paidCut.toFixed(2)} of $${totalCut.toFixed(2)} total` : `${todos.length?doneCount+' of '+todos.length+' to-dos complete':'No to-dos set yet — ask Kaylan to add the checklist.'}`}
             ${addOn.buildStartDate ? ` · Day 1 was ${parseYMD(addOn.buildStartDate).toLocaleDateString()}` : ` · Day 1 (deposit received) not set yet`}
           </div>
-          ${todos.length ? renderBuildTodoList(client.id, addOn, isAdmin) : ""}
+          ${todos.length ? renderBuildTodoList(client.id, addOn, seesAll) : ""}
         </div>`;
       }).join("")}
   `;
@@ -9741,7 +10603,7 @@ function renderTeamAdmin(){
 // this toggle existed; "comments" is new behavior but defaults on too since
 // that's what was actually requested, with the toggle there for whoever
 // finds it too noisy.
-const DEFAULT_NOTIFY_PREFS = { clientRequest:true, vendorScheduled:true, comments:true };
+const DEFAULT_NOTIFY_PREFS = { clientRequest:true, vendorScheduled:true, comments:true, clientResponse:true };
 function assistantNotifyPrefs(a){
   return { ...DEFAULT_NOTIFY_PREFS, ...(a && a.notifyPrefs || {}) };
 }
@@ -9781,6 +10643,10 @@ function renderTeamDirectory(){
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
           <input type="checkbox" ${prefs.comments?'checked':''} onchange="updateMyNotifyPref('comments',this.checked)">
           Someone comments on one of your tasks
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${prefs.clientResponse?'checked':''} onchange="updateMyNotifyPref('clientResponse',this.checked)">
+          A client approves, requests changes, or answers "push to next month?"
         </label>
       </div>
     </div>` : ""}
@@ -9867,6 +10733,10 @@ function renderAssistantRow(a){
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Gets an &quot;Attention: ${a.name||'them'}&quot; column at the top of the admin Dashboard: contracts, payments, renewal/recap emails to send. Only one person at a time — checking this unchecks it for anyone else.">
             <input type="checkbox" ${a.isDocsLead?'checked':''} onchange="setExclusiveAssistantFlag('${a.id}','isDocsLead',this.checked)">
             Documentation &amp; Billing Lead
+          </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Director of Software Development &amp; Web Design: always sees the Builds tab with every build and its finances, and every team Tech Support request (can change status). No other admin tabs. Takes effect on their next login.">
+            <input type="checkbox" ${a.isDevDirector?'checked':''} onchange="updateAssistantField('${a.id}','isDevDirector',this.checked)">
+            Director of Development
           </label>
         </div>
       </div>
@@ -11387,13 +12257,40 @@ function openTaskEditor(taskId, defaultClientId){
     id: newId("task"), title:"", clientId: defaultClientId || INTERNAL_CLIENT_ID,
     status:"To do", category:"Business", assignees:[], subtasks:[], discussion:[], description:"", dueDate:""
   };
-  state.modal = { type:"taskEditor", task };
+  // state.modal.task is the SAME object as the one in state.tasks, so the
+  // status select changing it also changes "what's saved" as far as
+  // saveTask can tell — remember the status it opened with instead.
+  state.modal = { type:"taskEditor", task, originalStatus: taskId ? task.status : null };
   render();
 }
 // Lets whoever opens a task see exactly which clock-ins make up its total —
 // asked for after a correction added on top of an existing entry produced a
 // total that didn't match either number, which is much easier to catch when
 // every individual entry is visible right here instead of only a sum.
+// Clock in/out and manual time straight from the open task, so nobody has
+// to close it and go hunting on the Task Board or Time Tracking tab. Time
+// entry snapshots don't re-render while a modal is open (see
+// subscribeAppData), so these re-render themselves once the write lands.
+function taskModalClockIn(taskId){
+  const p = clockIn(taskId, state.currentAssistant.id);
+  if(p) p.then(()=>render());
+}
+function taskModalClockOut(entryId){
+  clockOut(entryId, null).then(()=>render());
+}
+function renderTaskClockControls(task){
+  const me = state.currentAssistant;
+  const myActive = me ? activeEntryFor(me.id) : null;
+  const clockBtn = !me || task.status==="Done" ? ""
+    : myActive && myActive.taskId===task.id
+      ? `<button class="secondary" onclick="taskModalClockOut('${myActive.id}')">⏱ ${entryDurationHours(myActive).toFixed(2)} hrs — Clock out</button>`
+      : `<button class="secondary" onclick="taskModalClockIn('${task.id}')">Clock in</button>`;
+  return `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;">
+      ${clockBtn}
+      <button class="secondary" onclick="openManualTimeEntry('${task.id}')">+ Log time manually</button>
+    </div>`;
+}
 function renderTaskTimeEntriesSection(task){
   if(!task.id || !state.tasks.find(t=>t.id===task.id)) return "";
   const entries = state.timeEntries.filter(e=>e.taskId===task.id).sort((a,b)=> new Date(b.clockIn) - new Date(a.clockIn));
@@ -11401,6 +12298,7 @@ function renderTaskTimeEntriesSection(task){
   return `
     <div class="card" style="margin-top:10px;">
       <div class="flex-between"><h4 style="margin:0;">Time clocked on this task</h4><span class="small">${total.toFixed(2)} hrs total &middot; ${entries.length} ${entries.length===1?'entry':'entries'}</span></div>
+      ${renderTaskClockControls(task)}
       ${entries.length ? `
       <div class="table-scroll"><table class="data-table">
         <thead><tr><th>Assistant</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th></th></tr></thead>
@@ -11411,7 +12309,7 @@ function renderTaskTimeEntriesSection(task){
               <td>${new Date(e.clockIn).toLocaleString()}</td>
               <td>${e.clockOut ? new Date(e.clockOut).toLocaleString() : '<span class="small">still clocked in</span>'}</td>
               <td>${entryDurationHours(e).toFixed(2)}${e.clockOutManual?' <span class="small">(manual)</span>':''}${e.flagged?' <span class="small" style="color:var(--danger);">⚑</span>':''}</td>
-              <td style="white-space:nowrap;">${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}</td>
+              <td style="white-space:nowrap;">${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" onclick="openTimeEntryEditor('${e.id}', true)">Edit</button>` : ""}</td>
             </tr>
             ${e.note ? `<tr><td colspan="5" class="small" style="padding-top:0;">&ldquo;${e.note}&rdquo;</td></tr>` : ""}
           `).join("")}
@@ -11457,10 +12355,11 @@ function renderTaskEditorModal(task){
             ${STATUSES.map(s=>`<option ${task.status===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
-        <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}" onchange="state.modal.task.dueDate=this.value"></div>
+        <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}" onchange="state.modal.task.dueDate=this.value;if(state.modal.task.repeat)render();"></div>
         <div><label class="small">Completed date${task.status==='Done'?'':' (only applies once status is Done)'}</label><input type="date" id="tf_completed" value="${task._completedDraft !== undefined ? task._completedDraft : (task.completedAt ? toLocalDateInputValue(task.completedAt) : '')}" onchange="state.modal.task._completedDraft=this.value"></div>
       </div>
       <div class="small" style="margin-top:2px;">Reports pull "completed this period" straight off this date — if a task was actually finished earlier and just had its status corrected today, set the real date here so it doesn't show up on a report it doesn't belong on.</div>
+      ${renderTaskRepeatEditor(task)}
       ${task.status==='Paused' ? `
       <div style="margin-top:8px;">
         <label class="small">Why is this paused? <span style="font-weight:400;">(shows on Tori's Dashboard so she can tell "on hold for a reason" apart from "stuck")</span></label>
@@ -11778,6 +12677,116 @@ function suggestClientFromTitle(title){
     return first && first.length>2 && t.includes(first.toLowerCase());
   }) || null;
 }
+// ---- Repeating tasks ----
+// task.repeat = { type:"weekly", days:[1,4] } | { type:"biweekly" }
+//   | { type:"monthly" } | { type:"dates", dates:["YYYY-MM-DD",...] }
+// When a repeating task is marked Done, saveTask creates the next copy with
+// the next due date (same title/client/assignees/checklist, unticked) —
+// a fresh task each time rather than rolling one task's due date forward,
+// so each occurrence keeps its own completedAt (reports) and its own time
+// entries. repeatNextTaskId on the finished one stops a reopen + re-Done
+// from creating a duplicate.
+const WEEKDAY_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function ymd(d){ return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0"); }
+// Next occurrence strictly after fromYMD (the current due date, or today).
+function nextRepeatDate(repeat, fromYMD){
+  if(!repeat || !repeat.type) return null;
+  const from = parseYMD(fromYMD || ymd(new Date()));
+  if(repeat.type==="weekly"){
+    const days = (repeat.days||[]).length ? repeat.days : [from.getDay()];
+    for(let i=1;i<=7;i++){ const d = new Date(from.getFullYear(), from.getMonth(), from.getDate()+i); if(days.includes(d.getDay())) return ymd(d); }
+    return null;
+  }
+  if(repeat.type==="biweekly") return ymd(new Date(from.getFullYear(), from.getMonth(), from.getDate()+14));
+  if(repeat.type==="monthly"){
+    const day = from.getDate();
+    const lastDay = new Date(from.getFullYear(), from.getMonth()+2, 0).getDate();
+    return ymd(new Date(from.getFullYear(), from.getMonth()+1, Math.min(day, lastDay)));
+  }
+  if(repeat.type==="dates") return (repeat.dates||[]).filter(Boolean).sort().find(s=>s > ymd(from)) || null;
+  return null;
+}
+function repeatSummary(repeat){
+  if(!repeat || !repeat.type) return "";
+  if(repeat.type==="weekly") return "Every " + ((repeat.days||[]).length ? repeat.days.slice().sort().map(d=>WEEKDAY_SHORT[d]).join(", ") : "week");
+  if(repeat.type==="biweekly") return "Every other week";
+  if(repeat.type==="monthly") return "Monthly";
+  if(repeat.type==="dates") return "On " + (repeat.dates||[]).filter(Boolean).length + " set dates";
+  return "";
+}
+function setTaskRepeatType(type){
+  const t = state.modal.task;
+  t.dueDate = document.getElementById("tf_due").value || t.dueDate;
+  if(!type){ t.repeat = null; render(); return; }
+  const dueDay = t.dueDate ? parseYMD(t.dueDate).getDay() : new Date().getDay();
+  t.repeat = type==="weekly" ? { type, days:[dueDay] } : type==="dates" ? { type, dates: t.dueDate ? [t.dueDate] : [""] } : { type };
+  render();
+}
+function toggleTaskRepeatDay(day, on){
+  const r = state.modal.task.repeat;
+  const days = new Set(r.days||[]);
+  on ? days.add(day) : days.delete(day);
+  r.days = [...days].sort();
+  render();
+}
+function updateTaskRepeatDate(i, value){ state.modal.task.repeat.dates[i] = value; render(); }
+function addTaskRepeatDate(){ state.modal.task.repeat.dates.push(""); render(); }
+function removeTaskRepeatDate(i){ state.modal.task.repeat.dates.splice(i,1); render(); }
+function renderTaskRepeatEditor(task){
+  const r = task.repeat || null;
+  const type = r ? r.type : "";
+  const due = task.dueDate || "";
+  const next = r ? nextRepeatDate(r, due || null) : null;
+  return `
+    <div style="margin-top:8px;padding:8px 10px;border:1px solid var(--cream-dark);border-radius:8px;">
+      <div class="row" style="align-items:flex-end;">
+        <div><label class="small">🔁 Repeat</label>
+          <select id="tf_repeat_type" onchange="setTaskRepeatType(this.value)">
+            <option value="" ${!type?'selected':''}>Doesn't repeat</option>
+            <option value="weekly" ${type==='weekly'?'selected':''}>Weekly on…</option>
+            <option value="biweekly" ${type==='biweekly'?'selected':''}>Every other week</option>
+            <option value="monthly" ${type==='monthly'?'selected':''}>Monthly (same date)</option>
+            <option value="dates" ${type==='dates'?'selected':''}>On specific dates</option>
+          </select>
+        </div>
+      </div>
+      ${type==='weekly' ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+        ${[1,2,3,4,5,6,0].map(d=>`<label style="display:inline-flex;align-items:center;gap:4px;font-size:13px;"><input type="checkbox" ${(r.days||[]).includes(d)?'checked':''} onchange="toggleTaskRepeatDay(${d},this.checked)"> ${WEEKDAY_SHORT[d]}</label>`).join("")}
+      </div>` : ""}
+      ${type==='dates' ? `
+      <div style="margin-top:6px;">
+        ${(r.dates||[]).map((d,i)=>`
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px;">
+            <input type="date" value="${d||''}" onchange="updateTaskRepeatDate(${i},this.value)" style="max-width:170px;">
+            ${(r.dates||[]).length>1 ? `<button class="secondary" style="padding:2px 8px;" onclick="removeTaskRepeatDate(${i})">✕</button>` : ""}
+          </div>`).join("")}
+        <button class="secondary" style="margin-top:6px;" onclick="addTaskRepeatDate()">+ Add date</button>
+      </div>` : ""}
+      ${type ? `<div class="small" style="margin-top:6px;">${(type==='biweekly'||type==='monthly') && !due ? 'Set a due date above — it repeats from that date. ' : ''}When this is marked <strong>Done</strong>, the next one is created automatically${next ? ` — due <strong>${parseYMD(next).toLocaleDateString()}</strong>` : type==='dates' ? ' — add a date after the current due date' : ''}.${task.repeatNextTaskId ? ' (Next one already created.)' : ''}</div>` : ""}
+    </div>`;
+}
+// Called from saveTask once a repeating task lands on Done for the first time.
+async function createNextRepeatTask(fromTask){
+  const dueDate = nextRepeatDate(fromTask.repeat, fromTask.dueDate || null);
+  if(!dueDate) return null;
+  const id = newId("task");
+  const taskNumber = await allocateTaskNumber();
+  upsert("tasks", id, {
+    title: fromTask.title, clientId: fromTask.clientId, category: fromTask.category,
+    status: "To do", description: fromTask.description||"", privateNotes: fromTask.privateNotes||"",
+    dueDate, priority: !!fromTask.priority,
+    goodForContent: !!fromTask.goodForContent, goodForContentNote: fromTask.goodForContentNote||"",
+    taskNumber, assignees: fromTask.assignees||[],
+    // Same people as last time — not a brand-new assignment to acknowledge.
+    assignmentAcks: (fromTask.assignees||[]).map(a=>({ assistantId:a, ackedAt:new Date().toISOString() })),
+    subtasks: (fromTask.subtasks||[]).map(s=>({ ...s, done:false })),
+    discussion: [], completedAt: null,
+    repeat: fromTask.repeat, repeatSeriesId: fromTask.repeatSeriesId || fromTask.id,
+    createdAt: new Date().toISOString()
+  });
+  return { id, dueDate };
+}
 async function saveTask(taskId){
   const task = state.modal.task;
   const assignees = task.assignees || [];
@@ -11788,6 +12797,10 @@ async function saveTask(taskId){
   // currently saved in Firestore — look that up separately wherever the
   // actual previous value matters (the Done-transition check right below).
   const existingTask = state.tasks.find(t=>t.id===taskId);
+  // existingTask.status can't be used for "what was it before" — the modal
+  // edits that same object live (see openTaskEditor), so it already reads
+  // the NEW status. Use the status captured when the editor opened.
+  const prevStatus = existingTask ? state.modal.originalStatus : null;
   // Stamp completedAt the moment a task lands on Done, and clear it if it's
   // reopened — the weekly client report needs to know WHEN a task finished,
   // not just that it's currently sitting in Done. A manually-set completed
@@ -11798,7 +12811,7 @@ async function saveTask(taskId){
   let completedAt = task.completedAt || null;
   if(newStatus === "Done"){
     if(completedField) completedAt = new Date(completedField + "T12:00:00").toISOString();
-    else if(!existingTask || existingTask.status !== "Done") completedAt = new Date().toISOString();
+    else if(prevStatus !== "Done") completedAt = new Date().toISOString();
   } else {
     completedAt = null;
   }
@@ -11811,7 +12824,7 @@ async function saveTask(taskId){
   let clientReviewResponse = task.clientReviewResponse || null;
   let clientReviewResponseNote = task.clientReviewResponseNote || "";
   let clientReviewRespondedAt = task.clientReviewRespondedAt || null;
-  if(newStatus === "Needs Client Review" && (!existingTask || existingTask.status !== "Needs Client Review")){
+  if(newStatus === "Needs Client Review" && prevStatus !== "Needs Client Review"){
     clientReviewRequestedAt = new Date().toISOString();
     clientReviewResponse = null;
     clientReviewResponseNote = "";
@@ -11876,12 +12889,30 @@ async function saveTask(taskId){
     pushToNextMonthAsked: !!task.pushToNextMonthAsked,
     pushToNextMonthAskedAt: task.pushToNextMonthAskedAt || null,
     pushToNextMonthResponse: task.pushToNextMonthResponse || null,
-    pushToNextMonthRespondedAt: task.pushToNextMonthRespondedAt || null
+    pushToNextMonthRespondedAt: task.pushToNextMonthRespondedAt || null,
+    repeat: task.repeat ? { ...task.repeat, ...(task.repeat.dates ? { dates: task.repeat.dates.filter(Boolean).sort() } : {}) } : null,
+    repeatSeriesId: task.repeatSeriesId || null,
+    repeatNextTaskId: task.repeatNextTaskId || null
   };
+  // A repeating task with no due date yet starts on its first upcoming
+  // occurrence (today counts), so it shows up in Week ahead / past-due.
+  if(payload.repeat && !payload.dueDate){
+    const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
+    payload.dueDate = (payload.repeat.type==="weekly" || payload.repeat.type==="dates") ? (nextRepeatDate(payload.repeat, ymd(yesterday)) || "") : ymd(new Date());
+  }
   if(payload.clientId === INTERNAL_CLIENT_ID){
     const suggested = suggestClientFromTitle(payload.title);
     if(suggested && !confirm(`This task's title mentions ${suggested.name}, but Client is set to "Internal / Modern Co." — any time clocked on it will count as admin hours instead of ${suggested.name}'s.\n\nSave it as Internal anyway?`)){
       return;
+    }
+  }
+  if(payload.repeat && newStatus==="Done" && prevStatus!=="Done" && !payload.repeatNextTaskId){
+    try {
+      const next = await createNextRepeatTask({ ...payload, id: taskId });
+      if(next) payload.repeatNextTaskId = next.id;
+    } catch(err){
+      console.warn("Creating the next repeat failed:", err);
+      alert("This task was saved, but the next repeat couldn't be created — " + err.message + "\n\nCreate it by hand for now, and tell Kaylan if it keeps happening.");
     }
   }
   upsert("tasks", taskId, payload);
@@ -11972,12 +13003,22 @@ function toDatetimeLocalValue(iso){
 function fromDatetimeLocalValue(val){
   return val ? new Date(val).toISOString() : null;
 }
-function openManualTimeEntry(){
+// Opened with a taskId from inside an open task: the task is fixed (no
+// search), and saving/cancelling returns to that task modal — unsaved
+// edits included — instead of closing everything.
+function openManualTimeEntry(taskId){
   const now = toDatetimeLocalValue(new Date().toISOString());
   const defaultAssistantId = state.role==='admin'
     ? (state.settings.assistants.find(a=>a.active!==false)||{}).id
     : state.currentAssistant.id;
-  state.modal = { type:"manualTimeEntry", rows: [{ id:newId("row"), clockIn: now, clockOut: now, note:"" }], assistantId: defaultAssistantId };
+  const returnTo = taskId ? state.modal : null;
+  state.modal = { type:"manualTimeEntry", rows: [{ id:newId("row"), clockIn: now, clockOut: now, note:"" }], assistantId: defaultAssistantId, fixedTaskId: taskId || null, returnTo };
+  render();
+}
+// Closes a time modal, going back to the task it was opened from if any.
+function closeTimeModal(){
+  const returnTo = state.modal && state.modal.returnTo;
+  state.modal = returnTo || null;
   render();
 }
 function addManualEntryRow(){
@@ -11994,6 +13035,7 @@ function updateManualEntryRow(rowId, field, value){
 }
 function renderManualTimeEntryModal(){
   const rows = state.modal.rows;
+  const fixedTask = state.modal.fixedTaskId ? state.tasks.find(t=>t.id===state.modal.fixedTaskId) : null;
   return `
     <div class="modal">
       <h3>Log time manually</h3>
@@ -12008,8 +13050,9 @@ function renderManualTimeEntryModal(){
       </div>` : ""}
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Task</label>
+          ${fixedTask ? `<div><strong>${fixedTask.taskNumber ? '#'+fixedTask.taskNumber+' — ' : ''}${escHtml(fixedTask.title||'')}</strong></div>` : `
           <input id="mte_task" list="mte_task_list" value="${(state.modal.taskSearch||'').replace(/"/g,'&quot;')}" oninput="state.modal.taskSearch=this.value" placeholder="Search by # or title...">
-          <datalist id="mte_task_list">${taskSearchOptions(state.tasks)}</datalist>
+          <datalist id="mte_task_list">${taskSearchOptions(state.tasks)}</datalist>`}
         </div>
       </div>
       <div style="margin-top:10px;">
@@ -12025,14 +13068,16 @@ function renderManualTimeEntryModal(){
         <button class="secondary" style="margin-top:8px;" onclick="addManualEntryRow()">+ Add another time block</button>
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
-        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button class="secondary" onclick="closeTimeModal()">Cancel</button>
         <button onclick="saveManualTimeEntry()">Log time</button>
       </div>
     </div>
   `;
 }
 function saveManualTimeEntry(){
-  const task = resolveTaskFromSearch(document.getElementById("mte_task").value);
+  const task = state.modal.fixedTaskId
+    ? state.tasks.find(t=>t.id===state.modal.fixedTaskId)
+    : resolveTaskFromSearch(document.getElementById("mte_task").value);
   const assistantId = state.role==='admin' ? state.modal.assistantId : state.currentAssistant.id;
   if(!task){ alert("Pick a task from the list first — search by its # or title."); return; }
   const rows = state.modal.rows;
@@ -12050,12 +13095,12 @@ function saveManualTimeEntry(){
     };
     upsert("timeEntries", entry.id, entry);
   });
-  closeModal();
+  closeTimeModal();
 }
-function openTimeEntryEditor(entryId){
+function openTimeEntryEditor(entryId, fromTask){
   const entry = state.timeEntries.find(e=>e.id===entryId);
   if(!entry) return;
-  state.modal = { type:"timeEntryEditor", entry, assistantId: entry.assistantId, flagged: !!entry.flagged };
+  state.modal = { type:"timeEntryEditor", entry, assistantId: entry.assistantId, flagged: !!entry.flagged, returnTo: fromTask ? state.modal : null };
   render();
 }
 function renderTimeEntryEditorModal(entry){
@@ -12091,9 +13136,9 @@ function renderTimeEntryEditorModal(entry){
         <input id="tef_flagnote" value="${(entry.flagNote||'').replace(/"/g,'&quot;')}">
       </div>` : ""}
       <div style="margin-top:14px;display:flex;justify-content:space-between;">
-        <button class="danger" onclick="deleteTimeEntry('${entry.id}'); closeModal();">Delete</button>
+        <button class="danger" onclick="deleteTimeEntry('${entry.id}'); closeTimeModal();">Delete</button>
         <div>
-          <button class="secondary" onclick="closeModal()">Cancel</button>
+          <button class="secondary" onclick="closeTimeModal()">Cancel</button>
           <button onclick="saveTimeEntryEdit('${entry.id}')">Save</button>
         </div>
       </div>
@@ -12117,7 +13162,7 @@ function saveTimeEntryEdit(entryId){
     payload.flagNote = document.getElementById("tef_flagnote").value.trim();
   }
   upsert("timeEntries", entryId, payload);
-  closeModal();
+  closeTimeModal();
 }
 
 // --- Modal shell ---
@@ -12147,12 +13192,59 @@ function renderModal(){
     : state.modal.type==="vendorTicketDetail" ? renderVendorTicketDetailModal(state.modal.vendorId, state.modal.ticketId)
     : state.modal.type==="newSupportTicket" ? renderNewSupportTicketModal()
     : state.modal.type==="supportTicketDetail" ? renderSupportTicketDetailModal(state.modal.ticketId)
+    : state.modal.type==="weeklyRecapPrompt" ? renderWeeklyRecapPromptModal()
     : "";
   const NON_DISMISSABLE_MODALS = ["changeCodeGate","waitingOnRateGate","agreementGate","handbookGate","idUploadGate","appGuide"];
   const dismissable = !NON_DISMISSABLE_MODALS.includes(state.modal.type);
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
 }
 function closeModal(){ state.modal = null; render(); }
+
+// ---- Friday weekly-recap reminder ----
+// Every Friday login, an assistant with at least one active client gets
+// asked whether they've sent their weekly recap emails. "Complete" records
+// it for that Friday (settings/access.weeklyRecapDone[assistantId] =
+// "YYYY-MM-DD") so it stops until next Friday; "Dismiss" (or clicking
+// outside) just closes it, and it comes back on their next login that
+// Friday. Written as a single nested key so it never rewrites anyone
+// else's entry (upsert merges maps).
+function recapAssistantClients(assistant){
+  return state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active") && (c.assistantIds||[]).includes(assistant.id));
+}
+function weeklyRecapPromptDue(assistant, now){
+  now = now || new Date();
+  if(!assistant || assistant.isContentCreator) return false;
+  // index.html?preview&friday pretends it's Friday, so the reminder can be
+  // previewed any day of the week.
+  const isFriday = now.getDay()===5 || (PREVIEW_MODE && /[?&]friday(=|&|$)/.test(location.search));
+  if(!isFriday) return false;
+  if(!recapAssistantClients(assistant).length) return false;
+  return (state.settings.weeklyRecapDone||{})[assistant.id] !== ymd(now);
+}
+function completeWeeklyRecap(){
+  const a = state.currentAssistant;
+  if(!a) return closeModal();
+  const today = ymd(new Date());
+  state.settings.weeklyRecapDone = { ...(state.settings.weeklyRecapDone||{}), [a.id]: today };
+  upsert("settings","access", { weeklyRecapDone: { [a.id]: today } });
+  closeModal();
+}
+function renderWeeklyRecapPromptModal(){
+  const a = state.currentAssistant || {};
+  const clients = recapAssistantClients(a);
+  return `
+    <div class="modal">
+      <h3>📬 Weekly recap emails</h3>
+      <p>Happy Friday${a.name ? ', '+escHtml(a.name.split(' ')[0]) : ''}! Have you sent this week's recap emails to your clients?</p>
+      <div class="small" style="margin-bottom:6px;">Your clients:</div>
+      <ul style="margin:0 0 10px 18px;padding:0;">${clients.map(c=>`<li>${escHtml(c.name)}</li>`).join("")}</ul>
+      <div class="small">You can send each one from that client's <strong>Tasks</strong> tab. Click <strong>Complete</strong> once they're all sent — until then this will keep popping up when you log in today.</div>
+      <div style="margin-top:16px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Dismiss — remind me later</button>
+        <button onclick="completeWeeklyRecap()">Complete ✓</button>
+      </div>
+    </div>`;
+}
 
 // ---- Boot ----
 boot();

@@ -123,3 +123,23 @@ Checked against Intuit's published security requirements for App Store listing:
 - Test changes by opening `index.html` directly in a real desktop browser (not an in-app preview pane, which may sandbox scripts) after each edit.
 - Commit after each working change (`git add -A && git commit -m "..."`) so there's always a rollback point.
 - Firebase writes (`upsert`/`remove`) fail silently with a console warning if Firebase isn't connected — check the browser console if changes don't seem to save.
+
+## Design Preview Mode (`?preview`)
+
+- Open `index.html?preview` (locally: `file:///C:/Users/suppo/tmc-ops/index.html?preview`) to see the whole app on **fake data** with no login. Firebase is never initialized in this mode, so no real client, payroll, or QuickBooks data loads, and nothing saves — edits live in memory until the page reloads.
+- A floating bar at the bottom switches between Admin, Assistant, New hire (shows the onboarding gate screens), Client, Vendor, and the Login screen.
+- Fake data comes from `seedPreviewData()` (built on `seedDemoData()`). If a new feature/tab looks empty in preview, add fake records for it there — never copy real data in.
+- Server-only features (QuickBooks/Gmail connect, file uploads to Firebase, direct deposit) don't work in preview; report "View" falls back to downloading the HTML.
+
+## Working With Hannah (design edits)
+
+Hannah makes changes from this same terminal. She'll identify herself at the start of a session ("This is Hannah"); Kaylan (the owner) will say "This is Kaylan". If nobody says, ask who you're working with before doing anything.
+
+When working with Hannah:
+
+- She can make, commit, and push changes on her own — no approval from Kaylan needed.
+- She must NOT see real data, especially financials. Check every change in preview mode (`index.html?preview`) — never log into the admin side, never read the live Firestore database, and never pull real client/payroll/QuickBooks data for her in any other way.
+- If she asks for something that needs real data (e.g. "why does client X show these hours"), tell her that's one for Kaylan.
+- This is a working agreement, not a lock — she's using Kaylan's own computer and GitHub login, so it can't be technically enforced from here.
+
+When working with Kaylan: no restrictions beyond the rest of this file.
