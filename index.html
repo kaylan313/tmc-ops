@@ -11794,7 +11794,7 @@ async function saveTask(taskId){
   // date (e.g. correcting a status today for a task actually finished weeks
   // ago) always wins over the auto-stamp, so it doesn't wrongly land on a
   // report it doesn't belong on.
-  const completedField = document.getElementById("tf_completed").value;
+  const completedField = task._completedDraft !== undefined ? task._completedDraft : "";
   let completedAt = task.completedAt || null;
   if(newStatus === "Done"){
     if(completedField) completedAt = new Date(completedField + "T12:00:00").toISOString();
@@ -11842,16 +11842,26 @@ async function saveTask(taskId){
     ? assignees.map(id=>({ assistantId:id, ackedAt:new Date().toISOString() }))
     : (prevAcks||[]).filter(ack=>assignees.includes(ack.assistantId));
   const payload = {
-    title: document.getElementById("tf_title").value.trim(),
+    // Read from state.modal.task, not the DOM — every one of these fields
+    // already syncs into state on every keystroke/change (see the
+    // oninput/onchange handlers above), and this function awaits
+    // allocateTaskNumber() for a brand-new task before getting here. Any
+    // re-render that happens to land during that await rebuilds the whole
+    // modal from state, so a DOM read taken AFTER the await could pick up a
+    // freshly-recreated, not-yet-retyped element instead of what was
+    // actually typed — state.modal.task was never at risk of that, it was
+    // already correct the instant each field changed. This is exactly what
+    // was behind a title silently saving as just its first character.
+    title: (task.title||"").trim(),
     clientId: task.clientId,
     category: task.category,
     status: newStatus,
-    description: document.getElementById("tf_description").value.trim(),
-    privateNotes: document.getElementById("tf_private_notes").value.trim(),
-    dueDate: document.getElementById("tf_due").value,
-    priority: document.getElementById("tf_priority").checked,
-    goodForContent: document.getElementById("tf_good_for_content").checked,
-    goodForContentNote: document.getElementById("tf_content_note").value.trim(),
+    description: (task.description||"").trim(),
+    privateNotes: (task.privateNotes||"").trim(),
+    dueDate: task.dueDate||"",
+    priority: !!task.priority,
+    goodForContent: !!task.goodForContent,
+    goodForContentNote: (task.goodForContentNote||"").trim(),
     taskNumber,
     assignees,
     assignmentAcks,
