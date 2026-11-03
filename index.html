@@ -9886,6 +9886,61 @@ function saveActiveGoals(goals){
   upsert("settings","access", { [key]: state.settings[key] });
   render();
 }
+// Every goal edit goes through here: fn(goals) -> new goals. settings/access
+// is only loaded once at boot, and goals can also change from outside this
+// browser (the Claude connector, another device) — so instead of writing
+// this browser's possibly-stale copy, re-read the latest goals inside a
+// Firestore transaction and apply the same edit to them. The edit shows
+// instantly (applied to the local copy first) and the screen then catches
+// up with anything that changed elsewhere.
+function mutateActiveGoals(fn){
+  const owner = goalsOwner(), year = selectedGoalsYear();
+  const mainKey = owner==="admin" ? "adminGoals" : "devGoals", yearsKey = goalYearsKey(owner);
+  const local = fn(activeGoals());
+  if(!db) return saveActiveGoals(local);
+  state.settings = goalsAppliedTo(state.settings, mainKey, yearsKey, local);
+  render();
+  const ref = col("settings").doc("access");
+  db.runTransaction(async tx=>{
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : {};
+    const main = data[mainKey] || (owner==="admin" ? { year: (data.devGoals||defaultDevGoals()).year, targets:{}, items:[], wins:[] } : defaultDevGoals());
+    const fresh = year===main.year ? main : ((data[yearsKey]||{})[year] || emptyGoalsForYear(owner, year));
+    const next = fn({ ...fresh, items:[...(fresh.items||[])], wins:[...(fresh.wins||[])] });
+    const patch = next.year===main.year ? { [mainKey]: next } : { [yearsKey]: { ...(data[yearsKey]||{}), [next.year]: next } };
+    tx.set(ref, patch, { merge:true });
+    return { ...data, ...patch };
+  }).then(latest=>{
+    // Adopt the latest goals for both owners, so anything added elsewhere shows up too.
+    ["devGoals","devGoalYears","adminGoals","adminGoalYears"].forEach(k=>{ if(latest[k]!==undefined) state.settings[k] = latest[k]; });
+    render();
+  }).catch(err=>{
+    console.warn("Goal save failed:", err);
+    alert("This goal change didn't save — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
+  });
+}
+// Called while the Goals tab renders: pull the latest goals (at most every
+// 30s) so changes made elsewhere — e.g. by the Claude connector — appear
+// without a reload.
+function refreshGoalsFromServerIfStale(){
+  if(!db || state.goalsRefreshing || (state.goalsRefreshedAt && Date.now()-state.goalsRefreshedAt < 30000)) return;
+  state.goalsRefreshing = true;
+  col("settings").doc("access").get().then(snap=>{
+    const data = snap.exists ? snap.data() : {};
+    let changed = false;
+    ["devGoals","devGoalYears","adminGoals","adminGoalYears"].forEach(k=>{
+      if(data[k]!==undefined && JSON.stringify(data[k])!==JSON.stringify(state.settings[k])){ state.settings[k] = data[k]; changed = true; }
+    });
+    if(changed && state.activeTab==="goals" && !state.devGoalEditingId) render();
+  }).catch(err=>console.warn("Couldn't refresh goals:", err)).finally(()=>{
+    state.goalsRefreshing = false; state.goalsRefreshedAt = Date.now();
+  });
+}
+function goalsAppliedTo(settings, mainKey, yearsKey, goals){
+  const main = settings[mainKey] || (mainKey==="adminGoals" ? adminGoals() : devGoals());
+  if(goals.year===main.year) return { ...settings, [mainKey]: goals };
+  return { ...settings, [yearsKey]: { ...(settings[yearsKey]||{}), [goals.year]: goals } };
+}
 // Buttons run from the earliest year with goals (or this calendar year)
 // through the latest; "+" adds the next year (saved once a goal is added).
 function goalYearOptions(){
@@ -9923,14 +9978,12 @@ function countCompletedBuilds(type, start, end){
   }).length;
 }
 function updateDevGoalItem(id, patch){
-  const g = activeGoals();
-  saveActiveGoals({ ...g, items: g.items.map(i=>i.id===id ? { ...i, ...patch } : i) });
+  mutateActiveGoals(g=>({ ...g, items: g.items.map(i=>i.id===id ? { ...i, ...patch } : i) }));
 }
 function addDevGoalItem(section){
   const text = (prompt("New goal:", "") || "").trim();
   if(!text) return;
-  const g = activeGoals();
-  saveActiveGoals({ ...g, items: [...g.items, { id:newId("goal"), section, text, done:false, doneAt:"" }] });
+  mutateActiveGoals(g=>({ ...g, items: [...g.items, { id:newId("goal"), section, text, done:false, doneAt:"" }] }));
 }
 // Goal sections: "Q1".."Q4" (quarter-wide), "M1".."M12" (a specific month,
 // shown inside its quarter's card), "year", "personal".
@@ -9959,34 +10012,31 @@ function editDevGoalWin(id){
   if(!win) return;
   const text = prompt("Edit win:", win.text);
   if(text===null || !text.trim()) return;
-  saveActiveGoals({ ...g, wins: g.wins.map(w=>w.id===id ? { ...w, text: text.trim() } : w) });
+  mutateActiveGoals(g=>({ ...g, wins: g.wins.map(w=>w.id===id ? { ...w, text: text.trim() } : w) }));
 }
 function removeDevGoalItem(id){
   if(!confirm("Remove this goal?")) return;
-  const g = activeGoals();
-  saveActiveGoals({ ...g, items: g.items.filter(i=>i.id!==id) });
+  mutateActiveGoals(g=>({ ...g, items: g.items.filter(i=>i.id!==id) }));
 }
 function updateDevGoalTarget(q, type, value){
-  const g = activeGoals();
-  saveActiveGoals({ ...g, targets: { ...g.targets, [q]: { ...g.targets[q], [type]: Math.max(0, parseInt(value,10)||0) } } });
+  mutateActiveGoals(g=>({ ...g, targets: { ...g.targets, [q]: { ...g.targets[q], [type]: Math.max(0, parseInt(value,10)||0) } } }));
 }
 function addDevGoalWin(){
   const text = (state.devWinDraft||"").trim();
   if(!text) return;
-  const g = activeGoals();
   state.devWinDraft = "";
-  saveActiveGoals({ ...g, wins: [{ id:newId("win"), date: ymd(new Date()), text }, ...(g.wins||[])] });
+  mutateActiveGoals(g=>({ ...g, wins: [{ id:newId("win"), date: ymd(new Date()), text }, ...(g.wins||[])] }));
 }
 function removeDevGoalWin(id){
   if(!confirm("Remove this win?")) return;
-  const g = activeGoals();
-  saveActiveGoals({ ...g, wins: (g.wins||[]).filter(w=>w.id!==id) });
+  mutateActiveGoals(g=>({ ...g, wins: (g.wins||[]).filter(w=>w.id!==id) }));
 }
 function renderGoalBar(done, target, color){
   const pct = target ? Math.min(100, Math.round(done/target*100)) : 0;
   return `<div class="progress-bar" style="margin:4px 0;"><div style="width:${pct}%;background:${done>=target&&target?'var(--ok)':color||'var(--rose-dark)'};"></div></div>`;
 }
 function renderGoalsTab(){
+  refreshGoalsFromServerIfStale();
   const g = activeGoals();
   const year = g.year;
   const yStart = new Date(year,0,1), yEnd = new Date(year+1,0,1);
@@ -11367,7 +11417,13 @@ function renderAssistantRow(a){
             <input type="checkbox" ${a.isDevDirector?'checked':''} onchange="updateAssistantField('${a.id}','isDevDirector',this.checked)">
             Director of Development
           </label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Lets ${escHtml(a.name||'them')} connect their own Claude account to their own tasks, builds, goals and deadlines (nothing else). Turning this off cuts off an existing connection right away.">
+            <input type="checkbox" ${a.claudeConnectorEnabled?'checked':''} onchange="updateAssistantField('${a.id}','claudeConnectorEnabled',this.checked)">
+            Claude connector
+          </label>
+          ${a.claudeConnectorEnabled ? `<button class="secondary" style="padding:2px 10px;font-size:12px;" onclick="toggleConnectorActivity('${a.id}')">${state.connectorActivityOpen===a.id ? "Hide Claude activity" : "Claude activity"}</button>` : ""}
         </div>
+        ${state.connectorActivityOpen===a.id ? renderConnectorActivity(a.id) : ""}
       </div>
       ${onboarding.length ? `
         <div>
@@ -11381,6 +11437,42 @@ function renderAssistantRow(a){
         </div>` : ""}
     </div>
   `;
+}
+// Claude connector activity (admin Team tab): the last 25 changes the
+// connector made for this assistant, from connectorLog/{id}/entries
+// (written only by functions/claudeConnector.js).
+function toggleConnectorActivity(id){
+  if(state.connectorActivityOpen===id){ state.connectorActivityOpen = null; return render(); }
+  state.connectorActivityOpen = id;
+  state.connectorActivity = { id, loading:true, entries:[] };
+  render();
+  if(!db){
+    state.connectorActivity = { id, loading:false, entries: PREVIEW_MODE ? [
+      { at:new Date(Date.now()-3600000).toISOString(), summary:'"Draft homepage copy": status In progress → Done' },
+      { at:new Date(Date.now()-7200000).toISOString(), summary:'2027 March: added "Launch portfolio site"' },
+      { at:new Date(Date.now()-86400000).toISOString(), summary:"Signed in to connect Claude" }
+    ] : [] };
+    return render();
+  }
+  col("connectorLog").doc(id).collection("entries").orderBy("at","desc").limit(25).get().then(snap=>{
+    if(state.connectorActivityOpen!==id) return;
+    state.connectorActivity = { id, loading:false, entries: snap.docs.map(d=>d.data()) };
+    render();
+  }).catch(err=>{
+    console.warn("Couldn't load Claude activity:", err);
+    state.connectorActivity = { id, loading:false, entries:[], error:true };
+    render();
+  });
+}
+function renderConnectorActivity(id){
+  const act = state.connectorActivity && state.connectorActivity.id===id ? state.connectorActivity : { loading:true, entries:[] };
+  return `<div style="margin-top:8px;padding:10px;border:1px solid var(--cream-dark);border-radius:8px;">
+    <div class="small" style="font-weight:600;margin-bottom:4px;">Recent changes made through Claude</div>
+    ${act.loading ? `<div class="small">Loading…</div>`
+      : act.error ? `<div class="small" style="color:var(--danger);">Couldn't load activity — try again.</div>`
+      : act.entries.length ? act.entries.map(e=>`<div class="small" style="padding:3px 0;border-top:1px solid var(--cream-dark);"><span style="opacity:.7;">${new Date(e.at).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })}</span> · ${escHtml(e.summary||e.tool||"")}</div>`).join("")
+      : `<div class="small">Nothing yet.</div>`}
+  </div>`;
 }
 function updateAssistantCode(id, code){
   state.settings.assistants = state.settings.assistants.map(a=>a.id===id?{...a,accessCode:code}:a);
