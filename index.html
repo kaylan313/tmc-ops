@@ -93,6 +93,13 @@
   .login-box .logo{font-family:'Playfair Display',serif;font-size:26px;color:var(--brown-dark);margin-bottom:6px;}
   .login-box .tagline{font-size:13px;color:#8a7a72;margin-bottom:24px;}
   .role-btns{display:flex;flex-direction:column;gap:10px;margin-top:16px;}
+  .login-code{display:flex;flex-direction:column;gap:8px;text-align:left;margin-top:8px;}
+  .login-code label{font-size:13px;font-weight:600;color:var(--brown-dark);}
+  .login-code input{font-size:20px;letter-spacing:2px;text-align:center;padding:10px;}
+  .link-btn{background:none;border:0;padding:2px 0;color:var(--rose-dark);text-decoration:underline;font-size:13px;cursor:pointer;align-self:center;box-shadow:none;}
+  .link-btn:hover{background:none;}
+  html[data-theme="dark"] .login-code label{color:#f3e7dc;}
+  html[data-theme="dark"] .link-btn{color:var(--rose);}
   .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px;border-bottom:1px solid var(--cream-dark);}
   .tabs button{
     background:transparent;color:var(--brown);border-radius:8px 8px 0 0;padding:8px 16px;
@@ -3327,23 +3334,96 @@ function renderLogin(){
           <div class="alert danger" style="text-align:left;">
             Couldn't reach Firestore: ${state.firebaseError}
           </div>` : ""}
+        ${state.loginKind ? renderLoginCodeForm() : `
         <div class="role-btns">
           <button ${loginReady?'':'disabled'} onclick="promptLogin('admin')">Admin</button>
           <button class="secondary" ${loginReady?'':'disabled'} onclick="promptLogin('team')">Team Member</button>
           <button class="secondary" ${loginReady?'':'disabled'} onclick="promptLogin('client')">Client Portal</button>
           <button class="secondary" ${loginReady?'':'disabled'} onclick="promptLogin('vendor')">Vendor Portal</button>
-        </div>
+        </div>`}
         ${!loginReady ? `<div class="small" style="margin-top:10px;">${notReadyMessage()}</div>` : ""}
       </div>
     </div>`;
+  // The login screen re-renders when data finishes loading — keep the
+  // cursor (and the phone keyboard) where it was instead of dropping it.
+  const codeEl = document.getElementById("login_code");
+  if(codeEl) codeEl.value = state.loginCodeDraft || ""; // browsers can restore a stale typed value otherwise
+  if(state.loginKind && state.loginCodeFocused) focusLoginCode();
+}
+// Code entry happens on the page (not a browser prompt(), which can't ask
+// for a number keypad). Phones open the number keypad by default; "Use
+// full keyboard" switches for codes with letters. The choice is remembered
+// per device, so someone with a letters code only switches once.
+const LOGIN_CODE_LABELS = { admin:"Admin passcode", team:"Your access code", client:"Your client portal code", vendor:"Your vendor portal code" };
+function loginUsesKeypad(){
+  if(state.loginKeypad===undefined){
+    try{ state.loginKeypad = localStorage.getItem("tmcLoginKeyboard")!=="full"; }catch(e){ state.loginKeypad = true; }
+  }
+  return state.loginKeypad;
+}
+function renderLoginCodeForm(){
+  const keypad = loginUsesKeypad();
+  return `
+    <div class="login-code">
+      <label for="login_code">${LOGIN_CODE_LABELS[state.loginKind]}</label>
+      <input id="login_code" type="text" value="${escHtml(state.loginCodeDraft||'')}"
+        ${keypad ? 'inputmode="numeric" pattern="[0-9]*"' : 'inputmode="text"'}
+        autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+        oninput="state.loginCodeDraft=this.value"
+        onfocus="state.loginCodeFocused=true" onblur="state.loginCodeFocused=false"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();submitLoginCode();}if(event.key==='Escape')cancelLoginCode();">
+      <button type="button" class="link-btn" onclick="toggleLoginKeyboard()">${keypad ? "Use full keyboard (ABC)" : "Use number keypad (123)"}</button>
+      <div class="role-btns">
+        <button onclick="submitLoginCode()">Log in</button>
+        <button class="secondary" onclick="cancelLoginCode()">Back</button>
+      </div>
+    </div>`;
+}
+function focusLoginCode(){
+  const el = document.getElementById("login_code");
+  if(!el) return;
+  el.focus();
+  const n = el.value.length;
+  try{ el.setSelectionRange(n, n); }catch(e){}
 }
 function promptLogin(kind){
-  const code = prompt(kind==="admin" ? "Admin passcode:" : kind==="team" ? "Your access code:" : kind==="vendor" ? "Your vendor portal code:" : "Your client portal code:");
-  if(code===null) return;
-  if(kind==="admin") tryAdminLogin(code.trim());
-  else if(kind==="team") tryTeamLogin(code.trim());
-  else if(kind==="vendor") tryVendorLogin(code.trim());
-  else tryClientLogin(code.trim());
+  state.loginKind = kind;
+  state.loginCodeDraft = "";
+  state.loginCodeFocused = true;
+  render();
+}
+function cancelLoginCode(){
+  state.loginKind = null; state.loginCodeDraft = ""; state.loginCodeFocused = false;
+  render();
+}
+function toggleLoginKeyboard(){
+  state.loginKeypad = !loginUsesKeypad();
+  try{ localStorage.setItem("tmcLoginKeyboard", state.loginKeypad ? "keypad" : "full"); }catch(e){}
+  // Re-render swaps the field's inputmode; refocusing makes the phone
+  // reopen the keyboard in the new mode.
+  state.loginCodeFocused = true;
+  render();
+}
+function submitLoginCode(){
+  const kind = state.loginKind;
+  const code = (state.loginCodeDraft||"").trim();
+  if(!kind) return;
+  if(!code){ focusLoginCode(); return; }
+  // A successful login switches the view away from this screen; on a wrong
+  // code the box stays open (cleared) for another try.
+  state.loginCodeDraft = "";
+  state.loginCodeFocused = false;
+  if(kind==="admin") tryAdminLogin(code);
+  else if(kind==="team") tryTeamLogin(code);
+  else if(kind==="vendor") tryVendorLogin(code);
+  else tryClientLogin(code);
+  if(state.view!=="login"){ state.loginKind = null; return; }
+  // render() keeps a focused field's typed text across redraws — release
+  // the box first so the wrong code actually clears, then focus it again.
+  const el = document.getElementById("login_code");
+  if(el) el.blur();
+  state.loginCodeFocused = true;
+  render();
 }
 
 // Director of Software Development & Web Design — a team member (not admin)
