@@ -67,6 +67,16 @@ service cloud.firestore {
     // it. Cloud Functions only — same reasoning as qbTokens/gmailTokens.
     match /calendarTokens/{document=**} { allow read, write: if false; }
     match /calendarOAuthStates/{document=**} { allow read, write: if false; }
+    // Claude connector (functions/claudeConnector.js): OAuth clients, auth
+    // codes, access/refresh tokens and the wrong-code lockout counter are
+    // Cloud Functions only — a token here IS access to someone's portal.
+    match /connectorClients/{document=**} { allow read, write: if false; }
+    match /connectorCodes/{document=**} { allow read, write: if false; }
+    match /connectorTokens/{document=**} { allow read, write: if false; }
+    match /connectorLoginAttempts/{document=**} { allow read, write: if false; }
+    // Activity log of every change Claude made, shown to admin on the Team
+    // tab. Written only by the function; read by the app.
+    match /connectorLog/{document=**} { allow read: if request.auth != null; allow write: if false; }
     // Auto-written by logSettingsHistory (functions/index.js) after every
     // change to settings/access — a full snapshot trail for recovering from
     // exactly the kind of incident that made this collection necessary in

@@ -1677,3 +1677,12 @@ exports.disconnectGoogleCalendar = onCall(async (request) => {
   await calendarTokenRef(assistantId).delete();
   return { status: { connected: false } };
 });
+
+// Claude connector: lets an assistant's own Claude account read and update
+// their own tasks, builds, goals and deadlines (nothing else). All logic
+// and scoping live in claudeConnector.js; see the comment at its top.
+// Give Claude this function's run.app URL + "/mcp" (not the
+// cloudfunctions.net one), and grant allUsers the Cloud Run Invoker role on
+// it — the connector does its own sign-in and token checks.
+const { createClaudeConnector } = require("./claudeConnector");
+exports.claudeConnector = onRequest({ cors: false }, createClaudeConnector({ getDb: () => admin.firestore() }));

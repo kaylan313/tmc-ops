@@ -128,6 +128,17 @@ Checked against Intuit's published security requirements for App Store listing:
   3. OAuth consent screen → add the three calendar scopes above. If the app is "External/Testing", add each assistant's Google address as a test user (or set it to Internal if everyone is on the themodernconcierge.co Workspace).
   4. `firebase deploy --only functions,firestore:rules,hosting` from `tmc-ops/` on the machine with `functions/.env.modern-co-dashboard` (hosting = `public/calendar-connected.html`).
 - Same per-role gap as everything else: the callables trust the `assistantId` the app sends (see Security → Known remaining gap).
+- **Cloud Run Invoker:** after the first deploy, the 7 calendar HTTP/callable services needed `allUsers` → Cloud Run Invoker set by hand (the deploy didn't set it). The two Firestore-trigger functions (`synccalendaronclientwrite`, `synccalendarontaskwrite`) must stay private.
+
+## Claude connector (per-assistant, own data only)
+
+- `functions/claudeConnector.js`, exported as `claudeConnector` (an `onRequest` function). It's a remote MCP server plus the small OAuth 2.1 server Claude's custom connectors need (metadata discovery, dynamic client registration limited to claude.ai/claude.com redirect URIs, PKCE codes, 1-hour access tokens, rotating 30-day refresh tokens).
+- **Scope is enforced server-side, by construction.** Every tool loads by the assistantId bound to the token: tasks assigned to them, builds where `buildAssistantId` is them (no money fields), their Goals page (Dev Director only), their deadlines. There's no tool for other people, payroll, QuickBooks, billing, contracts, codes, vendors, card purchases or settings. Writes touch only allow-listed fields. Claude can set task status to To do / Researching / In progress / Paused / Done only; "Pending approval" and "Needs Client Review" stay manual.
+- **Who can connect:** admin ticks **Claude connector** in that person's Roles on the Team tab (`claudeConnectorEnabled`). They sign in once on the connector's page with their own access code (8 wrong tries per IP = 15-minute lockout; the admin passcode is never accepted). Unticking cuts access on the next request.
+- **Activity:** every change is logged to `connectorLog/{assistantId}/entries`, shown under **Claude activity** on the Team tab.
+- **Storage:** `connectorClients`, `connectorCodes`, `connectorTokens` (stored as sha256 hashes) and `connectorLoginAttempts` are rules-denied; `connectorLog` is read-only to the app.
+- **Goals and concurrency:** settings/access is loaded once at boot, so app goal edits go through `mutateActiveGoals(fn)`, which re-reads the latest goals in a transaction before saving. That keeps connector edits from being overwritten by a stale browser. The Goals tab also refetches goals at most every 30s.
+- **Setup (after deploying functions + rules):** (1) grant `allUsers` the **Cloud Run Invoker** role on the `claudeconnector` Cloud Run service; (2) tick Claude connector for the person; (3) in Claude: Settings → Connectors → Add custom connector, URL = the function's **run.app** URL + `/mcp` (from the deploy output or Cloud Run). Not the cloudfunctions.net URL, because OAuth discovery needs `/.well-known/…` at the host root. On a Team/Enterprise Claude plan, an owner may need to add it for the workspace first.
 
 ## Working Conventions
 
