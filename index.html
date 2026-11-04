@@ -5683,9 +5683,13 @@ function addVendorTicketComment(vendorId, ticketId, author, text){
   mutateVendorTicket(vendorId, ticketId, t=>({...t, discussion:[...(t.discussion||[]), comment]}));
 }
 function removeVendorTicket(vendorId, ticketId){
-  if(!confirm("Remove this request? This can't be undone.")) return;
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
   if(!vendor) return;
+  const ticket = (vendor.tickets||[]).find(t=>t.id===ticketId);
+  // Paid & closed is a financial record (charge amount, payout, receipts) —
+  // once it's there, it stays there instead of being removable by mistake.
+  if(ticket && vendorTicketStage(ticket)==="paid"){ alert("This request is paid and closed — it's kept on record and can't be removed."); return; }
+  if(!confirm("Remove this request? This can't be undone.")) return;
   upsert("vendors", vendorId, { tickets:(vendor.tickets||[]).filter(t=>t.id!==ticketId) });
 }
 // All tickets across every vendor, newest first — used by both the
@@ -5776,7 +5780,7 @@ function renderVendorTicketRow({vendor, ticket, client}){
         </div>
         <span class="small" style="white-space:nowrap;">step ${step} of ${VENDOR_TICKET_STAGES.length}</span>
       </div>
-      <div class="small">${vendorTicketNextStep(stage, ticket, vendor)}</div>
+      <div class="small">${vendorTicketNextStep(stage, ticket, vendor)}${(ticket.receipts||[]).length ? ` · 📎 ${ticket.receipts.length} receipt${ticket.receipts.length===1?'':'s'}` : ''}</div>
     </div>
   `;
 }
@@ -5957,7 +5961,9 @@ function renderVendorTicketDetailModal(vendorId, ticketId){
         ${ticket.receipts.map(r=>`<div class="small">📎 <a href="${r.dataUrl}" download="${r.name}">${escHtml(r.name||'receipt')}</a> — ${new Date(r.uploadedAt).toLocaleDateString()}</div>`).join("")}
       </div>` : ""}
       ${renderVendorTicketDiscussion(vendor.id, ticket)}
-      ${isAdmin ? `<div style="margin-top:14px;"><button class="danger" onclick="removeVendorTicket('${vendor.id}','${ticket.id}');closeModal();">Remove request</button></div>` : ""}
+      ${isAdmin ? (vendorTicketStage(ticket)==="paid"
+        ? `<div class="small" style="margin-top:14px;">Paid &amp; closed — kept on record, including its receipts.</div>`
+        : `<div style="margin-top:14px;"><button class="danger" onclick="removeVendorTicket('${vendor.id}','${ticket.id}');closeModal();">Remove request</button></div>`) : ""}
     </div>
   `;
 }
