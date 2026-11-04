@@ -5606,11 +5606,33 @@ function vendorTicketRequester(ticket){
   const asst = ticket.requestedByAssistantId && (state.settings.assistants||[]).find(a=>a.id===ticket.requestedByAssistantId);
   return { name: asst ? asst.name : (ticket.requestedByName||""), phone: asst ? (asst.phone||"") : "" };
 }
-function updateVendorTicketFields(vendorId, ticketId, patch){
+// Every vendor-ticket edit goes through here: `tickets` is one array field
+// on the vendor doc, so two quick writes racing off a possibly-stale local
+// copy (e.g. a vendor uploading two receipts back to back) would make
+// whichever write lands second silently overwrite the first — the classic
+// symptom being "I uploaded a second receipt and the first one vanished."
+// Re-read the latest tickets inside a Firestore transaction before applying
+// the edit, same pattern as mutateActiveGoals. Shows instantly locally; the
+// screen then catches up with anything that changed elsewhere.
+function mutateVendorTicket(vendorId, ticketId, fn){
   const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
   if(!vendor) return;
-  const tickets = (vendor.tickets||[]).map(t=>t.id===ticketId?{...t,...patch}:t);
-  upsert("vendors", vendorId, { tickets });
+  state.vendors = state.vendors.map(v=>v.id===vendorId?{...v, tickets:(v.tickets||[]).map(t=>t.id===ticketId?fn(t):t)}:v);
+  render();
+  if(!db) return;
+  const ref = col("vendors").doc(vendorId);
+  db.runTransaction(async tx=>{
+    const snap = await tx.get(ref);
+    const data = snap.exists ? snap.data() : {};
+    const tickets = (data.tickets||[]).map(t=>t.id===ticketId?fn(t):t);
+    tx.set(ref, { tickets }, { merge:true });
+  }).catch(err=>{
+    console.warn("Vendor ticket update failed:", err);
+    alert("This didn't save — " + err.message + "\n\nCheck your connection and try again. If it keeps happening, tell Kaylan.");
+  });
+}
+function updateVendorTicketFields(vendorId, ticketId, patch){
+  mutateVendorTicket(vendorId, ticketId, t=>({...t, ...patch}));
 }
 function updateVendorTicketField(vendorId, ticketId, field, value){
   updateVendorTicketFields(vendorId, ticketId, { [field]: value });
@@ -5636,23 +5658,14 @@ function markVendorTicketPaid(vendorId, ticketId, paid){
   updateVendorTicketFields(vendorId, ticketId, { vendorPaid: paid, vendorPaidAt: paid ? new Date().toISOString() : null });
 }
 function addVendorTicketReceipt(vendorId, ticketId, receipt){
-  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
-  if(!vendor) return;
-  const tickets = (vendor.tickets||[]).map(t=>t.id===ticketId?{...t, receipts:[...(t.receipts||[]), receipt]}:t);
-  upsert("vendors", vendorId, { tickets });
+  mutateVendorTicket(vendorId, ticketId, t=>({...t, receipts:[...(t.receipts||[]), receipt]}));
 }
 function removeVendorTicketReceipt(vendorId, ticketId, receiptId){
-  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
-  if(!vendor) return;
-  const tickets = (vendor.tickets||[]).map(t=>t.id===ticketId?{...t, receipts:(t.receipts||[]).filter(r=>r.id!==receiptId)}:t);
-  upsert("vendors", vendorId, { tickets });
+  mutateVendorTicket(vendorId, ticketId, t=>({...t, receipts:(t.receipts||[]).filter(r=>r.id!==receiptId)}));
 }
 function addVendorTicketComment(vendorId, ticketId, author, text){
-  const vendor = (state.vendors||[]).find(v=>v.id===vendorId);
-  if(!vendor) return;
   const comment = { id:newId("vcomment"), author, text, date:new Date().toISOString() };
-  const tickets = (vendor.tickets||[]).map(t=>t.id===ticketId?{...t, discussion:[...(t.discussion||[]), comment]}:t);
-  upsert("vendors", vendorId, { tickets });
+  mutateVendorTicket(vendorId, ticketId, t=>({...t, discussion:[...(t.discussion||[]), comment]}));
 }
 function removeVendorTicket(vendorId, ticketId){
   if(!confirm("Remove this request? This can't be undone.")) return;
