@@ -3804,17 +3804,33 @@ function renderDocsLeadColumn(assistant, d){
 // merge can't remove a map key, which would make Undo silently not stick.
 // Admin logins are shared, so it asks for a name rather than just "Admin".
 function billingCheckKey(date){ return toLocalDateInputValue(date.toISOString()); }
+// Cycles that started before this date are never listed as unconfirmed:
+// until then the Clients tab had a "Charged" checkbox for catching up, and
+// the card only showed today's charges, so older cycles were handled (or
+// deliberately skipped) there. Without a cutoff, every client's past
+// cycles would flood the card the day this shipped.
+const BILLING_CHECKS_TRACKED_FROM = "2026-11-04";
 function billingCheckRows(){
   const today = new Date(); today.setHours(0,0,0,0);
   const weekOut = new Date(today.getTime() + 7*86400000);
+  const trackedFrom = parseYMD(BILLING_CHECKS_TRACKED_FROM);
   const rows = { due:[], upcoming:[], done:[], noDate:0 };
   state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active")).forEach(client=>{
     const period = currentBillingPeriod(client);
     if(!period){ rows.noDate++; return; }
-    const key = billingCheckKey(period.start);
-    const check = (client.billingChecks||[]).find(b=>b.key===key);
-    if(check) rows.done.push({ client, date: period.start, key, check });
-    else rows.due.push({ client, date: period.start, key, days: Math.round((today - period.start)/86400000) });
+    const checks = client.billingChecks||[];
+    const anchor = parseYMD(client.renewalDate);
+    // Walk back from the current cycle so a missed charge stays listed
+    // until someone clicks Complete, even after the next cycle starts.
+    let p = period;
+    while(p && p.start >= trackedFrom){
+      const key = billingCheckKey(p.start);
+      const check = checks.find(b=>b.key===key);
+      if(check){ if(p===period) rows.done.push({ client, date: p.start, key, check }); }
+      else rows.due.push({ client, date: p.start, key, days: Math.round((today - p.start)/86400000) });
+      if(p.start.getTime() <= anchor.getTime()) break;
+      p = currentBillingPeriod(client, new Date(p.start.getTime()-1));
+    }
     if(period.end <= weekOut) rows.upcoming.push({ client, date: period.end });
   });
   rows.due.sort((a,b)=>a.date-b.date);
@@ -3838,20 +3854,25 @@ function undoBillingCheck(clientId, key){
   if(!client) return;
   upsert("clients", clientId, { billingChecks: (client.billingChecks||[]).filter(b=>b.key!==key) });
 }
-// Dashboard only surfaces clients whose charge date is today.
+// Dashboard lists every charge that's due and not yet confirmed — today's
+// plus any earlier ones nobody clicked Complete on — oldest first, so a
+// missed day never silently drops off.
 function renderBillingChecksCard(){
-  const dueToday = billingCheckRows().due.filter(x=>x.days===0);
-  if(!dueToday.length) return "";
+  const due = billingCheckRows().due;
+  if(!due.length) return "";
+  const overdue = due.filter(x=>x.days>0).length;
   return `
     <div class="card">
       <div class="flex-between">
-        <h3 style="margin:0;">Membership charges due today</h3>
-        <span class="small">${dueToday.length} to confirm</span>
+        <h3 style="margin:0;">Membership charges to confirm</h3>
+        <span class="small">${due.length} to confirm${overdue ? ` · <span style="color:var(--danger);font-weight:600;">${overdue} overdue</span>` : ""}</span>
       </div>
-      <div class="small" style="margin:4px 0 8px;">Confirm in QuickBooks, then click Complete.</div>
-      ${dueToday.map(({client,key})=>`
+      <div class="small" style="margin:4px 0 8px;">Confirm in QuickBooks, then click Complete. Each one stays here until it's completed.</div>
+      ${due.map(({client,key,date,days})=>`
         <div class="list-item">
-          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${cycleLabel(client.cycleType)}</span></div>
+          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${cycleLabel(client.cycleType)}</span>
+            <div class="small" ${days>0?'style="color:var(--danger);font-weight:600;"':''}>${days>0 ? `Charge date ${date.toLocaleDateString()} · ${days} day${days===1?'':'s'} overdue` : "Due today"}</div>
+          </div>
           <button onclick="markBillingCheckComplete('${client.id}','${key}')">Complete</button>
         </div>`).join("")}
     </div>`;
