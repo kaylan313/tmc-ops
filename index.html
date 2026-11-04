@@ -306,7 +306,22 @@
   .dlcal-form input,.dlcal-form select,.dlcal-form textarea{width:100%;}
   .dlcal-check{display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;}
   .dlcal-check input{width:auto;margin:0;}
+  .dlcal-viewsw{display:inline-flex;border:1px solid var(--cream-dark);border-radius:8px;overflow:hidden;}
+  .dlcal-viewsw button{border-radius:0;padding:5px 12px;font-size:13px;}
+  .dlcal-viewsw button:not(.on){background:transparent;color:inherit;}
+  .dlcal-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+  .dlcal-wday{min-height:240px;min-width:0;background:var(--surface,#fff);border:1px solid var(--cream-dark);border-radius:8px;padding:6px;cursor:pointer;}
+  .dlcal-wday.sel{outline:2px solid var(--rose);outline-offset:-1px;}
+  .dlcal-whead{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+  .dlcal-whead .dlcal-dow{padding:0;}
+  .dlcal-wday.today .dlcal-num{background:var(--brown);color:var(--cream);}
+  .dlcal-week .dlcal-chip{white-space:normal;font-size:12px;padding:2px 5px;margin-top:4px;}
+  .dlcal-wempty{font-size:11px;color:#8a7a72;margin-top:4px;}
   @media (max-width:640px){
+    .dlcal-week{grid-template-columns:1fr;}
+    .dlcal-wday{min-height:0;}
+    .dlcal-week .dlcal-chip{font-size:13px;height:auto;padding:3px 6px;border-left:3px solid var(--c,var(--rose));background:var(--cream-dark);}
+    .dlcal-week .dlcal-chip.overdue{border-left-color:var(--danger);background:var(--cream-dark);}
     .dlcal-day{min-height:58px;padding:3px;}
     .dlcal-dow{font-size:10px;letter-spacing:0;}
     .dlcal-chip{font-size:0;height:5px;padding:0;border-left:0;background:var(--c,var(--rose));}
@@ -3804,17 +3819,33 @@ function renderDocsLeadColumn(assistant, d){
 // merge can't remove a map key, which would make Undo silently not stick.
 // Admin logins are shared, so it asks for a name rather than just "Admin".
 function billingCheckKey(date){ return toLocalDateInputValue(date.toISOString()); }
+// Cycles that started before this date are never listed as unconfirmed:
+// until then the Clients tab had a "Charged" checkbox for catching up, and
+// the card only showed today's charges, so older cycles were handled (or
+// deliberately skipped) there. Without a cutoff, every client's past
+// cycles would flood the card the day this shipped.
+const BILLING_CHECKS_TRACKED_FROM = "2026-11-04";
 function billingCheckRows(){
   const today = new Date(); today.setHours(0,0,0,0);
   const weekOut = new Date(today.getTime() + 7*86400000);
+  const trackedFrom = parseYMD(BILLING_CHECKS_TRACKED_FROM);
   const rows = { due:[], upcoming:[], done:[], noDate:0 };
   state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active")).forEach(client=>{
     const period = currentBillingPeriod(client);
     if(!period){ rows.noDate++; return; }
-    const key = billingCheckKey(period.start);
-    const check = (client.billingChecks||[]).find(b=>b.key===key);
-    if(check) rows.done.push({ client, date: period.start, key, check });
-    else rows.due.push({ client, date: period.start, key, days: Math.round((today - period.start)/86400000) });
+    const checks = client.billingChecks||[];
+    const anchor = parseYMD(client.renewalDate);
+    // Walk back from the current cycle so a missed charge stays listed
+    // until someone clicks Complete, even after the next cycle starts.
+    let p = period;
+    while(p && p.start >= trackedFrom){
+      const key = billingCheckKey(p.start);
+      const check = checks.find(b=>b.key===key);
+      if(check){ if(p===period) rows.done.push({ client, date: p.start, key, check }); }
+      else rows.due.push({ client, date: p.start, key, days: Math.round((today - p.start)/86400000) });
+      if(p.start.getTime() <= anchor.getTime()) break;
+      p = currentBillingPeriod(client, new Date(p.start.getTime()-1));
+    }
     if(period.end <= weekOut) rows.upcoming.push({ client, date: period.end });
   });
   rows.due.sort((a,b)=>a.date-b.date);
@@ -3838,44 +3869,28 @@ function undoBillingCheck(clientId, key){
   if(!client) return;
   upsert("clients", clientId, { billingChecks: (client.billingChecks||[]).filter(b=>b.key!==key) });
 }
-// Dashboard only surfaces clients whose charge date is today — anything
-// overdue or upcoming is tracked instead by the persistent checkbox next to
-// each client's name on the Clients tab (renderClientListItem), so the
-// dashboard doesn't accumulate a growing backlog card.
+// Dashboard lists every charge that's due and not yet confirmed — today's
+// plus any earlier ones nobody clicked Complete on — oldest first, so a
+// missed day never silently drops off.
 function renderBillingChecksCard(){
-  const dueToday = billingCheckRows().due.filter(x=>x.days===0);
-  if(!dueToday.length) return "";
+  const due = billingCheckRows().due;
+  if(!due.length) return "";
+  const overdue = due.filter(x=>x.days>0).length;
   return `
     <div class="card">
       <div class="flex-between">
-        <h3 style="margin:0;">Membership charges due today</h3>
-        <span class="small">${dueToday.length} to confirm</span>
+        <h3 style="margin:0;">Membership charges to confirm</h3>
+        <span class="small">${due.length} to confirm${overdue ? ` · <span style="color:var(--danger);font-weight:600;">${overdue} overdue</span>` : ""}</span>
       </div>
-      <div class="small" style="margin:4px 0 8px;">Confirm in QuickBooks, then click Complete. You can also check any client off from the Clients tab at any time.</div>
-      ${dueToday.map(({client,key})=>`
+      <div class="small" style="margin:4px 0 8px;">Confirm in QuickBooks, then click Complete. Each one stays here until it's completed.</div>
+      ${due.map(({client,key,date,days})=>`
         <div class="list-item">
-          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${cycleLabel(client.cycleType)}</span></div>
+          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${cycleLabel(client.cycleType)}</span>
+            <div class="small" ${days>0?'style="color:var(--danger);font-weight:600;"':''}>${days>0 ? `Charge date ${date.toLocaleDateString()} · ${days} day${days===1?'':'s'} overdue` : "Due today"}</div>
+          </div>
           <button onclick="markBillingCheckComplete('${client.id}','${key}')">Complete</button>
         </div>`).join("")}
     </div>`;
-}
-// Used by the Clients-tab checkbox (renderClientListItem) — same cycle-start
-// key as the dashboard card above, so checking it off in either place agrees.
-function clientBillingCheckState(client){
-  const period = currentBillingPeriod(client);
-  if(!period) return null;
-  const key = billingCheckKey(period.start);
-  const check = (client.billingChecks||[]).find(b=>b.key===key);
-  return { period, key, check };
-}
-// A native checkbox toggles itself on click before our handler runs; since
-// markBillingCheckComplete can be cancelled (prompt), we preventDefault and
-// drive the checked state entirely from billingChecks via the next render.
-function billingCheckboxClicked(ev, clientId, key, wasChecked){
-  ev.preventDefault();
-  ev.stopPropagation();
-  if(wasChecked) undoBillingCheck(clientId, key);
-  else markBillingCheckComplete(clientId, key);
 }
 // ---- Background check reminder (admin) ----
 // Fires 3 weeks after hireDate so whoever's on the Dashboard remembers to
@@ -6658,7 +6673,6 @@ function renderClientListItem(c){
   const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
   const notStarted = c.id!==INTERNAL_CLIENT_ID && isNotStartedClient(c);
   const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
-  const billing = (c.id!==INTERNAL_CLIENT_ID && state.role==="admin") ? clientBillingCheckState(c) : null;
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
       <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
@@ -6668,10 +6682,6 @@ function renderClientListItem(c){
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
       ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
-      ${billing ? `<label class="small" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;" title="${billing.check ? `Charged ${billing.period.start.toLocaleDateString()} — confirmed by ${(billing.check.completedBy||'Admin').replace(/"/g,'&quot;')}` : `Charge date ${billing.period.start.toLocaleDateString()}`}">
-        <input type="checkbox" ${billing.check?'checked':''} onclick="billingCheckboxClicked(event,'${c.id}','${billing.key}',${!!billing.check})">
-        Charged
-      </label>` : ""}
     </div>
   </div>`;
 }
@@ -10514,6 +10524,31 @@ function shiftCalendarMonth(delta){
   render();
 }
 function calendarGoToToday(){ const t = calYMD(new Date()); state.calMonth = t.slice(0,7); state.calSelectedDay = t; render(); }
+// Month / Week view, remembered per browser. Week view shows the Sun–Sat
+// week containing the selected day; calMonth follows that day so the
+// Google events fetch (calendarMonthRange pads a week each side) covers it.
+function calendarView(){
+  if(!state.calView){ try { state.calView = localStorage.getItem("tmcCalView")==="week" ? "week" : "month"; } catch(e){ state.calView = "month"; } }
+  return state.calView;
+}
+function setCalendarView(v){
+  state.calView = v==="week" ? "week" : "month";
+  try { localStorage.setItem("tmcCalView", state.calView); } catch(e){}
+  if(state.calView==="week" && state.calSelectedDay && state.calSelectedDay.slice(0,7)!==state.calMonth){
+    const t = calYMD(new Date());
+    state.calSelectedDay = t.slice(0,7)===state.calMonth ? t : state.calMonth+"-01";
+  }
+  render();
+}
+function shiftCalendar(delta){
+  if(calendarView()!=="week") return shiftCalendarMonth(delta);
+  const d = parseYMD(state.calSelectedDay);
+  d.setDate(d.getDate()+7*delta);
+  state.calSelectedDay = calYMD(d);
+  state.calMonth = state.calSelectedDay.slice(0,7);
+  render();
+}
+function selectCalendarWeekDay(ymd){ state.calSelectedDay = ymd; state.calMonth = ymd.slice(0,7); render(); }
 function selectCalendarDay(ymd){ state.calSelectedDay = ymd; render(); }
 function setCalendarAssistantFilter(id){ state.calendarAssistantFilter = id; render(); }
 
@@ -10573,6 +10608,29 @@ function renderCalendarTab(){
     </div>`);
   }
 
+  const view = calendarView();
+  const sel = parseYMD(state.calSelectedDay);
+  const weekStart = new Date(sel.getFullYear(), sel.getMonth(), sel.getDate()-sel.getDay());
+  const weekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate()+6);
+  const weekCells = [];
+  if(view==="week") for(let i=0;i<7;i++){
+    const d = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate()+i);
+    const key = calYMD(d);
+    const dayItems = byDay[key] || [];
+    weekCells.push(`<div class="dlcal-wday ${key===todayKey?'today':''} ${key===state.calSelectedDay?'sel':''}" onclick="selectCalendarWeekDay('${key}')">
+      <div class="dlcal-whead"><span class="dlcal-dow">${d.toLocaleDateString([], { weekday:"short" })}</span><span class="dlcal-num">${d.getDate()}</span></div>
+      ${dayItems.map(it=>{
+        const overdue = it.kind!=="google" && !it.done && it.date < todayKey;
+        return `<div class="dlcal-chip ${it.done?'done':''} ${overdue?'overdue':''}" style="--c:${escHtml(it.color||CALENDAR_LAYER_COLORS[it.kind])};" title="${escHtml(it.title||'')}">${it.time?`<strong>${it.time}</strong> `:""}${escHtml(it.title||"")}</div>`;
+      }).join("") || `<div class="dlcal-wempty">—</div>`}
+    </div>`);
+  }
+  const sameMonth = weekStart.getMonth()===weekEnd.getMonth();
+  const md = d => d.toLocaleDateString([], { month:"short", day:"numeric" });
+  const weekLabel = weekStart.getFullYear()!==weekEnd.getFullYear()
+    ? `${md(weekStart)}, ${weekStart.getFullYear()} – ${md(weekEnd)}, ${weekEnd.getFullYear()}`
+    : `${md(weekStart)} – ${sameMonth ? weekEnd.getDate() : md(weekEnd)}, ${weekEnd.getFullYear()}`;
+
   const selectedItems = byDay[state.calSelectedDay] || [];
   const in14 = calYMD(new Date(Date.now()+14*86400000));
   const upcoming = sortCalendarItems(items.filter(it=>it.kind!=="google" && !it.done && it.date<=in14));
@@ -10608,16 +10666,20 @@ function renderCalendarTab(){
     <div class="card">
       <div class="dlcal-toolbar">
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="secondary" onclick="shiftCalendarMonth(-1)" aria-label="Previous month">‹</button>
-          <button class="secondary" onclick="shiftCalendarMonth(1)" aria-label="Next month">›</button>
+          <button class="secondary" onclick="shiftCalendar(-1)" aria-label="Previous ${view}">‹</button>
+          <button class="secondary" onclick="shiftCalendar(1)" aria-label="Next ${view}">›</button>
           <button class="secondary" onclick="calendarGoToToday()">Today</button>
         </div>
-        <h3 style="margin:0;">${monthLabel}</h3>
+        <h3 style="margin:0;">${view==="week" ? weekLabel : monthLabel}</h3>
+        <div class="dlcal-viewsw" role="group" aria-label="Calendar view">
+          <button class="${view==="month"?'on':''}" onclick="setCalendarView('month')" aria-pressed="${view==="month"}">Month</button>
+          <button class="${view==="week"?'on':''}" onclick="setCalendarView('week')" aria-pressed="${view==="week"}">Week</button>
+        </div>
       </div>
-      <div class="dlcal-grid">
+      ${view==="week" ? `<div class="dlcal-week">${weekCells.join("")}</div>` : `<div class="dlcal-grid">
         ${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div class="dlcal-dow">${d}</div>`).join("")}
         ${cells.join("")}
-      </div>
+      </div>`}
     </div>
 
     <div class="dlcal-lists">
