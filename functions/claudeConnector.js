@@ -489,6 +489,54 @@ ${hidden}
       },
     },
     {
+      name: "create_task",
+      description: "Create a new Task Board task, assigned to ME only. Omit client_id for an internal (non-client) TMC task.",
+      inputSchema: { type: "object", properties: {
+        title: str("The task title."),
+        client_id: str("An existing active client's id (see list_my_builds, or ask me for it). Omit for an internal TMC task."),
+        category: { type: "string", enum: ["Home", "Business"], description: "Defaults to Business." },
+        description: str("Optional description."),
+        due_date: str("YYYY-MM-DD, optional."),
+        priority: { type: "boolean", description: "Flag as priority." },
+      }, required: ["title"], additionalProperties: false },
+      annotations: { title: "Create a task", readOnlyHint: false, destructiveHint: false },
+      async run(db, ctx, a) {
+        const title = String(a.title || "").trim();
+        if (!title) throw new ToolError("title is required.");
+        const category = a.category || "Business";
+        if (!["Home", "Business"].includes(category)) throw new ToolError("category must be Home or Business.");
+        const dueDate = a.due_date || "";
+        if (dueDate && !YMD_RE.test(dueDate)) throw new ToolError("due_date must be YYYY-MM-DD.");
+        let clientId = a.client_id || "internal", clientLabel = "Internal (TMC)";
+        if (clientId !== "internal") {
+          const clients = await clientNames(db);
+          const c = clients[clientId];
+          if (!c || c.status !== "active") throw new ToolError("No active client with that client_id. Omit client_id for an internal task.");
+          clientLabel = c.name;
+        }
+        const taskId = newId("task");
+        const counterRef = db.collection("settings").doc("taskCounter");
+        const taskRef = db.collection("tasks").doc(taskId);
+        const taskNumber = await db.runTransaction(async (tx) => {
+          const snap = await tx.get(counterRef);
+          const next = (snap.exists ? (snap.data().value || 0) : 0) + 1;
+          tx.set(counterRef, { value: next }, { merge: true });
+          tx.set(taskRef, {
+            title, clientId, category, status: "To do",
+            description: clip(String(a.description || "").trim(), 2000), privateNotes: "",
+            dueDate, priority: !!a.priority, goodForContent: false, goodForContentNote: "",
+            taskNumber: next, assignees: [ctx.assistant.id],
+            assignmentAcks: [{ assistantId: ctx.assistant.id, ackedAt: new Date(now()).toISOString() }],
+            subtasks: [], discussion: [], completedAt: null,
+            createdAt: new Date(now()).toISOString(),
+          });
+          return next;
+        });
+        await logChange(db, ctx.assistant.id, "create_task", `Created "${title}"${clientId !== "internal" ? ` for ${clientLabel}` : ""} (#${taskNumber})`);
+        return { ok: true, task_id: taskId, number: taskNumber, title, client: clientLabel, category, status: "To do", due_date: dueDate || null };
+      },
+    },
+    {
       name: "list_my_builds",
       description: "List builds assigned to me, with each to-do, its phase, done state and due date (from the build's Day 1). No financial details are included.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
