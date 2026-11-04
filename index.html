@@ -306,7 +306,22 @@
   .dlcal-form input,.dlcal-form select,.dlcal-form textarea{width:100%;}
   .dlcal-check{display:flex;align-items:center;gap:6px;font-size:14px;cursor:pointer;}
   .dlcal-check input{width:auto;margin:0;}
+  .dlcal-viewsw{display:inline-flex;border:1px solid var(--cream-dark);border-radius:8px;overflow:hidden;}
+  .dlcal-viewsw button{border-radius:0;padding:5px 12px;font-size:13px;}
+  .dlcal-viewsw button:not(.on){background:transparent;color:inherit;}
+  .dlcal-week{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;}
+  .dlcal-wday{min-height:240px;min-width:0;background:var(--surface,#fff);border:1px solid var(--cream-dark);border-radius:8px;padding:6px;cursor:pointer;}
+  .dlcal-wday.sel{outline:2px solid var(--rose);outline-offset:-1px;}
+  .dlcal-whead{display:flex;align-items:center;gap:6px;margin-bottom:4px;}
+  .dlcal-whead .dlcal-dow{padding:0;}
+  .dlcal-wday.today .dlcal-num{background:var(--brown);color:var(--cream);}
+  .dlcal-week .dlcal-chip{white-space:normal;font-size:12px;padding:2px 5px;margin-top:4px;}
+  .dlcal-wempty{font-size:11px;color:#8a7a72;margin-top:4px;}
   @media (max-width:640px){
+    .dlcal-week{grid-template-columns:1fr;}
+    .dlcal-wday{min-height:0;}
+    .dlcal-week .dlcal-chip{font-size:13px;height:auto;padding:3px 6px;border-left:3px solid var(--c,var(--rose));background:var(--cream-dark);}
+    .dlcal-week .dlcal-chip.overdue{border-left-color:var(--danger);background:var(--cream-dark);}
     .dlcal-day{min-height:58px;padding:3px;}
     .dlcal-dow{font-size:10px;letter-spacing:0;}
     .dlcal-chip{font-size:0;height:5px;padding:0;border-left:0;background:var(--c,var(--rose));}
@@ -10496,6 +10511,31 @@ function shiftCalendarMonth(delta){
   render();
 }
 function calendarGoToToday(){ const t = calYMD(new Date()); state.calMonth = t.slice(0,7); state.calSelectedDay = t; render(); }
+// Month / Week view, remembered per browser. Week view shows the Sun–Sat
+// week containing the selected day; calMonth follows that day so the
+// Google events fetch (calendarMonthRange pads a week each side) covers it.
+function calendarView(){
+  if(!state.calView){ try { state.calView = localStorage.getItem("tmcCalView")==="week" ? "week" : "month"; } catch(e){ state.calView = "month"; } }
+  return state.calView;
+}
+function setCalendarView(v){
+  state.calView = v==="week" ? "week" : "month";
+  try { localStorage.setItem("tmcCalView", state.calView); } catch(e){}
+  if(state.calView==="week" && state.calSelectedDay && state.calSelectedDay.slice(0,7)!==state.calMonth){
+    const t = calYMD(new Date());
+    state.calSelectedDay = t.slice(0,7)===state.calMonth ? t : state.calMonth+"-01";
+  }
+  render();
+}
+function shiftCalendar(delta){
+  if(calendarView()!=="week") return shiftCalendarMonth(delta);
+  const d = parseYMD(state.calSelectedDay);
+  d.setDate(d.getDate()+7*delta);
+  state.calSelectedDay = calYMD(d);
+  state.calMonth = state.calSelectedDay.slice(0,7);
+  render();
+}
+function selectCalendarWeekDay(ymd){ state.calSelectedDay = ymd; state.calMonth = ymd.slice(0,7); render(); }
 function selectCalendarDay(ymd){ state.calSelectedDay = ymd; render(); }
 function setCalendarAssistantFilter(id){ state.calendarAssistantFilter = id; render(); }
 
@@ -10555,6 +10595,29 @@ function renderCalendarTab(){
     </div>`);
   }
 
+  const view = calendarView();
+  const sel = parseYMD(state.calSelectedDay);
+  const weekStart = new Date(sel.getFullYear(), sel.getMonth(), sel.getDate()-sel.getDay());
+  const weekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate()+6);
+  const weekCells = [];
+  if(view==="week") for(let i=0;i<7;i++){
+    const d = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate()+i);
+    const key = calYMD(d);
+    const dayItems = byDay[key] || [];
+    weekCells.push(`<div class="dlcal-wday ${key===todayKey?'today':''} ${key===state.calSelectedDay?'sel':''}" onclick="selectCalendarWeekDay('${key}')">
+      <div class="dlcal-whead"><span class="dlcal-dow">${d.toLocaleDateString([], { weekday:"short" })}</span><span class="dlcal-num">${d.getDate()}</span></div>
+      ${dayItems.map(it=>{
+        const overdue = it.kind!=="google" && !it.done && it.date < todayKey;
+        return `<div class="dlcal-chip ${it.done?'done':''} ${overdue?'overdue':''}" style="--c:${escHtml(it.color||CALENDAR_LAYER_COLORS[it.kind])};" title="${escHtml(it.title||'')}">${it.time?`<strong>${it.time}</strong> `:""}${escHtml(it.title||"")}</div>`;
+      }).join("") || `<div class="dlcal-wempty">—</div>`}
+    </div>`);
+  }
+  const sameMonth = weekStart.getMonth()===weekEnd.getMonth();
+  const md = d => d.toLocaleDateString([], { month:"short", day:"numeric" });
+  const weekLabel = weekStart.getFullYear()!==weekEnd.getFullYear()
+    ? `${md(weekStart)}, ${weekStart.getFullYear()} – ${md(weekEnd)}, ${weekEnd.getFullYear()}`
+    : `${md(weekStart)} – ${sameMonth ? weekEnd.getDate() : md(weekEnd)}, ${weekEnd.getFullYear()}`;
+
   const selectedItems = byDay[state.calSelectedDay] || [];
   const in14 = calYMD(new Date(Date.now()+14*86400000));
   const upcoming = sortCalendarItems(items.filter(it=>it.kind!=="google" && !it.done && it.date<=in14));
@@ -10590,16 +10653,20 @@ function renderCalendarTab(){
     <div class="card">
       <div class="dlcal-toolbar">
         <div style="display:flex;gap:6px;align-items:center;">
-          <button class="secondary" onclick="shiftCalendarMonth(-1)" aria-label="Previous month">‹</button>
-          <button class="secondary" onclick="shiftCalendarMonth(1)" aria-label="Next month">›</button>
+          <button class="secondary" onclick="shiftCalendar(-1)" aria-label="Previous ${view}">‹</button>
+          <button class="secondary" onclick="shiftCalendar(1)" aria-label="Next ${view}">›</button>
           <button class="secondary" onclick="calendarGoToToday()">Today</button>
         </div>
-        <h3 style="margin:0;">${monthLabel}</h3>
+        <h3 style="margin:0;">${view==="week" ? weekLabel : monthLabel}</h3>
+        <div class="dlcal-viewsw" role="group" aria-label="Calendar view">
+          <button class="${view==="month"?'on':''}" onclick="setCalendarView('month')" aria-pressed="${view==="month"}">Month</button>
+          <button class="${view==="week"?'on':''}" onclick="setCalendarView('week')" aria-pressed="${view==="week"}">Week</button>
+        </div>
       </div>
-      <div class="dlcal-grid">
+      ${view==="week" ? `<div class="dlcal-week">${weekCells.join("")}</div>` : `<div class="dlcal-grid">
         ${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div class="dlcal-dow">${d}</div>`).join("")}
         ${cells.join("")}
-      </div>
+      </div>`}
     </div>
 
     <div class="dlcal-lists">
