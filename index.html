@@ -3838,10 +3838,7 @@ function undoBillingCheck(clientId, key){
   if(!client) return;
   upsert("clients", clientId, { billingChecks: (client.billingChecks||[]).filter(b=>b.key!==key) });
 }
-// Dashboard only surfaces clients whose charge date is today — anything
-// overdue or upcoming is tracked instead by the persistent checkbox next to
-// each client's name on the Clients tab (renderClientListItem), so the
-// dashboard doesn't accumulate a growing backlog card.
+// Dashboard only surfaces clients whose charge date is today.
 function renderBillingChecksCard(){
   const dueToday = billingCheckRows().due.filter(x=>x.days===0);
   if(!dueToday.length) return "";
@@ -3851,31 +3848,13 @@ function renderBillingChecksCard(){
         <h3 style="margin:0;">Membership charges due today</h3>
         <span class="small">${dueToday.length} to confirm</span>
       </div>
-      <div class="small" style="margin:4px 0 8px;">Confirm in QuickBooks, then click Complete. You can also check any client off from the Clients tab at any time.</div>
+      <div class="small" style="margin:4px 0 8px;">Confirm in QuickBooks, then click Complete.</div>
       ${dueToday.map(({client,key})=>`
         <div class="list-item">
           <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')"><strong>${escHtml(client.name)}</strong> <span class="small">· ${cycleLabel(client.cycleType)}</span></div>
           <button onclick="markBillingCheckComplete('${client.id}','${key}')">Complete</button>
         </div>`).join("")}
     </div>`;
-}
-// Used by the Clients-tab checkbox (renderClientListItem) — same cycle-start
-// key as the dashboard card above, so checking it off in either place agrees.
-function clientBillingCheckState(client){
-  const period = currentBillingPeriod(client);
-  if(!period) return null;
-  const key = billingCheckKey(period.start);
-  const check = (client.billingChecks||[]).find(b=>b.key===key);
-  return { period, key, check };
-}
-// A native checkbox toggles itself on click before our handler runs; since
-// markBillingCheckComplete can be cancelled (prompt), we preventDefault and
-// drive the checked state entirely from billingChecks via the next render.
-function billingCheckboxClicked(ev, clientId, key, wasChecked){
-  ev.preventDefault();
-  ev.stopPropagation();
-  if(wasChecked) undoBillingCheck(clientId, key);
-  else markBillingCheckComplete(clientId, key);
 }
 // ---- Background check reminder (admin) ----
 // Fires 3 weeks after hireDate so whoever's on the Dashboard remembers to
@@ -6645,7 +6624,6 @@ function renderClientListItem(c){
   const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
   const notStarted = c.id!==INTERNAL_CLIENT_ID && isNotStartedClient(c);
   const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
-  const billing = (c.id!==INTERNAL_CLIENT_ID && state.role==="admin") ? clientBillingCheckState(c) : null;
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
       <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
@@ -6655,10 +6633,6 @@ function renderClientListItem(c){
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
       ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
-      ${billing ? `<label class="small" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;" title="${billing.check ? `Charged ${billing.period.start.toLocaleDateString()} — confirmed by ${(billing.check.completedBy||'Admin').replace(/"/g,'&quot;')}` : `Charge date ${billing.period.start.toLocaleDateString()}`}">
-        <input type="checkbox" ${billing.check?'checked':''} onclick="billingCheckboxClicked(event,'${c.id}','${billing.key}',${!!billing.check})">
-        Charged
-      </label>` : ""}
     </div>
   </div>`;
 }
