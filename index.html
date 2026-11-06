@@ -3750,6 +3750,18 @@ function renderDocsLeadColumn(assistant, d){
       </div>`;
     }).join("")}
   `);
+  if(d.maintenanceFeesDue.length) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Maintenance fees due</div>
+    ${d.maintenanceFeesDue.map(({client,addOn,month,overdue,notYetLogged})=>`
+      <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
+        <div>
+          <strong>${client.name}</strong> — ${addOn.label||addOn.category||'Build'}
+          <div class="small" style="color:var(--rose-dark);">Separate from ${client.name}'s membership billing — charge it on its own.</div>
+          <div class="small" ${overdue?'style="color:var(--danger);font-weight:600;"':''}>${formatMaintenanceMonth(month)}${notYetLogged?' — not yet logged':overdue?' — overdue, still unpaid':' — unpaid'}</div>
+        </div>
+        <strong>$${(addOn.monthlyMaintenance||0).toFixed(0)}</strong>
+      </div>`).join("")}
+  `);
   if(d.contractsReady.length) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Contracts ready to download</div>
     ${d.contractsReady.map(c=>`
@@ -4050,7 +4062,7 @@ function renderAdminDashboard(){
 
     <div class="row">
       ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns:clientCheckInsForOps, renewalCheckInEmails:renewalCheckInEmailsForOps, pending:pendingForOps, notStartedClients:notStartedClientsForOps, atRiskClients:atRiskClientsForOps, awaitingClient:awaitingClientForOps, paused:pausedForOps, overdue, pastDue })}
-      ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, contractsReady, emailsNeeded:docsEmailsNeeded, termUpdateClients, vendorTicketsAwaitingMarkup: vendorTicketsAwaitingMarkup(), vendorTicketsAwaitingPayout: vendorTicketsAwaitingPayout(), nextPayoutDate: nextVendorPayoutDate() })}
+      ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, maintenanceFeesDue: maintenanceFeesDue(), contractsReady, emailsNeeded:docsEmailsNeeded, termUpdateClients, vendorTicketsAwaitingMarkup: vendorTicketsAwaitingMarkup(), vendorTicketsAwaitingPayout: vendorTicketsAwaitingPayout(), nextPayoutDate: nextVendorPayoutDate() })}
     </div>
 
     ${(renewingThisWeek.length || renewingNextWeek.length) ? `
@@ -4193,6 +4205,24 @@ function paymentsReadyToProcess(){
     });
   });
   return rows.sort((a,b)=> (a.payment.dueDate||a.payment.readyMarkedAt||'') < (b.payment.dueDate||b.payment.readyMarkedAt||'') ? -1 : 1);
+}
+// Recurring monthly maintenance has no pre-set schedule like the one-time
+// add-on payments above — someone has to remember to log each month's row
+// by hand (+ Add payment on the build) and nothing ever flagged when that
+// didn't happen, so a fee could go uncollected indefinitely with no
+// notification to Heidi. Due the moment the current month has no payment
+// row logged yet, or an earlier month's row is still unpaid.
+function maintenanceFeesDue(){
+  const todayYM = new Date().toISOString().slice(0,7);
+  const rows = [];
+  allClientAddOns().forEach(({client,addOn})=>{
+    if(addOn.status!=="Active" || !(addOn.monthlyMaintenance>0) || addOn.maintenanceActive===false) return;
+    const payments = (addOn.maintenancePayments||[]).filter(p=>p.month);
+    const unpaid = payments.filter(p=>p.month<=todayYM && !p.paid).sort((a,b)=>a.month<b.month?-1:1);
+    if(unpaid.length) rows.push({ client, addOn, month:unpaid[0].month, overdue:unpaid[0].month<todayYM });
+    else if(!payments.some(p=>p.month===todayYM)) rows.push({ client, addOn, month:todayYM, overdue:false, notYetLogged:true });
+  });
+  return rows.sort((a,b)=>a.month<b.month?-1:1);
 }
 function renderAddOnsTab(){
   const rows = allClientAddOns();
