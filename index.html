@@ -6870,12 +6870,17 @@ function renderClientListItem(c){
   const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
   const notStarted = c.id!==INTERNAL_CLIENT_ID && isNotStartedClient(c);
   const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
+  const period = c.id!==INTERNAL_CLIENT_ID ? currentBillingPeriod(c) : null;
+  const termEnd = c.id!==INTERNAL_CLIENT_ID ? termEndDate(c) : null;
+  const fmtDate = d => d.toLocaleDateString('en-US', { month:'short', day:'numeric', year: d.getFullYear()!==new Date().getFullYear() ? 'numeric' : undefined });
+  const dates = [period ? "Renews " + fmtDate(period.end) : "", termEnd ? "Contract ends " + fmtDate(termEnd) : ""].filter(Boolean).join(" · ");
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
       <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
       <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
         const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
       }).join(", ")}</div>
+      ${dates ? `<div class="small">${dates}</div>` : ""}
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
       ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
