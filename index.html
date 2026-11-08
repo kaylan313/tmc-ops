@@ -860,8 +860,11 @@ function seedPreviewData(){
     { id:"task_preview_4", title:"Inbox triage", clientId:c3.id, status:"To do", category:"Business", assignees:["asst_5"], subtasks:[], discussion:[], description:"", dueDate: daysFromNow(2), repeat:{ type:"weekly", days:[1,4] } }
   ];
   const timeEntries = [...base.timeEntries,
-    { id:"te_preview_1", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(30), clockOut: hoursAgo(26) },
-    { id:"te_preview_2", taskId:"task_preview_2", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(42), clockOut: hoursAgo(37) },
+    { id:"te_preview_1", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(30), clockOut: hoursAgo(26),
+      driveStart:{ lat:30.2241, lng:-92.0198, at: hoursAgo(30) }, driveEnd:{ lat:30.0035, lng:-91.8187, at: hoursAgo(29.5) }, driveMiles:20.4 },
+    { id:"te_preview_2", taskId:"task_preview_2", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(42), clockOut: hoursAgo(37),
+      driveStart:{ error:"Location permission denied", at: hoursAgo(42) }, driveEnd:{ lat:30.2010, lng:-92.0300, at: hoursAgo(41.8) },
+      flagged:true, flagNote:"Drive location missing (Location permission denied) — enter the miles" },
     { id:"te_preview_3", taskId:"task_preview_3", assistantId:"asst_4", clientId:c3.id, clockIn: hoursAgo(12), clockOut: hoursAgo(9) },
     { id:"te_preview_4", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(1), clockOut: null }
   ];
@@ -1271,7 +1274,160 @@ function clockOut(entryId, editedTime){
   // clocking in is always real-time already (see clockIn()), so this is the
   // only point a manually-entered time can slip in, and admin wants visibility
   // into that rather than it blending in with real-time clock-outs.
-  return upsert("timeEntries", entryId, { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime });
+  const entry = state.timeEntries.find(e=>e.id===entryId);
+  const payload = { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime };
+  // A drive that was started but never marked "arrived" has no miles —
+  // flag it so admin can fill them in rather than it silently reading 0.
+  if(entry && entry.driveStart && !entry.driveEnd){
+    Object.assign(payload, { driveEnd: { at: payload.clockOut, error: "Clocked out before tapping I've arrived" } });
+    Object.assign(payload, driveFlagFields(entry, "Drive never marked arrived — enter the miles"));
+  }
+  return upsert("timeEntries", entryId, payload);
+}
+
+// ---- 7a. Drive mileage (admin view only — doesn't change hours/billing) ----
+// An assistant driving to a client task taps "Start drive" on their running
+// clock, then "I've arrived" when they get there. Both points are captured
+// once (no tracking in between) and the road miles come from the free OSRM
+// router. The client covers the first DRIVE_CLIENT_MILES of each trip and TMC
+// any overage — shown as a mileage split only; the entry's hours are untouched.
+const DRIVE_CLIENT_MILES = 10;
+const DRIVE_ROUTER_URL = "https://router.project-osrm.org/route/v1/driving/";
+function getCurrentLocation(){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation){ resolve({ error:"Location isn't supported on this device" }); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos=>resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: Math.round(pos.coords.accuracy) }),
+      err=>resolve({ error: err.code===1 ? "Location permission denied" : "Couldn't get location" }),
+      { enableHighAccuracy:true, timeout:15000, maximumAge:60000 }
+    );
+  });
+}
+async function routeMiles(start, end){
+  try{
+    const res = await withTimeout(fetch(DRIVE_ROUTER_URL + start.lng+","+start.lat+";"+end.lng+","+end.lat + "?overview=false"), 15000, "route");
+    const data = await res.json();
+    if(data.code!=="Ok" || !data.routes || !data.routes[0]) return null;
+    return Math.round(data.routes[0].distance / 1609.344 * 10) / 10;
+  }catch(e){ return null; }
+}
+// Keeps any flag reason admin already wrote rather than overwriting it.
+function driveFlagFields(entry, reason){
+  return { flagged:true, flagNote: entry.flagged && entry.flagNote ? entry.flagNote : reason };
+}
+function driveMilesSplit(miles){
+  return { client: Math.min(miles, DRIVE_CLIENT_MILES), tmc: Math.max(0, Math.round((miles - DRIVE_CLIENT_MILES)*10)/10) };
+}
+async function startDrive(entryId){
+  state.driveBusy = entryId; render();
+  const loc = await getCurrentLocation();
+  state.driveBusy = null;
+  upsert("timeEntries", entryId, { driveStart: { ...loc, at: new Date().toISOString() } }).then(()=>render());
+}
+async function arriveDrive(entryId){
+  const entry = state.timeEntries.find(e=>e.id===entryId);
+  if(!entry || !entry.driveStart) return;
+  state.driveBusy = entryId; render();
+  const loc = await getCurrentLocation();
+  const driveEnd = { ...loc, at: new Date().toISOString() };
+  const payload = { driveEnd };
+  if(entry.driveStart.error || driveEnd.error){
+    Object.assign(payload, driveFlagFields(entry, "Drive location missing (" + (entry.driveStart.error || driveEnd.error) + ") — enter the miles"));
+  } else {
+    const miles = await routeMiles(entry.driveStart, driveEnd);
+    if(miles==null) Object.assign(payload, driveFlagFields(entry, "Couldn't work out the drive route — enter the miles"));
+    else payload.driveMiles = miles;
+  }
+  state.driveBusy = null;
+  upsert("timeEntries", entryId, payload).then(()=>render());
+}
+function cancelDrive(entryId){
+  if(!confirm("Cancel this drive? The start location will be cleared.")) return;
+  upsert("timeEntries", entryId, { driveStart: null }).then(()=>render());
+}
+// Shown under the "Currently clocked in" timer (dashboard + Time Tracking).
+function renderDriveControls(entry){
+  if(state.driveBusy===entry.id) return `<div class="small" style="margin-top:8px;">Getting your location…</div>`;
+  if(!entry.driveStart) return `<button class="secondary" style="margin-top:10px;" onclick="startDrive('${entry.id}')">🚗 Start drive</button>
+    <div class="small" style="margin-top:4px;">Driving to this task? Tap when you pull out, then "I've arrived" when you get there.</div>`;
+  if(!entry.driveEnd) return `<div class="small" style="margin-top:8px;">🚗 Drive started ${new Date(entry.driveStart.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}${entry.driveStart.error ? ` — <span style="color:var(--warn);">${entry.driveStart.error}</span>` : ""}</div>
+    <div style="display:flex;gap:6px;margin-top:6px;"><button onclick="arriveDrive('${entry.id}')">I've arrived</button><button class="secondary" onclick="cancelDrive('${entry.id}')">Cancel drive</button></div>`;
+  return `<div class="small" style="margin-top:8px;">🚗 ${entry.driveMiles!=null ? entry.driveMiles+" mi drive logged" : "Drive logged — miles need review"}</div>`;
+}
+// Small clickable badge on time entry rows.
+function driveBadge(e){
+  if(!e.driveStart) return "";
+  const label = e.driveMiles!=null ? e.driveMiles+" mi" : e.driveEnd ? "miles?" : "driving";
+  return `<span class="badge" style="background:#8a7a72;cursor:pointer;" title="View drive" onclick="event.stopPropagation(); openDriveMap('${e.id}')">🚗 ${label}</span>`;
+}
+function openDriveMap(entryId){
+  state.modal = { type:"driveMap", entryId, returnTo: state.modal };
+  render();
+}
+function renderDriveMapModal(){
+  const e = state.timeEntries.find(x=>x.id===state.modal.entryId);
+  if(!e) return `<div class="modal"><div class="small">This entry no longer exists.</div><button class="secondary" onclick="closeTimeModal()">Close</button></div>`;
+  const task = state.tasks.find(t=>t.id===e.taskId);
+  const s = e.driveStart || {}, d = e.driveEnd || {};
+  const hasPoints = s.lat!=null && d.lat!=null;
+  const split = e.driveMiles!=null ? driveMilesSplit(e.driveMiles) : null;
+  const time = iso => iso ? new Date(iso).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) : "—";
+  return `
+    <div class="modal">
+      <h3>Drive</h3>
+      <div class="small" style="margin-bottom:8px;">${task ? task.title : '(deleted task)'} · ${assistantName(e.assistantId)}</div>
+      ${hasPoints ? `<div id="driveMap" style="height:260px;border-radius:8px;margin-bottom:6px;background:var(--cream);"></div>
+        <a class="small" href="https://www.google.com/maps/dir/?api=1&origin=${s.lat},${s.lng}&destination=${d.lat},${d.lng}&travelmode=driving" target="_blank" rel="noopener">Open route in Google Maps ↗</a>`
+        : `<div class="alert warn">No map — ${s.error || d.error || (e.driveEnd ? "location missing" : "drive still in progress")}.</div>`}
+      <div class="stat-row" style="margin:10px 0;">
+        <div class="stat-tile"><div class="stat-label">Miles</div><div class="stat-value">${e.driveMiles!=null ? e.driveMiles : "—"}</div><div class="stat-sub">${e.driveMilesManual ? "entered by admin" : "road distance"}</div></div>
+        <div class="stat-tile"><div class="stat-label">Client (first ${DRIVE_CLIENT_MILES})</div><div class="stat-value">${split ? split.client : "—"}</div></div>
+        <div class="stat-tile"><div class="stat-label">TMC (overage)</div><div class="stat-value">${split ? split.tmc : "—"}</div></div>
+      </div>
+      <div class="small">Left ${time(s.at)} · Arrived ${time(d.at)}</div>
+      ${state.role==='admin' ? `
+      <div class="row" style="margin-top:10px;align-items:flex-end;">
+        <div><label class="small">Set miles manually</label><input type="number" id="drive_miles" min="0" step="0.1" value="${e.driveMiles!=null ? e.driveMiles : ''}"></div>
+        <div style="flex:0;"><button class="secondary" onclick="saveDriveMiles('${e.id}')">Save miles</button></div>
+      </div>` : ""}
+      <div style="margin-top:14px;text-align:right;"><button class="secondary" onclick="closeTimeModal()">Close</button></div>
+    </div>`;
+}
+function saveDriveMiles(entryId){
+  const v = parseFloat(document.getElementById("drive_miles").value);
+  if(isNaN(v) || v<0){ alert("Enter the miles as a number."); return; }
+  upsert("timeEntries", entryId, { driveMiles: Math.round(v*10)/10, driveMilesManual: true }).then(()=>render());
+}
+// Leaflet is only loaded the first time someone opens a drive map.
+let _leafletLoading = null;
+function loadLeaflet(){
+  if(window.L) return Promise.resolve();
+  if(_leafletLoading) return _leafletLoading;
+  const css = document.createElement("link");
+  css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+  document.head.appendChild(css);
+  _leafletLoading = new Promise((resolve, reject)=>{
+    const s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.onload = resolve; s.onerror = ()=>{ _leafletLoading = null; reject(); };
+    document.head.appendChild(s);
+  });
+  return _leafletLoading;
+}
+function initDriveMap(){
+  const el = document.getElementById("driveMap");
+  const e = state.modal && state.timeEntries.find(x=>x.id===state.modal.entryId);
+  if(!el || !e) return;
+  loadLeaflet().then(()=>{
+    if(!document.body.contains(el)) return;
+    const a = [e.driveStart.lat, e.driveStart.lng], b = [e.driveEnd.lat, e.driveEnd.lng];
+    const map = L.map(el, { scrollWheelZoom:false });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom:19, attribution:"© OpenStreetMap" }).addTo(map);
+    L.marker(a).addTo(map).bindTooltip("Start");
+    L.marker(b).addTo(map).bindTooltip("Arrived");
+    L.polyline([a,b], { color:"#a97f7c", dashArray:"6 6" }).addTo(map);
+    map.fitBounds([a,b], { padding:[30,30], maxZoom:15 });
+  }).catch(()=>{ el.innerHTML = `<div class="small" style="padding:10px;">Map couldn't load — use the Google Maps link below.</div>`; });
 }
 function entryDurationHours(entry){
   const start = new Date(entry.clockIn);
@@ -2277,7 +2433,7 @@ function exportTimeEntriesCsv(){
   const filtered = mineAll
     .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
     .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
-  const rows = [["Assistant","Task","Client","Clock in","Clock out","Hours","Manual clock-out","Admin work"]];
+  const rows = [["Assistant","Task","Client","Clock in","Clock out","Hours","Manual clock-out","Admin work","Drive miles","Client miles","TMC miles"]];
   filtered.slice().reverse().forEach(e=>{
     const task = state.tasks.find(t=>t.id===e.taskId);
     const client = state.clients.find(c=>c.id===e.clientId);
@@ -2289,7 +2445,10 @@ function exportTimeEntriesCsv(){
       e.clockOut ? new Date(e.clockOut).toLocaleString() : "(still clocked in)",
       e.clockOut ? entryDurationHours(e).toFixed(2) : "",
       e.clockOutManual ? "yes" : "no",
-      e.clientId===INTERNAL_CLIENT_ID ? "yes" : "no"
+      e.clientId===INTERNAL_CLIENT_ID ? "yes" : "no",
+      e.driveMiles!=null ? e.driveMiles : "",
+      e.driveMiles!=null ? driveMilesSplit(e.driveMiles).client : "",
+      e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : ""
     ]);
   });
   downloadCsv("time-entries-" + new Date().toISOString().slice(0,10) + ".csv", rows);
@@ -3321,6 +3480,7 @@ function render(){
     const canvas = document.getElementById('sigPad_'+sigClientId);
     if(canvas) initClientSigPad(sigClientId);
   }
+  if(state.modal && state.modal.type==="driveMap") initDriveMap();
 }
 window.addEventListener('resize', ()=>{ if(typeof resizeClientSigCanvas==='function') resizeClientSigCanvas(); });
 
@@ -6628,6 +6788,7 @@ function renderTeamDashboard(){
         </div>
         ${isStale(myEntry) ? `<div class="alert danger" style="margin-top:8px;">This clock has been running over 8 hours — check if it's stale.</div>` : ""}
         <button style="margin-top:10px;" onclick="doClockOut('${myEntry.id}')">Clock out</button>
+        ${renderDriveControls(myEntry)}
       </div>` : ""}
     <div class="card">
       <h3>Hour-usage alerts</h3>
@@ -9443,7 +9604,8 @@ function renderTimeTracking(){
       const total = own_.reduce((s,e)=>s+entryDurationHours(e),0);
       const admin = own_.filter(e=>e.clientId===INTERNAL_CLIENT_ID).reduce((s,e)=>s+entryDurationHours(e),0);
       const manual = own_.filter(e=>e.clockOutManual).length;
-      return { assistant:a, total, admin, manual };
+      const miles = own_.reduce((s,e)=>s+(e.driveMiles||0),0);
+      return { assistant:a, total, admin, manual, miles };
     }).filter(r=>r.total>0 || r.assistant.active!==false).sort((a,b)=>b.total-a.total) : [];
 
   return `
@@ -9459,6 +9621,7 @@ function renderTimeTracking(){
         </div>
         ${isStale(active) ? `<div class="alert danger" style="margin-top:8px;">This clock has been running over 8 hours — check if it's stale.</div>` : ""}
         <button style="margin-top:10px;" onclick="doClockOut('${active.id}')">Clock out</button>
+        ${renderDriveControls(active)}
       </div>` : ""}
     ${state.currentAssistant && !active ? `
       <div class="card">
@@ -9483,7 +9646,7 @@ function renderTimeTracking(){
       <h3>Hours by assistant</h3>
       <div class="small" style="margin-bottom:8px;">${timeFilterLabel(period)} — "Admin hours" is time clocked to Internal / Modern Co. work. "Manual" counts clock-outs where a time was typed in instead of captured live.</div>
       <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Assistant</th><th>Total hours</th><th>Admin hours</th><th>Manual clock-outs</th></tr></thead>
+        <thead><tr><th>Assistant</th><th>Total hours</th><th>Admin hours</th><th>Manual clock-outs</th><th>Drive miles</th></tr></thead>
         <tbody>
           ${assistantSummary.map(r=>`
             <tr>
@@ -9491,7 +9654,8 @@ function renderTimeTracking(){
               <td>${r.total.toFixed(1)}</td>
               <td>${r.admin.toFixed(1)}</td>
               <td>${r.manual>0 ? `<span style="color:var(--warn);font-weight:600;">${r.manual}</span>` : "0"}</td>
-            </tr>`).join("") || `<tr><td colspan="4" class="small">No entries in this range.</td></tr>`}
+              <td>${r.miles.toFixed(1)}</td>
+            </tr>`).join("") || `<tr><td colspan="5" class="small">No entries in this range.</td></tr>`}
         </tbody>
       </table></div>
     </div>` : ""}
@@ -9535,7 +9699,7 @@ function renderTimeTracking(){
         const isAdminWork = e.clientId===INTERNAL_CLIENT_ID;
         const clientLabel = isAdminWork ? "Internal / Modern Co." : (state.clients.find(c=>c.id===e.clientId)?.name || (e.clientId ? "Unknown client" : ""));
         return `<div class="list-item">
-          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${task?task.title:'(deleted task)'}${clientLabel ? ` <span class="small">· ${clientLabel}</span>` : ''}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
+          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${driveBadge(e)}${task?task.title:'(deleted task)'}${clientLabel ? ` <span class="small">· ${clientLabel}</span>` : ''}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
           <div style="display:flex;align-items:center;gap:8px;">${e.clockOut ? entryDurationHours(e).toFixed(2)+" hrs" : `<button onclick="doClockOut('${e.id}')">Clock out</button>`}${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" title="Edit this time entry" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}${state.role==='admin' ? `<button class="secondary" style="padding:2px 8px;${e.flagged?'color:var(--danger);':''}" title="${e.flagged ? 'Unflag' : 'Flag for review'}" onclick="toggleFlagTimeEntry('${e.id}')">${e.flagged ? '⚑' : '⚐'}</button>` : ""}<button class="secondary" style="padding:2px 8px;" title="Delete this time entry" onclick="deleteTimeEntry('${e.id}')">✕</button></div>
         </div>`;
       }).join("") || `<div class="small">No entries in this range.</div>`}
@@ -10919,6 +11083,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">MC<br>THE MODERN C
 <p>Errand-Based / Out-of-Office Tasks</p>
 <ul>
 <li>If you are leaving your home specifically to complete a client task — clock in when you leave your house. Your drive time is billable.</li>
+<li>When you're driving to a task, tap <strong>🚗 Start drive</strong> under your running clock as you pull out, and <strong>I've arrived</strong> when you get there. This logs your mileage — the client covers the first 10 miles of each trip and TMC covers anything over.</li>
 <li>If you are already out in the city and a client contacts you with a task while you're out — clock in when you begin the task itself, not from wherever you were.</li>
 </ul>
 <p><strong>EXAMPLE</strong><br/><em>SYou're already at Target doing personal shopping when a client texts you to pick something up nearby. Clock in when you leave to go get their item — not from home.A client asks you to pick up dry cleaning and you drive from home specifically for that task. Clock in when you pull out of your driveway.</em></p>
@@ -13148,7 +13313,7 @@ function renderTaskTimeEntriesSection(task){
               <td>${assistantName(e.assistantId)}</td>
               <td>${new Date(e.clockIn).toLocaleString()}</td>
               <td>${e.clockOut ? new Date(e.clockOut).toLocaleString() : '<span class="small">still clocked in</span>'}</td>
-              <td>${entryDurationHours(e).toFixed(2)}${e.clockOutManual?' <span class="small">(manual)</span>':''}${e.flagged?' <span class="small" style="color:var(--danger);">⚑</span>':''}</td>
+              <td>${entryDurationHours(e).toFixed(2)}${e.clockOutManual?' <span class="small">(manual)</span>':''}${e.flagged?' <span class="small" style="color:var(--danger);">⚑</span>':''} ${driveBadge(e)}</td>
               <td style="white-space:nowrap;">${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" onclick="openTimeEntryEditor('${e.id}', true)">Edit</button>` : ""}</td>
             </tr>
             ${e.note ? `<tr><td colspan="5" class="small" style="padding-top:0;">&ldquo;${e.note}&rdquo;</td></tr>` : ""}
@@ -14018,6 +14183,7 @@ function renderModal(){
     : state.modal.type==="idUploadGate" ? renderIdUploadGateModal(state.modal.assistant)
     : state.modal.type==="reassignClient" ? renderReassignModal(state.modal.client)
     : state.modal.type==="timeEntryEditor" ? renderTimeEntryEditorModal(state.modal.entry)
+    : state.modal.type==="driveMap" ? renderDriveMapModal()
     : state.modal.type==="appGuide" ? renderAppGuideModal(state.modal.assistant)
     : state.modal.type==="appGuideReadOnly" ? renderAppGuideReadOnlyModal()
     : state.modal.type==="policyBook" ? renderPolicyBookModal()
