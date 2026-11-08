@@ -1349,10 +1349,10 @@ function cancelDrive(entryId){
 function renderDriveControls(entry){
   if(state.driveBusy===entry.id) return `<div class="small" style="margin-top:8px;">Getting your location…</div>`;
   if(!entry.driveStart) return `<button class="secondary" style="margin-top:10px;" onclick="startDrive('${entry.id}')">🚗 Start drive</button>
-    <div class="small" style="margin-top:4px;">Driving to this task? Tap when you pull out, then "I've arrived" when you get there.</div>`;
+    <div class="small" style="margin-top:4px;">Driving to this task? Tap when you pull out, then "I've arrived" when you get there — you'll stay clocked in.</div>`;
   if(!entry.driveEnd) return `<div class="small" style="margin-top:8px;">🚗 Drive started ${new Date(entry.driveStart.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}${entry.driveStart.error ? ` — <span style="color:var(--warn);">${entry.driveStart.error}</span>` : ""}</div>
     <div style="display:flex;gap:6px;margin-top:6px;"><button onclick="arriveDrive('${entry.id}')">I've arrived</button><button class="secondary" onclick="cancelDrive('${entry.id}')">Cancel drive</button></div>`;
-  return `<div class="small" style="margin-top:8px;">🚗 ${entry.driveMiles!=null ? entry.driveMiles+" mi drive logged" : "Drive logged — miles need review"}</div>`;
+  return `<div class="small" style="margin-top:8px;">🚗 Arrived ${new Date(entry.driveEnd.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})} — ${entry.driveMiles!=null ? entry.driveMiles+" mi drive logged" : "miles need review"}. You're still clocked in.</div>`;
 }
 // Small clickable badge on time entry rows — only for drives with TMC
 // overage miles, or ones still missing miles that admin needs to fill in.
@@ -1361,7 +1361,7 @@ function driveBadge(e){
   const tmc = e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : null;
   if(tmc===0) return "";
   const label = tmc!=null ? tmc+" mi TMC" : "miles?";
-  return `<span class="badge" style="background:#8a7a72;cursor:pointer;" title="View drive" onclick="event.stopPropagation(); openDriveMap('${e.id}')">🚗 ${label}</span>`;
+  return `<span class="badge" style="background:#8a7a72;cursor:pointer;white-space:nowrap;" title="View drive" onclick="event.stopPropagation(); openDriveMap('${e.id}')">🚗 ${label}</span>`;
 }
 function openDriveMap(entryId){
   state.modal = { type:"driveMap", entryId, returnTo: state.modal };
@@ -13294,7 +13294,8 @@ function renderTaskClockControls(task){
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;">
       ${clockBtn}
       <button class="secondary" onclick="openManualTimeEntry('${task.id}')">+ Log time manually</button>
-    </div>`;
+    </div>
+    ${myActive && myActive.taskId===task.id ? `<div style="margin-bottom:8px;">${renderDriveControls(myActive)}</div>` : ""}`;
 }
 function renderTaskTimeEntriesSection(task){
   if(!task.id || !state.tasks.find(t=>t.id===task.id)) return "";
