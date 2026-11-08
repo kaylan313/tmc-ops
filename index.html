@@ -1354,10 +1354,13 @@ function renderDriveControls(entry){
     <div style="display:flex;gap:6px;margin-top:6px;"><button onclick="arriveDrive('${entry.id}')">I've arrived</button><button class="secondary" onclick="cancelDrive('${entry.id}')">Cancel drive</button></div>`;
   return `<div class="small" style="margin-top:8px;">🚗 ${entry.driveMiles!=null ? entry.driveMiles+" mi drive logged" : "Drive logged — miles need review"}</div>`;
 }
-// Small clickable badge on time entry rows.
+// Small clickable badge on time entry rows — only for drives with TMC
+// overage miles, or ones still missing miles that admin needs to fill in.
 function driveBadge(e){
-  if(!e.driveStart) return "";
-  const label = e.driveMiles!=null ? e.driveMiles+" mi" : e.driveEnd ? "miles?" : "driving";
+  if(!e.driveStart || !e.driveEnd) return "";
+  const tmc = e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : null;
+  if(tmc===0) return "";
+  const label = tmc!=null ? tmc+" mi TMC" : "miles?";
   return `<span class="badge" style="background:#8a7a72;cursor:pointer;" title="View drive" onclick="event.stopPropagation(); openDriveMap('${e.id}')">🚗 ${label}</span>`;
 }
 function openDriveMap(entryId){
@@ -1380,9 +1383,8 @@ function renderDriveMapModal(){
         <a class="small" href="https://www.google.com/maps/dir/?api=1&origin=${s.lat},${s.lng}&destination=${d.lat},${d.lng}&travelmode=driving" target="_blank" rel="noopener">Open route in Google Maps ↗</a>`
         : `<div class="alert warn">No map — ${s.error || d.error || (e.driveEnd ? "location missing" : "drive still in progress")}.</div>`}
       <div class="stat-row" style="margin:10px 0;">
-        <div class="stat-tile"><div class="stat-label">Miles</div><div class="stat-value">${e.driveMiles!=null ? e.driveMiles : "—"}</div><div class="stat-sub">${e.driveMilesManual ? "entered by admin" : "road distance"}</div></div>
-        <div class="stat-tile"><div class="stat-label">Client (first ${DRIVE_CLIENT_MILES})</div><div class="stat-value">${split ? split.client : "—"}</div></div>
-        <div class="stat-tile"><div class="stat-label">TMC (overage)</div><div class="stat-value">${split ? split.tmc : "—"}</div></div>
+        <div class="stat-tile"><div class="stat-label">TMC miles</div><div class="stat-value">${split ? split.tmc : "—"}</div><div class="stat-sub">over the first ${DRIVE_CLIENT_MILES}</div></div>
+        <div class="stat-tile"><div class="stat-label">Trip miles</div><div class="stat-value">${e.driveMiles!=null ? e.driveMiles : "—"}</div><div class="stat-sub">${e.driveMilesManual ? "entered by admin" : "road distance"}</div></div>
       </div>
       <div class="small">Left ${time(s.at)} · Arrived ${time(d.at)}</div>
       ${state.role==='admin' ? `
@@ -2433,7 +2435,7 @@ function exportTimeEntriesCsv(){
   const filtered = mineAll
     .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
     .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
-  const rows = [["Assistant","Task","Client","Clock in","Clock out","Hours","Manual clock-out","Admin work","Drive miles","Client miles","TMC miles"]];
+  const rows = [["Assistant","Task","Client","Clock in","Clock out","Hours","Manual clock-out","Admin work","TMC drive miles"]];
   filtered.slice().reverse().forEach(e=>{
     const task = state.tasks.find(t=>t.id===e.taskId);
     const client = state.clients.find(c=>c.id===e.clientId);
@@ -2446,9 +2448,7 @@ function exportTimeEntriesCsv(){
       e.clockOut ? entryDurationHours(e).toFixed(2) : "",
       e.clockOutManual ? "yes" : "no",
       e.clientId===INTERNAL_CLIENT_ID ? "yes" : "no",
-      e.driveMiles!=null ? e.driveMiles : "",
-      e.driveMiles!=null ? driveMilesSplit(e.driveMiles).client : "",
-      e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : ""
+      e.driveMiles!=null && driveMilesSplit(e.driveMiles).tmc>0 ? driveMilesSplit(e.driveMiles).tmc : ""
     ]);
   });
   downloadCsv("time-entries-" + new Date().toISOString().slice(0,10) + ".csv", rows);
@@ -9604,7 +9604,7 @@ function renderTimeTracking(){
       const total = own_.reduce((s,e)=>s+entryDurationHours(e),0);
       const admin = own_.filter(e=>e.clientId===INTERNAL_CLIENT_ID).reduce((s,e)=>s+entryDurationHours(e),0);
       const manual = own_.filter(e=>e.clockOutManual).length;
-      const miles = own_.reduce((s,e)=>s+(e.driveMiles||0),0);
+      const miles = own_.reduce((s,e)=>s+(e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : 0),0);
       return { assistant:a, total, admin, manual, miles };
     }).filter(r=>r.total>0 || r.assistant.active!==false).sort((a,b)=>b.total-a.total) : [];
 
@@ -9646,7 +9646,7 @@ function renderTimeTracking(){
       <h3>Hours by assistant</h3>
       <div class="small" style="margin-bottom:8px;">${timeFilterLabel(period)} — "Admin hours" is time clocked to Internal / Modern Co. work. "Manual" counts clock-outs where a time was typed in instead of captured live.</div>
       <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Assistant</th><th>Total hours</th><th>Admin hours</th><th>Manual clock-outs</th><th>Drive miles</th></tr></thead>
+        <thead><tr><th>Assistant</th><th>Total hours</th><th>Admin hours</th><th>Manual clock-outs</th><th>TMC drive miles</th></tr></thead>
         <tbody>
           ${assistantSummary.map(r=>`
             <tr>
