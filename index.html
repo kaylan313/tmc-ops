@@ -1226,14 +1226,14 @@ function watchOrientationSync(attempt){
 function activeEntryFor(assistantId){
   return state.timeEntries.find(t => t.assistantId === assistantId && !t.clockOut);
 }
-function clockIn(taskId, assistantId, note){
+function clockIn(taskId, assistantId, note, clientId){
   const existing = activeEntryFor(assistantId);
   if(existing){ alert("You're already clocked in on another task. Clock out first."); return; }
   const task = state.tasks.find(t=>t.id===taskId);
   const entry = {
     id: newId("te"),
     taskId, assistantId,
-    clientId: task ? task.clientId : INTERNAL_CLIENT_ID,
+    clientId: clientId || (task ? task.clientId : INTERNAL_CLIENT_ID),
     clockIn: new Date().toISOString(),
     clockOut: null,
     note: note || ""
@@ -13462,10 +13462,13 @@ function renderTaskEditorModal(task){
         </div>
       </div>
       ${renderTaskDiscussion(task, "tf_new_comment", `addTaskComment('${task.id}')`)}
-      <div style="margin-top:14px;display:flex;justify-content:space-between;">
+      <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <button class="danger" onclick="deleteTask('${task.id}')">Delete</button>
-        <div>
+        <div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;">
           <button class="secondary" onclick="closeModal()">Cancel</button>
+          ${!state.tasks.find(t=>t.id===task.id) ? `
+          ${state.currentAssistant ? `<button class="secondary" onclick="saveTask('${task.id}','clockIn')">Save &amp; clock in</button>` : ""}
+          <button class="secondary" onclick="saveTask('${task.id}','logTime')">Save &amp; log time</button>` : ""}
           <button onclick="saveTask('${task.id}')">Save</button>
         </div>
       </div>
@@ -13798,7 +13801,9 @@ async function createNextRepeatTask(fromTask){
   });
   return { id, dueDate };
 }
-async function saveTask(taskId){
+// `then` is only passed from a brand-new task's "Save & clock in" / "Save &
+// log time" buttons, so time can be started the moment the task exists.
+async function saveTask(taskId, then){
   const task = state.modal.task;
   const assignees = task.assignees || [];
   const newStatus = task.status;
@@ -13928,6 +13933,14 @@ async function saveTask(taskId){
   }
   upsert("tasks", taskId, payload);
   closeModal();
+  // The new task may not be in state.tasks yet (Firestore snapshot lag), so
+  // pass its client along rather than letting clockIn() fall back to Internal.
+  if(then==="clockIn") clockIn(taskId, state.currentAssistant.id, "", payload.clientId);
+  else if(then==="logTime"){
+    openManualTimeEntry(taskId);
+    state.modal.justSavedTask = { id: taskId, title: payload.title, taskNumber: payload.taskNumber, clientId: payload.clientId };
+    render();
+  }
 }
 // A time entry should never be able to outlive the task it was clocked
 // into — that's exactly how orphaned entries happened before this: the
@@ -14046,7 +14059,7 @@ function updateManualEntryRow(rowId, field, value){
 }
 function renderManualTimeEntryModal(){
   const rows = state.modal.rows;
-  const fixedTask = state.modal.fixedTaskId ? state.tasks.find(t=>t.id===state.modal.fixedTaskId) : null;
+  const fixedTask = state.modal.fixedTaskId ? (state.tasks.find(t=>t.id===state.modal.fixedTaskId) || state.modal.justSavedTask) : null;
   return `
     <div class="modal">
       <h3>Log time manually</h3>
@@ -14087,7 +14100,7 @@ function renderManualTimeEntryModal(){
 }
 function saveManualTimeEntry(){
   const task = state.modal.fixedTaskId
-    ? state.tasks.find(t=>t.id===state.modal.fixedTaskId)
+    ? (state.tasks.find(t=>t.id===state.modal.fixedTaskId) || state.modal.justSavedTask)
     : resolveTaskFromSearch(document.getElementById("mte_task").value);
   const assistantId = state.role==='admin' ? state.modal.assistantId : state.currentAssistant.id;
   if(!task){ alert("Pick a task from the list first — search by its # or title."); return; }
