@@ -837,6 +837,7 @@ function seedPreviewData(){
     // A fake assigned build so the Builds tab isn't empty in preview.
     addOns:[{ id:"addon_preview_1", label:"Website Build", status:"Active", flatFee:3000, buildAssistantId:"asst_3", buildAssistantPercent:30,
       monthlyMaintenance:150, maintenanceActive:true, maintenanceAssistantId:"asst_3", maintenanceAssistantPercent:30,
+      maintenanceStartDate: new Date(now - 33*24*3600000).toISOString().slice(0,10),
       maintenancePayments:[
         { id:"maintpay_preview_1", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(new Date(now).getFullYear(), new Date(now).getMonth()-1, 1)), amount:150, paid:true, paidDate: new Date(now - 3*24*3600000).toISOString().slice(0,10) },
         { id:"maintpay_preview_2", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(now)), amount:150, paid:false, paidDate:"" }
@@ -3981,16 +3982,16 @@ function renderDocsLeadColumn(assistant, d){
   `);
   if(d.maintenanceFeesDue.length && canViewSoftware()) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Maintenance fees due</div>
-    ${d.maintenanceFeesDue.map(({client,addOn,month,overdue,notYetLogged})=>`
+    ${d.maintenanceFeesDue.map(({client,addOn,key,overdue,notYetLogged})=>`
       <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
         <div>
           <strong>${client.name}</strong> — ${addOn.label||addOn.category||'Build'}
           <div class="small" style="color:var(--rose-dark);">Separate from ${client.name}'s membership billing — charge it on its own.</div>
-          <div class="small" ${overdue?'style="color:var(--danger);font-weight:600;"':''}>${formatMaintenanceMonth(month)}${notYetLogged?' — not yet logged':overdue?' — overdue, still unpaid':' — unpaid'}</div>
+          <div class="small" ${overdue?'style="color:var(--danger);font-weight:600;"':''}>${formatMaintenanceKey(key)}${overdue?' — overdue, still unpaid':' — unpaid'}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
           <strong>$${(addOn.monthlyMaintenance||0).toFixed(0)}</strong>
-          <button class="secondary" onclick="event.stopPropagation();markMaintenanceFeePaid('${client.id}','${addOn.id}','${month}')">Mark paid</button>
+          <button class="secondary" onclick="event.stopPropagation();markMaintenanceFeePaid('${client.id}','${addOn.id}','${key}')">Mark paid</button>
         </div>
       </div>`).join("")}
   `);
@@ -4444,17 +4445,61 @@ function paymentsReadyToProcess(){
 // didn't happen, so a fee could go uncollected indefinitely with no
 // notification to Heidi. Due the moment the current month has no payment
 // row logged yet, or an earlier month's row is still unpaid.
+//
+// 30-day cycles (Nov 2026): once a build has a maintenanceStartDate (the
+// first fee's due date), the fee is due on that date and every 30 days
+// after — like membership charges, not on the 1st of the month. Those rows
+// are keyed by dueDate (YYYY-MM-DD). A build with no start date keeps the
+// old calendar-month rows (keyed by month, YYYY-MM) until one is set.
+// Cycles due before MAINT_CYCLES_TRACKED_FROM are never listed, so setting
+// a start date months back doesn't flood the Dashboard with cycles that
+// were already handled on the old monthly rows; a paid old monthly row also
+// counts for the cycle due in that same month (the switchover month).
+const MAINT_CYCLES_TRACKED_FROM = "2026-11-01";
+const MAINT_CYCLE_DAYS = 30;
+function addDaysYMD(str, n){ const d = parseYMD(str); d.setDate(d.getDate()+n); return ymd(d); }
+// Every cycle due date from the start through `uptoYMD` (inclusive).
+function maintenanceCycleDates(addOn, uptoYMD){
+  const out = [];
+  if(!addOn.maintenanceStartDate) return out;
+  for(let d = addOn.maintenanceStartDate; d <= uptoYMD && out.length < 1000; d = addDaysYMD(d, MAINT_CYCLE_DAYS)) out.push(d);
+  return out;
+}
+function nextMaintenanceDueDate(addOn){
+  if(!addOn.maintenanceStartDate) return null;
+  const today = ymd(new Date());
+  let d = addOn.maintenanceStartDate;
+  while(d <= today) d = addDaysYMD(d, MAINT_CYCLE_DAYS);
+  return d;
+}
+function maintenanceCyclePaid(addOn, dueYMD){
+  return (addOn.maintenancePayments||[]).some(p=>p.paid && (p.dueDate===dueYMD || (!p.dueDate && p.month===dueYMD.slice(0,7))));
+}
+// "2026-11-13" → "Due Nov 13, 2026"; "2026-11" → "November 2026".
+function formatMaintenanceKey(key){
+  if(key && key.length===10) return "Due " + parseYMD(key).toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" });
+  return formatMaintenanceMonth(key);
+}
 function maintenanceFeesDue(){
-  const todayYM = new Date().toISOString().slice(0,7);
+  const today = ymd(new Date());
+  const todayYM = today.slice(0,7);
   const rows = [];
   allClientAddOns().forEach(({client,addOn})=>{
     if(addOn.status!=="Active" || !(addOn.monthlyMaintenance>0) || addOn.maintenanceActive===false) return;
-    const payments = (addOn.maintenancePayments||[]).filter(p=>p.month);
-    const unpaid = payments.filter(p=>p.month<=todayYM && !p.paid).sort((a,b)=>a.month<b.month?-1:1);
-    if(unpaid.length) rows.push({ client, addOn, month:unpaid[0].month, overdue:unpaid[0].month<todayYM });
-    else if(!payments.some(p=>p.month===todayYM)) rows.push({ client, addOn, month:todayYM, overdue:false, notYetLogged:true });
+    const monthRows = (addOn.maintenancePayments||[]).filter(p=>p.month && !p.dueDate);
+    if(addOn.maintenanceStartDate){
+      // Old monthly rows left unpaid still need collecting.
+      const oldUnpaid = monthRows.filter(p=>!p.paid && p.month<MAINT_CYCLES_TRACKED_FROM.slice(0,7)).sort((a,b)=>a.month<b.month?-1:1);
+      const due = maintenanceCycleDates(addOn, today).filter(d=>d>=MAINT_CYCLES_TRACKED_FROM && !maintenanceCyclePaid(addOn, d));
+      const first = oldUnpaid.length ? oldUnpaid[0].month : due[0];
+      if(first) rows.push({ client, addOn, key:first, overdue: oldUnpaid.length>0 || first<today, notYetLogged: !(addOn.maintenancePayments||[]).some(p=>p.dueDate===first) && !oldUnpaid.length });
+      return;
+    }
+    const unpaid = monthRows.filter(p=>p.month<=todayYM && !p.paid).sort((a,b)=>a.month<b.month?-1:1);
+    if(unpaid.length) rows.push({ client, addOn, key:unpaid[0].month, overdue:unpaid[0].month<todayYM });
+    else if(!monthRows.some(p=>p.month===todayYM)) rows.push({ client, addOn, key:todayYM, overdue:false, notYetLogged:true });
   });
-  return rows.sort((a,b)=>a.month<b.month?-1:1);
+  return rows.sort((a,b)=>a.key<b.key?-1:1);
 }
 function renderAddOnsTab(){
   const rows = allClientAddOns();
@@ -8920,6 +8965,7 @@ function renderAddOnRow(clientId, a){
       <div class="row">
         <div><label class="small">Flat fee ($)</label><input id="addon_fee_${a.id}" type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
         <div><label class="small">Monthly maintenance ($)</label><input id="addon_maint_${a.id}" type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
+        ${a.monthlyMaintenance>0 ? `<div><label class="small">First maintenance fee due</label><input type="date" value="${a.maintenanceStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceStartDate',this.value)" title="Due on this date, then every 30 days after"></div>` : ""}
         <div><label class="small">Date added</label><input type="date" value="${a.addedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','addedDate',this.value)"></div>
       </div>
       ${a.monthlyMaintenance>0 ? `
@@ -8952,10 +8998,11 @@ function renderAddOnRow(clientId, a){
         ${a.monthlyMaintenance>0 ? (()=>{
           const due = maintenanceFeesDue().find(r=>r.addOn.id===a.id);
           return `<div class="list-item" style="margin-top:8px;">
-            <div><strong>Monthly fee</strong> — $${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}
-              <div class="small" ${due&&due.overdue?'style="color:var(--danger);font-weight:600;"':''}>${due ? formatMaintenanceMonth(due.month)+(due.overdue?' — overdue, still unpaid':' — unpaid') : 'Paid up ✓'}</div>
+            <div><strong>Monthly fee</strong> — $${a.monthlyMaintenance} ${a.maintenanceStartDate?'every 30 days':'/mo'}${a.maintenanceActive===false?' (paused)':''}
+              <div class="small" ${due&&due.overdue?'style="color:var(--danger);font-weight:600;"':''}>${due ? formatMaintenanceKey(due.key)+(due.overdue?' — overdue, still unpaid':' — unpaid') : 'Paid up ✓'}${!due && nextMaintenanceDueDate(a) ? ' · next due '+parseYMD(nextMaintenanceDueDate(a)).toLocaleDateString() : ''}</div>
+              ${!a.maintenanceStartDate ? `<div class="small" style="color:var(--rose-dark);">Set "First maintenance fee due" above to bill every 30 days from that date (until then it's due on the 1st of each month).</div>` : ""}
             </div>
-            ${due ? `<button class="secondary" onclick="markMaintenanceFeePaid('${clientId}','${a.id}','${due.month}')">Mark paid</button>` : ""}
+            ${due ? `<button class="secondary" onclick="markMaintenanceFeePaid('${clientId}','${a.id}','${due.key}')">Mark paid</button>` : ""}
           </div>`;
         })() : ""}
       </div>
@@ -8974,8 +9021,8 @@ function renderAddOnRow(clientId, a){
           </div>
           <div><label class="small">Their %</label><input id="addon_maintpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.maintenanceAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
         </div>
-        ${(a.maintenancePayments||[]).slice().sort((x,y)=> (y.month||'') < (x.month||'') ? -1 : 1).map(p=>renderMaintenancePaymentRow(clientId,a,p)).join("")}
-        <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add month</button></div>` : ""}
+        ${(a.maintenancePayments||[]).slice().sort((x,y)=> (y.dueDate||y.month||'') < (x.dueDate||x.month||'') ? -1 : 1).map(p=>renderMaintenancePaymentRow(clientId,a,p)).join("")}
+        <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add ${a.maintenanceStartDate?'payment':'month'}</button></div>` : ""}
       </div>
       ${a.buildAssistantId ? `
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
@@ -9124,21 +9171,28 @@ function removeAddOnPhase(clientId, addOnId, phaseId){
 // comes back by itself next month because that month has no paid row yet.
 // Maintenance runs on calendar months (YYYY-MM rows), so "next due date"
 // is simply next month. The maintenance rows ARE the payment history.
-function markMaintenanceFeePaid(clientId, addOnId, month){
+// `key` is a cycle due date (YYYY-MM-DD, 30-day builds) or a month
+// (YYYY-MM, builds with no maintenance start date yet).
+function markMaintenanceFeePaid(clientId, addOnId, key){
   const client = state.clients.find(c=>c.id===clientId);
   const addOn = client && (client.addOns||[]).find(a=>a.id===addOnId);
   if(!addOn) return;
+  const isCycle = key && key.length===10;
   let lastName = "";
   try { lastName = localStorage.getItem("tmcBillingCheckName") || ""; } catch(e){}
-  const name = (prompt("Mark "+client.name+"'s "+formatMaintenanceMonth(month)+" maintenance fee ($"+(addOn.monthlyMaintenance||0)+") as paid?\n\nYour name (saved with the payment):", lastName) || "").trim();
+  const name = (prompt("Mark "+client.name+"'s maintenance fee ("+formatMaintenanceKey(key)+", $"+(addOn.monthlyMaintenance||0)+") as paid?\n\nYour name (saved with the payment):", lastName) || "").trim();
   if(!name) return;
   try { localStorage.setItem("tmcBillingCheckName", name); } catch(e){}
-  const today = new Date().toISOString().slice(0,10);
-  const stamp = { paid:true, paidDate:today, paidBy:name, paidMarkedAt:new Date().toISOString() };
+  const stamp = { paid:true, paidDate:ymd(new Date()), paidBy:name, paidMarkedAt:new Date().toISOString() };
   updateAddOnMaintenancePayments(clientId, addOnId, (list, a)=>{
-    const existing = list.find(p=>p.month===month);
-    if(existing) return list.map(p=> p.id===existing.id ? { ...p, ...stamp, amount: p.amount || a.monthlyMaintenance || 0 } : p);
-    return [...list, { id:newId("maintpay"), month, amount:a.monthlyMaintenance||0, ...stamp }];
+    // A cycle can take over an unpaid old monthly row for the same month
+    // (switchover month), so history doesn't keep a stale unpaid row.
+    const existing = isCycle
+      ? (list.find(p=>p.dueDate===key) || list.find(p=>!p.dueDate && !p.paid && p.month===key.slice(0,7)))
+      : list.find(p=>!p.dueDate && p.month===key);
+    if(existing) return list.map(p=> p.id===existing.id ? { ...p, ...stamp, ...(isCycle?{ dueDate:key }:{}), amount: p.amount || a.monthlyMaintenance || 0 } : p);
+    const row = isCycle ? { dueDate:key } : { month:key };
+    return [...list, { id:newId("maintpay"), ...row, amount:a.monthlyMaintenance||0, ...stamp }];
   });
 }
 function renderAddOnPaymentRow(clientId, a, p){
@@ -9420,7 +9474,9 @@ function renderMaintenancePaymentRow(clientId, a, p){
   const cut = maintenanceAssistantCut(a, p);
   return `
     <div class="row" style="align-items:flex-end;margin-top:6px;">
-      <div><label class="small">Month</label><input type="month" value="${p.month||''}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','month',this.value)" style="max-width:160px;"></div>
+      ${p.dueDate
+        ? `<div><label class="small">Due</label><input type="date" value="${p.dueDate}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','dueDate',this.value)" style="max-width:160px;"></div>`
+        : `<div><label class="small">Month</label><input type="month" value="${p.month||''}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','month',this.value)" style="max-width:160px;"></div>`}
       <div><label class="small">Amount ($)</label><input id="addon_maintpay_amt_${p.id}" type="number" step="1" value="${p.amount||0}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
         <input type="checkbox" ${p.paid?'checked':''} onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','paid',this.checked)">
@@ -9428,7 +9484,7 @@ function renderMaintenancePaymentRow(clientId, a, p){
       </label>
       <div style="padding-bottom:6px;"><button class="secondary" style="padding:2px 8px;" onclick="removeMaintenancePayment('${clientId}','${a.id}','${p.id}')">✕</button></div>
     </div>
-    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${formatMaintenanceMonth(p.month)}: ${assistantName(a.maintenanceAssistantId)} earns $${cut.toFixed(2)} (${a.maintenanceAssistantPercent}%) ${p.paid?'— rolled into the '+formatPeriodRange(currentPayrollPeriod(new Date(p.paidDate)))+' paycheck':'— added to the next regular paycheck once this month is marked paid'}</div>` : ""}
+    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${formatMaintenanceKey(p.dueDate||p.month)}: ${assistantName(a.maintenanceAssistantId)} earns $${cut.toFixed(2)} (${a.maintenanceAssistantPercent}%) ${p.paid?'— rolled into the '+formatPeriodRange(currentPayrollPeriod(new Date(p.paidDate)))+' paycheck':'— added to the next regular paycheck once this month is marked paid'}</div>` : ""}
   `;
 }
 function updateAddOnMaintenancePayments(clientId, addOnId, fn){
@@ -9441,6 +9497,15 @@ function updateAddOnMaintenancePayments(clientId, addOnId, fn){
 // yet), at the add-on's current monthly maintenance amount.
 function addMaintenancePayment(clientId, addOnId){
   updateAddOnMaintenancePayments(clientId, addOnId, (list, a)=>{
+    // 30-day builds: the next cycle due date after the latest one logged
+    // (or the first unlogged cycle from the start date).
+    if(a.maintenanceStartDate){
+      const logged = new Set(list.map(p=>p.dueDate).filter(Boolean));
+      const latest = [...logged].sort().pop();
+      let d = a.maintenanceStartDate;
+      while((latest && d <= latest) || logged.has(d)) d = addDaysYMD(d, MAINT_CYCLE_DAYS);
+      return [...list, { id:newId("maintpay"), dueDate:d, amount:a.monthlyMaintenance||0, paid:false, paidDate:"" }];
+    }
     const latest = list.map(p=>p.month).filter(Boolean).sort().pop();
     let month = new Date().toISOString().slice(0,7);
     if(latest){
