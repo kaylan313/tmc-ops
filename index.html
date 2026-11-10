@@ -2096,6 +2096,22 @@ function clientReportHtml(report){
 // sending a report never depends on what mail app is set up on a given
 // computer. The itemized task breakdown lives in the linked report itself,
 // so this message doesn't repeat it.
+// Signed with an assistant's first name (Kaylan, Nov 2026) — KEEP IN SYNC
+// with coverNoteSignoff in functions/weeklyReports.js. The automatic Friday
+// email signs as the client's main assistant (it sends from their Gmail);
+// a manual "Copy message" signs as whoever copies it if they're on this
+// client, else the main assistant. No name = "The Modern Concierge Team".
+function coverNoteSignoff(signerName){
+  const first = String(signerName||"").trim().split(/\s+/)[0];
+  return first ? first + "\nThe Modern Concierge" : "The Modern Concierge Team";
+}
+function coverNoteSignerName(client){
+  const ids = (client && client.assistantIds) || [];
+  const me = state.currentAssistant;
+  const id = me && ids.includes(me.id) ? me.id : ids[0];
+  const a = (state.settings.assistants||[]).find(x=>x.id===id);
+  return a ? a.name : "";
+}
 function clientReportCoverNote(report, reportUrl){
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
   const noun = isPeriod ? "end-of-period" : "weekly";
@@ -2116,7 +2132,7 @@ function clientReportCoverNote(report, reportUrl){
     + " You have used " + formatHoursMinutes(report.hoursUsed)
     + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + overageLine + receiptsLine + "\n\n"
     + "Please let me know if you have any questions regarding this report.\n\n"
-    + "The Modern Concierge Team";
+    + coverNoteSignoff(coverNoteSignerName(report.client));
 }
 async function copyReportCoverNote(clientId, kind, btnEl){
   const client = state.clients.find(c=>c.id===clientId);
