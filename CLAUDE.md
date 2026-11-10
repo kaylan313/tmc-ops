@@ -146,7 +146,8 @@ Checked against Intuit's published security requirements for App Store listing:
 - Clients tab has Membership / Software views; dual clients appear in both with "Also a … client →" links.
 - **Who sees Software:** the admin login and the Director of Development only (`canViewSoftware()`; Kaylan's call, Nov 2026). **UI-only** — addOns live inside each client doc, which every session can read. Real enforcement = the per-role auth project (Security → Known remaining gap) plus moving addOns to their own collection with rules.
 - **Build phases:** `addOn.phases` (optional) + `payment.phaseId`; a payment without a phaseId is Phase 1, so old schedules need no migration. Payments stay one flat `addOn.payments` list, so alerts/emails/payroll/revenue cover every phase. Phase 1 uses the build's `flatFee`/`buildStartDate`; later phases carry their own `fee`/`startDate`/`basisAmount` (`buildAssistantCut` is per phase).
-- **Maintenance Mark paid** (`markMaintenanceFeePaid`): Dashboard alert + build card; stamps `paidDate`/`paidBy`. Maintenance runs on calendar months (`month: YYYY-MM`), so it comes back next month by itself.
+- **Maintenance Mark paid** (`markMaintenanceFeePaid`): Dashboard alert + build card; stamps `paidDate`/`paidBy`.
+- **Maintenance every 30 days:** set "First maintenance fee due" on the build (`maintenanceStartDate`) and the fee is due then and every 30 days after; rows are keyed by `dueDate` (YYYY-MM-DD). Builds with no start date keep the old calendar-month rows (`month`, due on the 1st). Cycles before `MAINT_CYCLES_TRACKED_FROM` (2026-11-01) are ignored so back-dating a start date doesn't flood the Dashboard.
 
 ## Working Conventions
 
