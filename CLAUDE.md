@@ -149,6 +149,10 @@ Checked against Intuit's published security requirements for App Store listing:
 - **Maintenance Mark paid** (`markMaintenanceFeePaid`): Dashboard alert + build card; stamps `paidDate`/`paidBy`.
 - **Maintenance every 30 days:** set "First maintenance fee due" on the build (`maintenanceStartDate`) and the fee is due then and every 30 days after; rows are keyed by `dueDate` (YYYY-MM-DD). Builds with no start date keep the old calendar-month rows (`month`, due on the 1st). Cycles before `MAINT_CYCLES_TRACKED_FROM` (2026-11-01) are ignored so back-dating a start date doesn't flood the Dashboard.
 
+## Main vs secondary assistant (Nov 2026)
+
+- A client's `assistantIds` is ordered `[main, secondary, ...older extras]`, set with two dropdowns (client editor + Reassign on the Membership tab). The client portal shows only the main assistant; the secondary has the same internal access (tasks, "My clients") but is never shown to the client.
+
 ## Working Conventions
 
 - This is a single-file app — keep it that way unless explicitly asked to split it up.

@@ -2782,6 +2782,42 @@ function assignableAssistants(alreadyIds){
   const already = new Set(alreadyIds||[]);
   return state.settings.assistants.filter(a=>(a.active!==false && !a.isContentCreator) || already.has(a.id));
 }
+// A client's assistantIds is ordered: [main, secondary, ...older extras].
+// The main assistant is who the client sees; the secondary is internal only (task access, assignments, "My
+// clients") and never shown to the client. Clients assigned to 3+ people
+// before this existed keep the extras after the first two.
+function composeAssistantIds(mainId, secondaryId, previousIds){
+  const out = [];
+  [mainId, secondaryId, ...((previousIds||[]).slice(2))].forEach(id=>{ if(id && !out.includes(id)) out.push(id); });
+  return out;
+}
+function mainAssistantId(client){ return (client.assistantIds||[])[0] || null; }
+function assistantRolesSummary(client){
+  const ids = client.assistantIds||[];
+  if(!ids.length) return "No assistant assigned yet.";
+  return "Main: " + assistantName(ids[0]) + (ids[1] ? " · Secondary: " + assistantName(ids[1]) : "") + (ids.length>2 ? " · Also: " + ids.slice(2).map(assistantName).join(", ") : "");
+}
+function assistantPickersHtml(ids, idPrefix, onchangeMain, onchangeSecondary){
+  const opts = assignableAssistants(ids);
+  const opt = (a, sel) => `<option value="${a.id}" ${sel===a.id?'selected':''}>${escHtml(a.name)}${a.active===false?' (former)':''}</option>`;
+  return `
+    <div class="row">
+      <div><label class="small">Main assistant</label>
+        <select id="${idPrefix}_main" ${onchangeMain?`onchange="${onchangeMain}"`:''}>
+          <option value="" ${!ids[0]?'selected':''}>— Select —</option>
+          ${opts.map(a=>opt(a, ids[0])).join("")}
+        </select>
+      </div>
+      <div><label class="small">Secondary assistant (optional)</label>
+        <select id="${idPrefix}_secondary" ${onchangeSecondary?`onchange="${onchangeSecondary}"`:''}>
+          <option value="" ${!ids[1]?'selected':''}>— None —</option>
+          ${opts.map(a=>opt(a, ids[1])).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="small" style="margin-top:4px;">The client only ever sees their main assistant. The secondary assistant gets the same access to the client's tasks but is never shown to the client.</div>
+    ${ids.length>2 ? `<div class="small" style="margin-top:4px;">Also assigned from before: ${ids.slice(2).map(id=>escHtml(assistantName(id))).join(", ")}</div>` : ""}`;
+}
 // A client's package hours are quoted on their own (monthly/quarterly/annual)
 // billing cycle, not on the semi-monthly payroll calendar. To compare what a
 // client paid for against what got clocked in a given payroll period, prorate
@@ -6997,8 +7033,8 @@ function renderClientListItem(c){
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
       <strong>${c.name}</strong> ${endingSoon ? `<span class="alert warn" style="margin:0;padding:2px 8px;">contract ends ${fmtDate(termEnd)}</span>` : ''} ${alsoSoftware ? `<a href="#" class="small" onclick="event.stopPropagation();openClientAs('${c.id}','software');return false;">Also a Software client →</a>` : ''} ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
-      <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
-        const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
+      <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map((id,i)=>{
+        const a = state.settings.assistants.find(x=>x.id===id); return (a?a.name:id) + (i===1 ? " (secondary)" : "");
       }).join(", ")}</div>
       ${dates ? `<div class="small">${dates}</div>` : ""}
     </div>
@@ -7111,13 +7147,15 @@ function renderClientsList(){
 function openClient(id){ state.selectedClientId = id; state.crmSubTab="tasks"; state.profileOpenSections = new Set(["visit"]); render(); }
 function openClientEditor(id){
   const existing = id ? state.clients.find(x=>x.id===id) : null;
-  const client = existing || { name:"", packageHours:"", cycleType:"monthly", assistantIds:[] };
+  // A copy, so Cancel really discards edits (the modal used to edit the
+  // live client object in place).
+  const client = existing ? { ...existing, assistantIds:[...(existing.assistantIds||[])] } : { name:"", packageHours:"", cycleType:"monthly", assistantIds:[] };
   state.modal = { type:"clientEditor", client };
   render();
 }
-function toggleClientAssistantDraft(id, checked){
-  const list = state.modal.client.assistantIds || [];
-  state.modal.client.assistantIds = checked ? [...list, id] : list.filter(x=>x!==id);
+function setClientAssistantDraft(){
+  const prev = state.modal.client.assistantIds || [];
+  state.modal.client.assistantIds = composeAssistantIds(document.getElementById("cf_asst_main").value, document.getElementById("cf_asst_secondary").value, prev);
 }
 // Permanent, not the same as cancelling/pausing a real client — for test
 // records or ones created by mistake that shouldn't show up anywhere at
@@ -7253,7 +7291,7 @@ function renderClientOnboardingChecklist(client){
     <div class="card">
       <div class="flex-between"><h3>Onboarding checklist</h3><span class="small">${doneCount}/${items.length} done</span></div>
       <div class="small" style="margin-bottom:6px;">Home/business steps shown below are based on "Client type" further down — currently <strong>${serviceType}</strong>. Set it to "Both" for a client like Susan who needs both.</div>
-      <div class="checklist-item"><span class="small">${assistantAssigned ? '✅' : '⬜'} Assistant assigned ${assistantAssigned ? '— '+((client.assistantIds||[]).map(assistantName).join(', ')) : '(set on Membership tab)'}</span></div>
+      <div class="checklist-item"><span class="small">${assistantAssigned ? '✅' : '⬜'} Assistant assigned ${assistantAssigned ? '— '+escHtml(assistantRolesSummary(client)) : '(set on Membership tab)'}</span></div>
       <div class="checklist-item"><span class="small">${portalCodeSet ? '✅' : '⬜'} Client portal code set ${portalCodeSet ? '' : '(set on Membership tab)'}</span></div>
       <div class="checklist-item"><span class="small">${client.contractSigned || client.contractSignedExternally ? '✅' : '⬜'} Contract signed ${client.contractSigned ? '— by '+client.contractSignedName : client.contractSignedExternally ? '— signed externally' : '(sign it on the Service Agreement section below)'}</span></div>
       ${items.map(i=>`
@@ -8924,7 +8962,7 @@ function renderClientMembership(client){
         <h3>Assigned assistants</h3>
         <button class="secondary" onclick="openReassignModal('${client.id}')">Reassign</button>
       </div>
-      <div class="small">${(client.assistantIds||[]).map(assistantName).join(", ") || "No assistant assigned yet."}</div>
+      <div class="small">${escHtml(assistantRolesSummary(client))}</div>
     </div>
   `;
 }
@@ -9624,11 +9662,7 @@ function renderReassignModal(client){
         Past time entries and completed tasks keep whoever actually did the work — nothing there changes.
       </div>
       <div>
-        ${assignableAssistants(client.assistantIds).map(a=>`
-          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;margin-bottom:6px;font-size:13px;">
-            <input type="checkbox" value="${a.id}" ${(client.assistantIds||[]).includes(a.id)?'checked':''} class="reassign_assistant"> ${a.name}${a.active===false?' (former)':''}
-          </label>
-        `).join("")}
+        ${assistantPickersHtml(client.assistantIds||[], "reassign")}
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
@@ -9638,8 +9672,10 @@ function renderReassignModal(client){
   `;
 }
 function confirmReassign(clientId){
-  const newIds = Array.from(document.querySelectorAll(".reassign_assistant:checked")).map(el=>el.value);
-  if(newIds.length===0){ alert("Select at least one assistant."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  const mainId = document.getElementById("reassign_main").value;
+  if(!mainId){ alert("Pick a main assistant."); return; }
+  const newIds = composeAssistantIds(mainId, document.getElementById("reassign_secondary").value, client && client.assistantIds);
   upsert("clients", clientId, { assistantIds: newIds });
   state.tasks.filter(t=>t.clientId===clientId && t.status!=="Done").forEach(t=>{
     upsert("tasks", t.id, { assignees: newIds });
@@ -13400,10 +13436,10 @@ function renderClientPortal(){
           <h3>Service Agreement</h3>
           ${renderContractSectionBody(client)}
         </div>
-        ${isSigned && (client.assistantIds||[]).length ? `
+        ${isSigned && mainAssistantId(client) ? `
         <div class="card">
-          <h3>Your assistant${(client.assistantIds||[]).length>1?'s':''}</h3>
-          ${(client.assistantIds||[]).map(id=>{
+          <h3>Your assistant</h3>
+          ${[mainAssistantId(client)].map(id=>{
             const a = state.settings.assistants.find(x=>x.id===id);
             if(!a) return "";
             return `<div class="list-item">
@@ -14340,12 +14376,7 @@ function renderClientEditorModal(client){
         </div>
       </div>
       <div style="margin-top:8px;">
-        <label class="small">Assigned assistants</label>
-        ${assignableAssistants(c.assistantIds).map(a=>`
-          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:13px;">
-            <input type="checkbox" value="${a.id}" ${(c.assistantIds||[]).includes(a.id)?'checked':''} class="cf_assistant" onchange="toggleClientAssistantDraft('${a.id}',this.checked)"> ${a.name}${a.active===false?' (former)':''}
-          </label>
-        `).join("")}
+        ${assistantPickersHtml(c.assistantIds||[], "cf_asst", "setClientAssistantDraft()", "setClientAssistantDraft()")}
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
