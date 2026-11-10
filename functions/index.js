@@ -1750,7 +1750,7 @@ exports.disconnectReportGmail = onCall(async (request) => {
   return weeklyReports.disconnect(assistantId);
 });
 // Admin "Send me a test" — emails this week's recap for one client to the
-// given address only. Never the client, no BCC, not marked as sent.
+// given address only. Never the client, no CC/BCC, not marked as sent.
 exports.sendWeeklyReportTest = onCall({ timeoutSeconds: 120, memory: "512MiB" }, async (request) => {
   requireSignedIn(request);
   const { clientId, to } = request.data || {};
@@ -1761,9 +1761,9 @@ exports.sendWeeklyReportTest = onCall({ timeoutSeconds: 120, memory: "512MiB" },
   // client's report to an arbitrary address.
   const settingsSnap = await admin.firestore().collection("settings").doc("access").get();
   const sd = settingsSnap.exists ? settingsSnap.data() : {};
-  const allowed = new Set([sd.weeklyReportBcc, sd.adminNotifyEmail, ...((sd.assistants || []).map((a) => a.email))]
+  const allowed = new Set([...weeklyReports.recapCcList(sd), weeklyReports.recapBccSupport(sd), sd.adminNotifyEmail, ...((sd.assistants || []).map((a) => a.email))]
     .filter(Boolean).map((e) => String(e).trim().toLowerCase()));
-  if (!allowed.has(String(to).trim().toLowerCase())) throw new HttpsError("permission-denied", "Tests can only go to the BCC email, the admin email, or a team member's email.");
+  if (!allowed.has(String(to).trim().toLowerCase())) throw new HttpsError("permission-denied", "Tests can only go to a CC email, the support@ BCC, the admin email, or a team member's email.");
   try {
     return await weeklyReports.sendTest(clientId, String(to).trim());
   } catch (err) {

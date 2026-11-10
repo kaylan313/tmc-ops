@@ -12006,7 +12006,7 @@ function updateMyNotifyPref(key, checked){
 // ---- Automatic Friday 4pm weekly recaps (functions/weeklyReports.js) ----
 // Each assistant connects their own Gmail (send-only) so their clients'
 // recaps come from them; anyone not connected falls back to support@ with
-// replies going to them. Admin turns the whole thing on, sets the BCC,
+// replies going to them. Admin turns the whole thing on, sets the CC (Kaylan + Tori) and support@ BCC,
 // sends test copies, and sees the last run's log.
 function fetchReportGmailStatus(force){
   const r = state.reportGmail = state.reportGmail || { byId:{}, loadedAt:0, inFlight:false };
@@ -12074,6 +12074,37 @@ function setWeeklyRecapSetting(field, value){
   upsert("settings","access", { [field]: value });
   render();
 }
+// KEEP IN SYNC with recapCcList / recapBccSupport in functions/weeklyReports.js.
+// CC = typed emails (Kaylan) + team members ticked by id (Tori, so her
+// current email is always used). Never set = the admin notify email.
+const WEEKLY_RECAP_SUPPORT_BCC = "support@themodernconcierge.co";
+function weeklyRecapTypedCc(){
+  const s = state.settings;
+  if(Array.isArray(s.weeklyReportCc)) return s.weeklyReportCc;
+  return s.weeklyReportCc===undefined && s.adminNotifyEmail ? [s.adminNotifyEmail] : [];
+}
+function weeklyRecapCcList(){
+  const ids = state.settings.weeklyReportCcAssistantIds || [];
+  const team = (state.settings.assistants||[]).filter(a=>ids.includes(a.id) && a.active!==false).map(a=>a.email);
+  const seen = new Set(), out = [];
+  [...weeklyRecapTypedCc(), ...team].forEach(e=>{ const t=String(e||"").trim(); if(/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(t) && !seen.has(t.toLowerCase())){ seen.add(t.toLowerCase()); out.push(t); } });
+  return out;
+}
+function weeklyRecapBccSupport(){
+  const v = state.settings.weeklyReportBccSupport;
+  return v===undefined ? WEEKLY_RECAP_SUPPORT_BCC : String(v||"").trim();
+}
+function setWeeklyRecapCcEmails(text){
+  const list = String(text||"").split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean);
+  const bad = list.filter(e=>!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+  if(bad.length){ alert("These don't look like email addresses: " + bad.join(", ")); render(); return; }
+  setWeeklyRecapSetting("weeklyReportCc", list);
+}
+function toggleWeeklyRecapCcAssistant(id, on){
+  const ids = new Set(state.settings.weeklyReportCcAssistantIds||[]);
+  on ? ids.add(id) : ids.delete(id);
+  setWeeklyRecapSetting("weeklyReportCcAssistantIds", [...ids]);
+}
 function fetchLastWeeklyRun(force){
   const w = state.weeklyRun = state.weeklyRun || { doc:null, loadedAt:0, inFlight:false };
   if(w.inFlight || (!force && Date.now()-w.loadedAt < 5*60*1000)) return;
@@ -12115,17 +12146,26 @@ function renderWeeklyRecapAdminCard(){
   const people = (state.settings.assistants||[]).filter(a=>a.active!==false && primaryIds.has(a.id));
   const run = state.weeklyRun && state.weeklyRun.doc;
   const clientOpts = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus||c.clientStatus==='active') && isMembershipClient(c)).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
-  const bccDefault = state.settings.weeklyReportBcc || state.settings.adminNotifyEmail || "";
+  const ccList = weeklyRecapCcList();
+  const bccSupport = weeklyRecapBccSupport();
+  const ccIds = state.settings.weeklyReportCcAssistantIds || [];
+  const team = (state.settings.assistants||[]).filter(a=>a.active!==false).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const bccDefault = ccList[0] || state.settings.adminNotifyEmail || bccSupport || "";
   return `
     <div class="card">
       <h3>Automatic Friday recaps</h3>
-      <div class="small" style="margin-bottom:10px;">Every Friday at 4pm Central, each active Membership client with an email gets their weekly recap from their main assistant's Gmail, BCC'd to the address below, with receipt photos from that week's card purchases attached. Skips clients already sent by hand that week, clients turned off on their Email Templates tab, and weeks with no time, completed tasks or purchases.</div>
+      <div class="small" style="margin-bottom:10px;">Every Friday at 4pm Central, each active Membership client with an email gets their weekly recap from their main assistant's Gmail, CC'd to the people below and BCC'd to support@, with receipt photos from that week's card purchases attached. The secondary assistant is never copied. Skips clients already sent by hand that week, clients turned off on their Email Templates tab, and weeks with no time, completed tasks or purchases.</div>
       <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:10px;">
         <input type="checkbox" ${on?'checked':''} onchange="setWeeklyRecapSetting('weeklyReportAutoSend', this.checked)"> <strong>Auto-send weekly recaps</strong>
       </label>
-      <div><label class="small">BCC every recap to</label><input type="email" id="wr_bcc" value="${escHtml(state.settings.weeklyReportBcc||'')}" placeholder="${escHtml(state.settings.adminNotifyEmail||'kaylan@…')}" onchange="setWeeklyRecapSetting('weeklyReportBcc', this.value.trim())"></div>
-      ${!state.settings.weeklyReportBcc && state.settings.adminNotifyEmail ? `<div class="small" style="margin-top:4px;">Blank = your admin email (${escHtml(state.settings.adminNotifyEmail)}).</div>` : ""}
-      ${!bccDefault ? `<div class="small" style="margin-top:4px;color:var(--warn);">No BCC set — add one so you get a copy of every recap.</div>` : ""}
+      <div><label class="small">CC these emails (Kaylan) — separate with commas</label><input type="text" id="wr_cc" value="${escHtml(weeklyRecapTypedCc().join(", "))}" placeholder="kaylan@…" onchange="setWeeklyRecapCcEmails(this.value)"></div>
+      <div class="small" style="margin-top:8px;">Also CC these team members (Tori) — uses their current email from their Team card:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;">
+        ${team.map(a=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" ${ccIds.includes(a.id)?'checked':''} onchange="toggleWeeklyRecapCcAssistant('${a.id}', this.checked)"> ${escHtml(a.name||'')}${a.email?'':' <span style="color:var(--warn);">(no email)</span>'}</label>`).join("") || `<span class="small">No team members yet.</span>`}
+      </div>
+      <div class="small" style="margin-top:6px;">${ccList.length ? `CC on every recap: <strong>${ccList.map(escHtml).join(", ")}</strong>` : `<span style="color:var(--warn);">No CC set — add Kaylan and tick Tori.</span>`}</div>
+      <div style="margin-top:10px;"><label class="small">BCC every recap to</label><input type="email" id="wr_bcc" value="${escHtml(bccSupport)}" placeholder="${WEEKLY_RECAP_SUPPORT_BCC}" onchange="setWeeklyRecapSetting('weeklyReportBccSupport', this.value.trim())"></div>
+      <div class="small" style="margin-top:4px;">${bccSupport ? `Left off when a recap is sent from support@ itself (assistant not connected), since support@'s Sent folder already has it.` : `<span style="color:var(--warn);">No BCC — support@ won't get a copy of recaps sent from assistants' Gmail.</span>`}</div>
       <div class="section-label" style="margin-top:14px;font-size:11px;letter-spacing:1.5px;color:var(--rose-dark);font-weight:600;">Who's connected</div>
       ${people.length ? people.map(a=>{ const st = statuses[a.id];
         return `<div class="small" style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;"><span>${escHtml(a.name)}</span><span style="color:${st&&st.connected?'var(--ok)':'var(--warn)'};">${!st ? (state.reportGmail && state.reportGmail.unavailable ? 'not deployed yet' : 'checking…') : st.connected ? '✓ '+escHtml(st.email||'connected') : 'Not connected — sends from support@'}</span></div>`; }).join("")
@@ -12141,7 +12181,7 @@ function renderWeeklyRecapAdminCard(){
       <div class="section-label" style="margin-top:14px;font-size:11px;letter-spacing:1.5px;color:var(--rose-dark);font-weight:600;">Last run</div>
       ${!run ? `<div class="small">No automatic run yet.</div>` : run.disabled ? `<div class="small">${new Date(run.ranAt).toLocaleString()} — auto-send was off, nothing sent.</div>` : `
         <div class="small" style="margin-bottom:4px;">${new Date(run.ranAt).toLocaleString()} · ${(run.results||[]).filter(r=>r.status==='sent').length} sent</div>
-        ${(run.results||[]).map(r=>`<div class="small" style="padding:2px 0;">${r.status==='sent' ? '✓' : r.status==='failed' ? '<span style="color:var(--danger);">✕</span>' : '–'} ${escHtml(r.clientName||'')} ${r.status==='sent' ? `<span style="color:#8a7a72;">from ${escHtml(r.sentFrom||'')}${r.receiptsAttached?` · ${r.receiptsAttached} receipt${r.receiptsAttached===1?'':'s'}`:''}${r.receiptsTooLarge?` · ${r.receiptsTooLarge} too large`:''}</span>` : `<span style="color:${r.status==='failed'?'var(--danger)':'#8a7a72'};">${escHtml(r.reason||'')}</span>`}</div>`).join("")}`}
+        ${(run.results||[]).map(r=>`<div class="small" style="padding:2px 0;">${r.status==='sent' ? '✓' : r.status==='failed' ? '<span style="color:var(--danger);">✕</span>' : '–'} ${escHtml(r.clientName||'')} ${r.status==='sent' ? `<span style="color:#8a7a72;">from ${escHtml(r.sentFrom||'')}${(r.cc||[]).length?` · cc ${escHtml(r.cc.join(', '))}`:''}${r.bcc?` · bcc ${escHtml(r.bcc)}`:''}${r.receiptsAttached?` · ${r.receiptsAttached} receipt${r.receiptsAttached===1?'':'s'}`:''}${r.receiptsTooLarge?` · ${r.receiptsTooLarge} too large`:''}</span>` : `<span style="color:${r.status==='failed'?'var(--danger)':'#8a7a72'};">${escHtml(r.reason||'')}</span>`}</div>`).join("")}`}
     </div>`;
 }
 // Team-member view of the Team tab: a contact list only. Deliberately reads

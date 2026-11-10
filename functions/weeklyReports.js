@@ -15,7 +15,11 @@
  *     Receipt photos for purchases the assistant logged on the client's
  *     card that week (cardPurchases) are ATTACHED to the email, plus any
  *     task receipts if the client has "include receipts" on.
- *  4. BCCs settings/access.weeklyReportBcc (falls back to adminNotifyEmail).
+ *  4. CCs Kaylan + Tori (settings/access.weeklyReportCc emails plus
+ *     weeklyReportCcAssistantIds, so a team member's current email is used)
+ *     and BCCs support@ (weeklyReportBccSupport). When the email already
+ *     goes out FROM support@ (assistant not connected) the BCC is dropped —
+ *     support@'s Sent folder has the copy. Test sends get no CC/BCC.
  *  5. Marks the client weeklyRecapSentForWeek = <that Friday> so a retry,
  *     the test button, or a manual "Copy message" never double-sends.
  *
@@ -341,12 +345,18 @@ function oneLine(s) { return String(s || "").replace(/[\r\n]+/g, " ").trim(); }
 // Plain RFC 822 message (not base64url) — sent through Gmail's media
 // upload endpoint so receipt photos can go past the 5MB JSON-body limit.
 function wrap76(b64) { return b64.replace(/.{1,76}/g, "$&\r\n").trimEnd(); }
-function buildMimeMessage({ from, to, replyTo, bcc, subject, bodyText, attachments }) {
+function addressList(list) {
+  return (Array.isArray(list) ? list : [list]).map(oneLine).filter(Boolean).join(", ");
+}
+function buildMimeMessage({ from, to, replyTo, cc, bcc, subject, bodyText, attachments }) {
   const lines = [];
   if (from) lines.push(`From: ${from}`);
   lines.push(`To: ${oneLine(to)}`);
   if (replyTo) lines.push(`Reply-To: ${oneLine(replyTo)}`);
-  if (bcc) lines.push(`Bcc: ${oneLine(bcc)}`);
+  const ccLine = cc ? addressList(cc) : "";
+  if (ccLine) lines.push(`Cc: ${ccLine}`);
+  const bccLine = bcc ? addressList(bcc) : "";
+  if (bccLine) lines.push(`Bcc: ${bccLine}`);
   lines.push(`Subject: ${encodeMimeHeader(subject)}`, "MIME-Version: 1.0");
   const textPart = ["Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: base64", "", wrap76(Buffer.from(bodyText, "utf8").toString("base64"))];
   if (!attachments || !attachments.length) return [...lines, ...textPart].join("\r\n");
@@ -371,6 +381,26 @@ function safeName(s) { return String(s || "").replace(/[\\/:*?"<>|]+/g, "-").rep
 // attachments under ~17MB; anything beyond is still in the linked report
 // (task receipts) or noted in the email (card purchases).
 const MAX_ATTACH_BYTES = 17 * 1024 * 1024;
+const DEFAULT_SUPPORT_BCC = "support@themodernconcierge.co";
+const normEmail = (e) => String(e || "").trim().toLowerCase();
+const looksLikeEmail = (e) => /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(String(e || "").trim());
+// CC list for every real recap: typed emails (Kaylan) + team members picked
+// by id (Tori), so a changed team email is picked up automatically. Never
+// set yet = the admin notify email, so Kaylan is CC'd out of the box.
+function recapCcList(settings) {
+  const typed = Array.isArray(settings.weeklyReportCc) ? settings.weeklyReportCc
+    : (settings.weeklyReportCc === undefined && settings.adminNotifyEmail ? [settings.adminNotifyEmail] : []);
+  const ids = Array.isArray(settings.weeklyReportCcAssistantIds) ? settings.weeklyReportCcAssistantIds : [];
+  const fromTeam = (settings.assistants || []).filter((a) => ids.includes(a.id) && a.active !== false).map((a) => a.email);
+  const seen = new Set(), out = [];
+  [...typed, ...fromTeam].forEach((e) => { const t = String(e || "").trim(); if (looksLikeEmail(t) && !seen.has(normEmail(t))) { seen.add(normEmail(t)); out.push(t); } });
+  return out;
+}
+// Never set = support@; cleared on purpose (empty string) = no BCC.
+function recapBccSupport(settings) {
+  const v = settings.weeklyReportBccSupport === undefined ? DEFAULT_SUPPORT_BCC : String(settings.weeklyReportBccSupport || "").trim();
+  return looksLikeEmail(v) ? v : "";
+}
 function receiptAttachments(cardPurchases, report) {
   const list = [];
   cardPurchases.forEach((p) => {
@@ -460,12 +490,8 @@ module.exports = function createWeeklyReports(deps) {
     return { settings, clients, tasks, entriesByClient, cardPurchases };
   }
 
-  function bccFor(settings) {
-    return String(settings.weeklyReportBcc || settings.adminNotifyEmail || "").trim();
-  }
-
   // Builds + saves the report and sends it. `override` (test sends) swaps
-  // the recipient and drops the BCC.
+  // the recipient and drops CC and BCC — a test never reaches anyone else.
   async function sendOne(client, ctx, window, override) {
     const { settings } = ctx;
     const data = {
@@ -492,26 +518,33 @@ module.exports = function createWeeklyReports(deps) {
     let bodyText = clientReportCoverNote(report, url, attached.length);
     if (skipped.length) bodyText = bodyText.replace("The Modern Concierge Team", "(" + skipped.length + " more receipt" + (skipped.length === 1 ? " was" : "s were") + " too large to attach — just reply and I'll send " + (skipped.length === 1 ? "it" : "them") + " separately.)\n\nThe Modern Concierge Team");
     const to = override ? override.to : client.email;
-    const bcc = override ? "" : bccFor(settings);
+    // CC: Kaylan + Tori, minus the client (and, below, minus whoever is
+    // sending it). BCC: support@ (dropped below when support@ is the sender).
+    const cc = override ? [] : recapCcList(settings).filter((e) => normEmail(e) !== normEmail(to));
+    const bccSupport = override ? "" : recapBccSupport(settings);
 
-    let sentFrom = null, via = null;
+    let sentFrom = null, via = null, sentCc = [], sentBcc = null;
     const own = await getAssistantGmail(assistantId).catch((e) => { console.error("weekly report: assistant Gmail load failed", assistantId, e); return null; });
     if (own) {
       const from = own.email ? `${encodeMimeHeader(oneLine(assistant && assistant.name ? assistant.name + " – The Modern Concierge" : "The Modern Concierge"))} <${oneLine(own.email)}>` : null;
+      const ccHere = cc.filter((e) => normEmail(e) !== normEmail(own.email));
+      const bcc = bccSupport && normEmail(bccSupport) !== normEmail(own.email) ? bccSupport : "";
       await google.gmail({ version: "v1", auth: own.client }).users.messages.send({
-        userId: "me", requestBody: {}, media: { mimeType: "message/rfc822", body: buildMimeMessage({ from, to, bcc, subject, bodyText, attachments: attached }) },
+        userId: "me", requestBody: {}, media: { mimeType: "message/rfc822", body: buildMimeMessage({ from, to, cc: ccHere, bcc, subject, bodyText, attachments: attached }) },
       });
-      sentFrom = own.email || "assistant"; via = "assistant";
+      sentFrom = own.email || "assistant"; via = "assistant"; sentCc = ccHere; sentBcc = bcc || null;
     } else {
       const support = await getSupportGmailClient();
       if (!support) throw new Error("No Gmail connected for " + (assistant ? assistant.name : "this client's assistant") + ", and support@ isn't connected either");
       const replyTo = assistant && assistant.email ? assistant.email : null;
+      // Sent FROM support@ already, so its Sent folder holds the copy — no
+      // BCC back to itself.
       await google.gmail({ version: "v1", auth: support }).users.messages.send({
-        userId: "me", requestBody: {}, media: { mimeType: "message/rfc822", body: buildMimeMessage({ to, replyTo, bcc, subject, bodyText, attachments: attached }) },
+        userId: "me", requestBody: {}, media: { mimeType: "message/rfc822", body: buildMimeMessage({ to, replyTo, cc, subject, bodyText, attachments: attached }) },
       });
-      sentFrom = "support@"; via = "support";
+      sentFrom = "support@"; via = "support"; sentCc = cc; sentBcc = null;
     }
-    return { report, url, sentFrom, via, assistantName: assistant ? assistant.name : null, receiptsAttached: attached.length, receiptsTooLarge: skipped.length };
+    return { report, url, sentFrom, via, assistantName: assistant ? assistant.name : null, receiptsAttached: attached.length, receiptsTooLarge: skipped.length, cc: sentCc, bcc: sentBcc };
   }
 
   // After a real send: same follow-ups copyReportCoverNote does in the app.
@@ -562,18 +595,18 @@ module.exports = function createWeeklyReports(deps) {
       try {
         const out = await sendOne(client, ctx, window, null);
         await afterSend(client, ctx, window, out.report);
-        results.push({ clientId: client.id, clientName: client.name, status: "sent", to: client.email, sentFrom: out.sentFrom, via: out.via, assistantName: out.assistantName, receiptsAttached: out.receiptsAttached, receiptsTooLarge: out.receiptsTooLarge });
+        results.push({ clientId: client.id, clientName: client.name, status: "sent", to: client.email, sentFrom: out.sentFrom, via: out.via, assistantName: out.assistantName, receiptsAttached: out.receiptsAttached, receiptsTooLarge: out.receiptsTooLarge, cc: out.cc, bcc: out.bcc });
       } catch (err) {
         console.error("weekly report failed for", client.id, err);
         results.push({ clientId: client.id, clientName: client.name, status: "failed", reason: String((err && err.message) || err).slice(0, 300) });
       }
     }
-    await runRef.set({ ranAt: new Date().toISOString(), disabled: false, bcc: bccFor(ctx.settings) || null, results });
+    await runRef.set({ ranAt: new Date().toISOString(), disabled: false, cc: recapCcList(ctx.settings), bccSupport: recapBccSupport(ctx.settings) || null, results });
     return { sent: results.filter((r) => r.status === "sent").length, results };
   }
 
   // Admin "Send me a test": builds this week's report for one client and
-  // emails it ONLY to `to` (never the client, no BCC, not marked as sent).
+  // emails it ONLY to `to` (never the client, no CC/BCC, not marked as sent).
   async function sendTest(clientId, to) {
     process.env.TZ = REPORT_TZ;
     const ctx = await loadData(400);
@@ -597,7 +630,7 @@ module.exports = function createWeeklyReports(deps) {
     return { connected: false };
   }
 
-  return { runWeekly, sendTest, saveConnection, statusFor, disconnect, REPORT_GMAIL_SCOPE, REPORT_TZ,
+  return { runWeekly, sendTest, saveConnection, statusFor, disconnect, recapCcList, recapBccSupport, REPORT_GMAIL_SCOPE, REPORT_TZ,
     // exported for local testing only
     _test: { buildWeeklyReport, clientReportHtml, clientReportCoverNote, currentReportWeek, buildMimeMessage, receiptAttachments } };
 };
