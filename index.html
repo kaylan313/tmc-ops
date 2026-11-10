@@ -6298,11 +6298,14 @@ function renderVendorTicketDetailModal(vendorId, ticketId){
         ${ticket.clientCharged && !ticket.vendorPaid ? `<button class="secondary" style="margin-top:8px;" onclick="markVendorTicketPaid('${vendor.id}','${ticket.id}',true)">Mark ${escHtml(vendor.name||'vendor')} paid</button>` : ""}
         ${ticket.vendorPaid ? `<div class="small" style="color:var(--ok);margin-top:8px;">✓ Paid ${escHtml(vendor.name||'')} on ${new Date(ticket.vendorPaidAt).toLocaleDateString()} <a href="#" onclick="markVendorTicketPaid('${vendor.id}','${ticket.id}',false);return false;">Undo</a></div>` : ""}
       ` : ""}
-      ${(ticket.receipts||[]).length ? `
       <div style="margin-top:10px;">
         <label class="small" style="font-weight:600;">Receipts</label>
-        ${ticket.receipts.map(r=>`<div class="small">📎 <a href="${r.dataUrl}" download="${r.name}">${escHtml(r.name||'receipt')}</a> — ${new Date(r.uploadedAt).toLocaleDateString()}</div>`).join("")}
-      </div>` : ""}
+        ${(ticket.receipts||[]).length ? ticket.receipts.map(r=>`<div class="small" style="display:flex;align-items:center;gap:8px;margin:2px 0;">📎 <a href="${r.dataUrl}" download="${r.name}">${escHtml(r.name||'receipt')}</a> — ${new Date(r.uploadedAt).toLocaleDateString()}${r.uploadedByName ? ` · ${escHtml(r.uploadedByName)}` : ''}${isAdmin && vendorTicketStage(ticket)!=="paid" ? ` <button class="danger" style="padding:1px 6px;" onclick="removeVendorTicketReceipt('${vendor.id}','${ticket.id}','${r.id}')">Remove</button>` : ''}</div>`).join("") : `<div class="small">None uploaded yet.</div>`}
+        <div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <input type="file" id="vp_receipt_${ticket.id}" accept="image/*,.pdf">
+          <button class="secondary" onclick="uploadVendorTicketReceipt('${vendor.id}','${ticket.id}')">Upload receipt</button>
+        </div>
+      </div>
       ${renderVendorTicketDiscussion(vendor.id, ticket)}
       ${isAdmin ? (vendorTicketStage(ticket)==="paid"
         ? `<div class="small" style="margin-top:14px;">Paid &amp; closed — kept on record, including its receipts.</div>`
@@ -6473,7 +6476,8 @@ async function uploadVendorTicketReceipt(vendorId, ticketId){
   }
   addVendorTicketReceipt(vendorId, ticketId, {
     id: newId("receipt"), name: file.name, type: file.type || "application/octet-stream",
-    dataUrl, uploadedAt: new Date().toISOString()
+    dataUrl, uploadedAt: new Date().toISOString(),
+    uploadedByName: state.role==="vendor" ? (vendor.name||"Vendor") : state.role==="admin" ? "Admin" : (state.currentAssistant && state.currentAssistant.name) || ""
   });
   input.value = "";
 }
