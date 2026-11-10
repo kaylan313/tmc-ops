@@ -12119,7 +12119,7 @@ function renderWeeklyRecapAdminCard(){
   return `
     <div class="card">
       <h3>Automatic Friday recaps</h3>
-      <div class="small" style="margin-bottom:10px;">Every Friday at 4pm Central, each active Membership client with an email gets their weekly recap from their main (first-listed) assistant's Gmail, BCC'd to the address below, with receipt photos from that week's card purchases attached. Skips clients already sent by hand that week, clients turned off on their Email Templates tab, and weeks with no time, completed tasks or purchases.</div>
+      <div class="small" style="margin-bottom:10px;">Every Friday at 4pm Central, each active Membership client with an email gets their weekly recap from their main assistant's Gmail, BCC'd to the address below, with receipt photos from that week's card purchases attached. Skips clients already sent by hand that week, clients turned off on their Email Templates tab, and weeks with no time, completed tasks or purchases.</div>
       <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:10px;">
         <input type="checkbox" ${on?'checked':''} onchange="setWeeklyRecapSetting('weeklyReportAutoSend', this.checked)"> <strong>Auto-send weekly recaps</strong>
       </label>

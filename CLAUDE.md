@@ -154,7 +154,7 @@ Checked against Intuit's published security requirements for App Store listing:
 - A client's `assistantIds` is ordered `[main, secondary, ...older extras]`, set with two dropdowns (client editor + Reassign on the Membership tab). The client portal shows only the main assistant; the secondary has the same internal access (tasks, "My clients") but is never shown to the client.
 ## Automatic Friday weekly recaps (Nov 2026)
 
-- `functions/weeklyReports.js`, scheduled as `sendWeeklyClientReports` (every **Friday 4:00pm Central**). For each active Membership client with an email, it builds the same Sat–Fri recap as the "Copy message" button, saves it to `reports/`, and emails the cover note + link **from the client's main (first in `assistantIds`) assistant's own Gmail**, **BCC'd** to `settings/access.weeklyReportBcc` (falls back to `adminNotifyEmail`).
+- `functions/weeklyReports.js`, scheduled as `sendWeeklyClientReports` (every **Friday 4:00pm Central**). For each active Membership client with an email, it builds the same Sat–Fri recap as the "Copy message" button, saves it to `reports/`, and emails the cover note + link **from the client's main assistant's own Gmail** (`assistantIds[0]`, set with the Main assistant dropdown), **BCC'd** to `settings/access.weeklyReportBcc` (falls back to `adminNotifyEmail`).
 - **Receipts:** photos from that week's `cardPurchases` for the client are attached to the email (plus task receipts if the client has "include receipts" on; those get cleared from the tasks after sending, same as Copy message). ~17MB cap per email; extras are mentioned in the email.
 - **Still clocked in at send time = In progress** on the report (both the app's `buildClientReport` and the function — the report code is duplicated in `weeklyReports.js`, marked KEEP IN SYNC).
 - **Off by default.** Admin Team tab → "Automatic Friday recaps": on/off switch, BCC, who's connected, "Send test" (team emails only, never the client), last run log (`weeklyReportRuns/{friday}`). Per-client opt-out on the client's Email Templates tab (`autoWeeklyReport:false`).
@@ -164,7 +164,7 @@ Checked against Intuit's published security requirements for App Store listing:
   1. Google Cloud Console (`modern-co-dashboard`) → OAuth consent screen → add scope `https://www.googleapis.com/auth/gmail.send` if it isn't already listed (support@ uses it). If the app is External/Testing, every assistant's Google address must be a test user, or set it to Internal.
   2. `firebase deploy --only functions,firestore:rules,hosting` from `tmc-ops/` (hosting = updated `public/gmail-connected.html`). The first deploy of a scheduled function enables Cloud Scheduler; accept if prompted.
   3. Cloud Run → grant `allUsers` the **Cloud Run Invoker** role on `getreportgmailauthconfig`, `getreportgmailstatus`, `disconnectreportgmail`, `sendweeklyreporttest` (same as the calendar callables). `sendweeklyclientreports` stays private.
-  4. In the app: set the BCC, have each assistant connect, check each client's first-listed assistant is the right sender, send yourself a test, then tick **Auto-send weekly recaps**.
+  4. In the app: set the BCC, have each assistant connect, set each client's Main assistant (Membership tab → Reassign), send yourself a test, then tick **Auto-send weekly recaps**.
 
 ## Working Conventions
 
