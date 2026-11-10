@@ -825,7 +825,7 @@ function seedPreviewData(){
   const settings = { ...SEED_SETTINGS, adminPasscode: "preview", assistants };
   const c2 = { id:"client_preview_2", name:"Jordan Sample", packageHours:10, packagePrice:500, cycleType:"monthly",
     renewalDate: new Date(now - 20*24*3600000).toISOString().slice(0,10), assistantIds:["asst_2"], email:"jordan@example.com",
-    portalCode:"preview-client2", termType:"pilot", clientStatus:"active", createdAt: hoursAgo(24*20), notes:[],
+    portalCode:"preview-client2", termType:"pilot", termStartDate: new Date(now - 20*24*3600000).toISOString().slice(0,10), clientStatus:"active", createdAt: hoursAgo(24*20), notes:[],
     profile:{ serviceType:"home", phone:"555-222-3333", homeAddress:"789 Example St, Lafayette, LA", homeAccess:"Garage code 0000. Dog is friendly." } };
   // Already confirmed in QuickBooks this cycle, so the dashboard's
   // membership-charge card shows a completed row too.
@@ -845,8 +845,13 @@ function seedPreviewData(){
       payments:[
         { id:"pay_preview_1", label:"50% Deposit", amount:1500, paid:true, paidDate: new Date(now - 10*24*3600000).toISOString().slice(0,10) },
         { id:"pay_preview_2", label:"25% Progress Payment", amount:750, paid:false, paidDate:"" },
-        { id:"pay_preview_3", label:"25% Final Payment", amount:750, paid:false, paidDate:"" }
+        { id:"pay_preview_3", label:"25% Final Payment", amount:750, paid:false, paidDate:"" },
+        // Phase 2 — shows the multi-phase schedule in preview.
+        { id:"pay_preview_4", phaseId:"phase_preview_2", label:"50% Deposit", amount:1000, dueDayOffset:0, dueDate: new Date(now - 1*24*3600000).toISOString().slice(0,10), paid:false, paidDate:"" },
+        { id:"pay_preview_5", phaseId:"phase_preview_2", label:"25% Progress Payment", amount:500, dueDayOffset:14, dueDate: new Date(now + 13*24*3600000).toISOString().slice(0,10), paid:false, paidDate:"" },
+        { id:"pay_preview_6", phaseId:"phase_preview_2", label:"25% Final Payment", amount:500, dueDayOffset:29, dueDate: new Date(now + 28*24*3600000).toISOString().slice(0,10), paid:false, paidDate:"" }
       ],
+      phases:[ { id:"phase_1", name:"Phase 1" }, { id:"phase_preview_2", name:"Phase 2", fee:2000, startDate: new Date(now - 1*24*3600000).toISOString().slice(0,10) } ],
       buildTodos:[
         { id:"todo_preview_1", phase:"Setup", text:"Review intake details (brand, colors, fonts, logo, content)", dueDayOffset:3, done:true, doneAt: hoursAgo(24*7) },
         { id:"todo_preview_2", phase:"Build", text:"Build out all pages/features", dueDayOffset:10, done:false, doneAt:"" },
@@ -1601,7 +1606,8 @@ function tierAlert(client){
   const overage = overageFor(client);
   return { pct: Math.round(pct), used: used.toFixed(1), pkg, level,
     text: client.name + " is at " + Math.round(pct) + "% of package (" + used.toFixed(1) + "/" + pkg + " hrs)" +
-      (overage.overHours>0 ? " — $" + overage.amount.toFixed(2) + " overage" : "") };
+      (overage.overHours>0 ? " — $" + overage.amount.toFixed(2) + " overage to bill"
+        : pct>=90 ? " — " + Math.max(0, pkg-used).toFixed(1) + " hrs left before overage" : "") };
 }
 // Client-to-client referral program (distinct from the assistant referral
 // payout above): a client who refers another client earns 20% off one month
@@ -3633,6 +3639,44 @@ function submitLoginCode(){
 function isDevDirector(){
   return state.role==="team" && !!(state.currentAssistant && state.currentAssistant.isDevDirector);
 }
+// Who can see the Software side of the business (Software tab on Clients,
+// each client's Software Build tab, build payment / maintenance alerts):
+// the admin login and the Director of Development only (Kaylan's call,
+// Nov 2026).
+// UI-ONLY: build data still lives inside each client doc, which every
+// signed-in session can read (see CLAUDE.md → Security → Known remaining
+// gap). Real enforcement needs per-role auth claims + moving addOns into
+// their own collection with its own rules — a separate follow-up.
+function canViewSoftware(){
+  return state.role==="admin" || isDevDirector();
+}
+// Client categories. A client can be Membership (hour package), Software
+// (software/website build), or both — each side keeps its own records
+// (Membership tab vs Software Build tab on the same client). Both flags are
+// unset on existing clients, so nothing needs migrating: Membership
+// defaults on, Software defaults to "has a build that isn't cancelled"
+// (what the old "Software Builds" client group used). Setting either flag
+// explicitly overrides the default — e.g. a website built on package hours
+// (grandfathered) is Membership only, softwareClient:false.
+function isSoftwareClient(c){
+  if(c.softwareClient===true || c.softwareClient===false) return c.softwareClient;
+  return (c.addOns||[]).some(a=>a.status!=="Cancelled");
+}
+function isMembershipClient(c){ return c.membershipClient!==false; }
+function openClientAs(clientId, category){
+  state.activeTab = "clients";
+  state.selectedClientId = clientId;
+  state.crmSubTab = category==="software" ? "softwareBuild" : "membership";
+  if(category!=="software" && state.role!=="admin") state.crmSubTab = "tasks";
+  render();
+}
+// "Ending soon" = contract (term) end within the next 14 days.
+function contractEndingSoon(client){
+  const end = termEndDate(client);
+  if(!end) return false;
+  const days = (end.getTime() - Date.now()) / 86400000;
+  return days >= -1 && days <= 14;
+}
 // Dark mode is a per-browser preference (localStorage), applied early in
 // <head> so there's no light flash on load; see the dark-mode CSS block.
 function isDarkTheme(){ return document.documentElement.getAttribute("data-theme")==="dark"; }
@@ -3919,7 +3963,7 @@ function renderDocsLeadColumn(assistant, d){
         <button class="secondary" onclick="ackTaskAssignment('${task.id}','${a.id}')">Got it</button>
       </div>`).join("")}
   `);
-  if(d.paymentsReady.length) sections.push(`
+  if(d.paymentsReady.length && canViewSoftware()) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Payments ready to process</div>
     ${d.paymentsReady.map(({client,addOn,payment})=>{
       const todayStr = new Date().toISOString().slice(0,10);
@@ -3927,7 +3971,7 @@ function renderDocsLeadColumn(assistant, d){
       return `
       <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
         <div>
-          <strong>${client.name}</strong> — ${addOn.category||'Add-On'}: ${payment.label}
+          <strong>${client.name}</strong> — ${addOn.category||'Add-On'}: ${phaseName(addOn,payment) ? escHtml(phaseName(addOn,payment))+' · ' : ''}${payment.label}
           <div class="small" style="color:var(--rose-dark);">Separate from ${client.name}'s membership billing — charge it on its own.</div>
           <div class="small">${payment.dueDate ? (overdue?'overdue, was due ':'due ')+parseYMD(payment.dueDate).toLocaleDateString() : (payment.readyMarkedAt?'flagged '+parseYMD(payment.readyMarkedAt).toLocaleDateString():'')}</div>
         </div>
@@ -3935,7 +3979,7 @@ function renderDocsLeadColumn(assistant, d){
       </div>`;
     }).join("")}
   `);
-  if(d.maintenanceFeesDue.length) sections.push(`
+  if(d.maintenanceFeesDue.length && canViewSoftware()) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Maintenance fees due</div>
     ${d.maintenanceFeesDue.map(({client,addOn,month,overdue,notYetLogged})=>`
       <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
@@ -3944,7 +3988,10 @@ function renderDocsLeadColumn(assistant, d){
           <div class="small" style="color:var(--rose-dark);">Separate from ${client.name}'s membership billing — charge it on its own.</div>
           <div class="small" ${overdue?'style="color:var(--danger);font-weight:600;"':''}>${formatMaintenanceMonth(month)}${notYetLogged?' — not yet logged':overdue?' — overdue, still unpaid':' — unpaid'}</div>
         </div>
-        <strong>$${(addOn.monthlyMaintenance||0).toFixed(0)}</strong>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <strong>$${(addOn.monthlyMaintenance||0).toFixed(0)}</strong>
+          <button class="secondary" onclick="event.stopPropagation();markMaintenanceFeePaid('${client.id}','${addOn.id}','${month}')">Mark paid</button>
+        </div>
       </div>`).join("")}
   `);
   if(d.contractsReady.length) sections.push(`
@@ -6872,11 +6919,11 @@ function setOnlyMyClients(on){ state.onlyMyClients = !!on; render(); }
 // Home Reset flat-rate packages) is checked before term type, since those
 // clients don't go through the pilot -> 3month -> 1year membership
 // lifecycle at all. Checked in order; first match wins.
+// Software clients used to be pulled out into their own group here (and
+// so vanished from their term group). They now have their own Software
+// view on the Clients tab instead — see renderSoftwareClientList — and this
+// list is the Membership view only.
 const CLIENT_GROUP_DEFS = [
-  // Checked first — a client with an active software build/custom package
-  // shows up here instead of their term group, not in both, so builds
-  // don't get lost mixed in among regular Pilot/3-Month/1-Year clients.
-  { key:"softwareBuild", label:"Software Builds & Custom Packages", match:c=>(c.addOns||[]).some(a=>a.status!=="Cancelled") },
   { key:"oneTime", label:"One-Time", match:c=>{
       const tier = PACKAGE_TIERS.find(t=>t.hours===c.packageHours && t.price===c.packagePrice);
       return !!(tier && tier.key.startsWith("reset_"));
@@ -6900,9 +6947,11 @@ function renderClientListItem(c){
   const termEnd = c.id!==INTERNAL_CLIENT_ID ? termEndDate(c) : null;
   const fmtDate = d => d.toLocaleDateString('en-US', { month:'short', day:'numeric', year: d.getFullYear()!==new Date().getFullYear() ? 'numeric' : undefined });
   const dates = [period ? "Renews " + fmtDate(period.end) : "", termEnd ? "Contract ends " + fmtDate(termEnd) : ""].filter(Boolean).join(" · ");
+  const endingSoon = c.id!==INTERNAL_CLIENT_ID && contractEndingSoon(c);
+  const alsoSoftware = c.id!==INTERNAL_CLIENT_ID && canViewSoftware() && isSoftwareClient(c);
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
-      <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
+      <strong>${c.name}</strong> ${endingSoon ? `<span class="alert warn" style="margin:0;padding:2px 8px;">contract ends ${fmtDate(termEnd)}</span>` : ''} ${alsoSoftware ? `<a href="#" class="small" onclick="event.stopPropagation();openClientAs('${c.id}','software');return false;">Also a Software client →</a>` : ''} ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
       <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
         const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
       }).join(", ")}</div>
@@ -6934,6 +6983,29 @@ function renderClientGroups(activeClients, opts){
     </div>
   `).join("");
 }
+// Software view of the Clients tab: one row per Software client with their
+// builds, the next unpaid payment across every phase, and monthly fee.
+function renderSoftwareClientList(clients){
+  const todayStr = new Date().toISOString().slice(0,10);
+  const fmt = d => parseYMD(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const rows = clients.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=>{
+    const builds = (c.addOns||[]).filter(a=>a.status!=="Cancelled");
+    const lines = builds.map(a=>{
+      const phases = addOnPhases(a);
+      const next = (a.payments||[]).filter(p=>!p.paid).sort((x,y)=>(x.dueDate||'9999')<(y.dueDate||'9999')?-1:1)[0];
+      const nextPhase = next && phases.length>1 ? (phases.find(ph=>ph.id===paymentPhaseId(a,next))||{}).name : "";
+      const overdue = next && next.dueDate && next.dueDate<todayStr;
+      return `<div class="small">${escHtml(a.label||a.category||'Build')} · ${a.status||'—'}${phases.length>1?` · ${phases.length} phases`:''}${a.monthlyMaintenance>0?` · $${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}`:''}${next?` · <span ${overdue?'style="color:var(--danger);font-weight:600;"':''}>next: ${nextPhase?escHtml(nextPhase)+' ':''}${escHtml(next.label||'payment')} $${(next.amount||0).toFixed(0)}${next.dueDate?(overdue?', overdue since ':', due ')+fmt(next.dueDate):''}</span>`:''}</div>`;
+    }).join("");
+    return `<div class="list-item" style="cursor:pointer;" onclick="openClientAs('${c.id}','software')">
+      <div>
+        <strong>${c.name}</strong> ${isMembershipClient(c) ? `<a href="#" class="small" onclick="event.stopPropagation();openClientAs('${c.id}','membership');return false;">Also a Membership client →</a>` : ''}
+        ${lines || `<div class="small">No builds added yet.</div>`}
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="card">${rows}</div>`;
+}
 function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
   const marketFilter = state.clientMarketFilter;
@@ -6941,11 +7013,21 @@ function renderClientsList(){
   const showToggle = state.role==="team" && !!state.currentAssistant;
   const mineOnly = onlyMyClients();
   const matchesMine = c => !mineOnly || (c.assistantIds||[]).includes(state.currentAssistant.id);
-  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c) && matchesMine(c));
-  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c) && matchesMine(c));
+  const showSoftware = canViewSoftware();
+  const category = showSoftware && state.clientsCategory==="software" ? "software" : "membership";
+  // Software-only clients (Membership switched off) stay out of the
+  // Membership view, so people without Software access never see them.
+  const inView = c => category==="software" ? isSoftwareClient(c) : (isMembershipClient(c) || c.id===INTERNAL_CLIENT_ID);
+  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c) && matchesMine(c) && inView(c));
+  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c) && matchesMine(c) && inView(c));
+  const categoryTabs = showSoftware ? `
+    <div class="tabs">
+      <button class="${category==='membership'?'active':''}" onclick="state.clientsCategory='membership';render();">Membership</button>
+      <button class="${category==='software'?'active':''}" onclick="state.clientsCategory='software';render();">Software</button>
+    </div>` : "";
   return `
     <div class="flex-between" style="flex-wrap:wrap;gap:8px;">
-      <h2>${mineOnly ? "My clients" : "Clients"}</h2>
+      <h2>${mineOnly ? "My clients" : "Clients"}${category==="software" ? " — Software" : ""}</h2>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         ${showToggle ? (mineOnly
           ? `<button class="secondary" onclick="setOnlyMyClients(false)">View all clients</button>`
@@ -6957,8 +7039,9 @@ function renderClientsList(){
         <button onclick="openClientEditor(null)">+ New client</button>
       </div>
     </div>
-    ${activeClients.length===0 ? `<div class="card"><div class="small">${mineOnly ? `You're not assigned to any active clients${marketFilter!=='all'?' in '+marketFilter:''} yet. Click "View all clients" to see everyone.` : `No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.`}</div></div>` :
-      renderClientGroups(activeClients, { hideEmpty: mineOnly })}
+    ${categoryTabs}
+    ${activeClients.length===0 ? `<div class="card"><div class="small">${mineOnly ? `You're not assigned to any active ${category==='software'?'Software ':''}clients${marketFilter!=='all'?' in '+marketFilter:''} yet. Click "View all clients" to see everyone.` : `No ${category==='software'?'Software ':''}clients${marketFilter!=='all'?' in '+marketFilter:''} yet.`}</div></div>` :
+      category==="software" ? renderSoftwareClientList(activeClients) : renderClientGroups(activeClients, { hideEmpty: mineOnly })}
     ${pastClients.length ? `
     <div class="card">
       <div class="flex-between" style="cursor:pointer;" onclick="state.showPastClients=!state.showPastClients;render();">
@@ -7034,9 +7117,22 @@ function renderClientCRM(clientId){
   // inside renderClientProfile's "contract" body) — matches the original
   // single Profile tab's behavior before this split.
   const subtabs = [["profileDetails","Details"],["profileNotes","Notes & Dates"],["tasks","Tasks"],["profileContract","Contract & Payment"]];
-  if(state.role==="admin") subtabs.push(["membership","Membership"],["softwareBuild","Software Build"]);
-  else if(isDevDirector()) subtabs.push(["softwareBuild","Software Build"]);
+  if(state.role==="admin") subtabs.push(["membership","Membership"]);
+  if(canViewSoftware()) subtabs.push(["softwareBuild","Software Build"]);
   subtabs.push(["emailTemplates","Email Templates"]);
+  // Which side(s) of the business this client is — with a jump between the
+  // two records for clients who are both.
+  const showSw = canViewSoftware() && client.id!==INTERNAL_CLIENT_ID;
+  const isSw = isSoftwareClient(client), isMem = isMembershipClient(client);
+  const termEnd = client.id!==INTERNAL_CLIENT_ID ? termEndDate(client) : null;
+  const categoryLine = client.id===INTERNAL_CLIENT_ID ? "" : `
+    <div class="small" style="margin:4px 0 8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      ${isMem ? `<span class="badge">Membership</span>` : ""}
+      ${showSw && isSw ? `<span class="badge">Software</span>` : ""}
+      ${showSw && isSw && isMem && state.crmSubTab!=="softwareBuild" ? `<a href="#" onclick="openClientAs('${client.id}','software');return false;">Also a Software client →</a>` : ""}
+      ${showSw && isSw && isMem && state.crmSubTab==="softwareBuild" && state.role==="admin" ? `<a href="#" onclick="openClientAs('${client.id}','membership');return false;">Also a Membership client →</a>` : ""}
+      ${isMem && termEnd ? `<span ${contractEndingSoon(client)?'class="alert warn" style="margin:0;padding:2px 8px;"':''}>Contract ends ${termEnd.toLocaleDateString()}</span>` : ""}
+    </div>`;
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
     <div class="flex-between" style="align-items:center;">
@@ -7049,6 +7145,7 @@ function renderClientCRM(clientId){
         </div>
       ` : ""}
     </div>
+    ${categoryLine}
     ${alert ? `<div class="alert ${alert.level}">${alert.text}</div>` : ""}
     <div class="tabs">
       ${subtabs.map(([key,label])=>`<button class="${state.crmSubTab===key?'active':''}" onclick="state.crmSubTab='${key}';render();">${label}</button>`).join("")}
@@ -7058,7 +7155,7 @@ function renderClientCRM(clientId){
     ${state.crmSubTab==="profileContract" ? renderClientProfile(client).contract : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
     ${state.crmSubTab==="membership" && state.role==="admin" ? renderClientMembership(client) : ""}
-    ${state.crmSubTab==="softwareBuild" && (state.role==="admin" || isDevDirector()) ? renderClientAddOnsSection(client) : ""}
+    ${state.crmSubTab==="softwareBuild" && canViewSoftware() ? renderClientCategoryCard(client) + renderClientAddOnsSection(client) : ""}
     ${state.crmSubTab==="emailTemplates" ? renderClientEmailTemplates(client) : ""}
   `;
 }
@@ -8849,9 +8946,18 @@ function renderAddOnRow(clientId, a){
       </div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Payment Schedule</label>
-        ${(a.payments&&a.payments.length) ? a.payments.map(p=>renderAddOnPaymentRow(clientId,a,p)).join("") : `
+        ${(a.payments&&a.payments.length) ? renderAddOnPhases(clientId, a) : `
           <div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>
         `}
+        ${a.monthlyMaintenance>0 ? (()=>{
+          const due = maintenanceFeesDue().find(r=>r.addOn.id===a.id);
+          return `<div class="list-item" style="margin-top:8px;">
+            <div><strong>Monthly fee</strong> — $${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}
+              <div class="small" ${due&&due.overdue?'style="color:var(--danger);font-weight:600;"':''}>${due ? formatMaintenanceMonth(due.month)+(due.overdue?' — overdue, still unpaid':' — unpaid') : 'Paid up ✓'}</div>
+            </div>
+            ${due ? `<button class="secondary" onclick="markMaintenanceFeePaid('${clientId}','${a.id}','${due.month}')">Mark paid</button>` : ""}
+          </div>`;
+        })() : ""}
       </div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Recurring Monthly Maintenance — Assistant Split</label>
@@ -8884,6 +8990,156 @@ function renderAddOnRow(clientId, a){
       <div><button class="danger" onclick="removeClientAddOn('${clientId}','${a.id}')">Delete</button></div>
     </div>
   `;
+}
+// Membership / Software switches for one client (top of Software Build).
+function renderClientCategoryCard(client){
+  if(client.id===INTERNAL_CLIENT_ID) return "";
+  const auto = (client.softwareClient!==true && client.softwareClient!==false);
+  return `
+    <div class="card">
+      <h3 style="margin:0 0 6px;">Client categories</h3>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${isMembershipClient(client)?'checked':''} onchange="updateClientField('${client.id}','membershipClient',this.checked)">
+          Membership (hour package)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${isSoftwareClient(client)?'checked':''} onchange="updateClientField('${client.id}','softwareClient',this.checked)">
+          Software (software or website build)
+        </label>
+      </div>
+      <div class="small" style="margin-top:4px;">${auto ? "Software is set automatically (on when this client has a build that isn't cancelled) until you change it here." : "Set by hand."} A client with both shows up in both lists on the Clients tab, each with its own records. Untick Software for a website built on package hours.</div>
+    </div>`;
+}
+// ---- Build phases ----
+// A build's payments can be split into phases (Phase 1, Phase 2, …). Each
+// payment carries a phaseId; a payment without one belongs to the first
+// phase, so every schedule created before phases existed is Phase 1 with no
+// data migration. Payments stay one flat list on the add-on (addOn.payments)
+// so Heidi's due/ready alerts, payment emails, payroll build pay and revenue
+// all keep working for every phase unchanged.
+// Phase 1's fee and Day 1 are the build's own flatFee / buildStartDate;
+// later phases store their own fee / startDate / basisAmount.
+const FIRST_PHASE_ID = "phase_1";
+function addOnPhases(a){
+  return (a.phases && a.phases.length) ? a.phases : [{ id:FIRST_PHASE_ID, name:"Phase 1" }];
+}
+function paymentPhaseId(a, p){
+  const phases = addOnPhases(a);
+  return (p.phaseId && phases.some(ph=>ph.id===p.phaseId)) ? p.phaseId : phases[0].id;
+}
+function isFirstPhase(a, phaseId){ return addOnPhases(a)[0].id===phaseId; }
+function phaseFee(a, phase){ return isFirstPhase(a, phase.id) ? (a.flatFee||0) : (phase.fee||0); }
+function phaseName(a, p){
+  const phases = addOnPhases(a);
+  if(phases.length<2) return "";
+  return (phases.find(ph=>ph.id===paymentPhaseId(a,p))||{}).name || "";
+}
+function renderAddOnPhases(clientId, a){
+  const phases = addOnPhases(a);
+  const multi = phases.length > 1;
+  state.openAddOnPhases = state.openAddOnPhases || {};
+  return phases.map((ph, i)=>{
+    const pays = (a.payments||[]).filter(p=>paymentPhaseId(a,p)===ph.id);
+    const paidCount = pays.filter(p=>p.paid).length;
+    const total = pays.reduce((s,p)=>s+(p.amount||0),0);
+    const key = a.id+":"+ph.id;
+    // Open by default: the phase still being paid (or the only one).
+    const firstUnpaidIdx = phases.findIndex(x=>(a.payments||[]).some(p=>paymentPhaseId(a,p)===x.id && !p.paid));
+    const open = state.openAddOnPhases[key]!=null ? state.openAddOnPhases[key] : (!multi || i===firstUnpaidIdx || (firstUnpaidIdx<0 && i===phases.length-1));
+    const first = i===0;
+    return `
+      <div style="margin-top:8px;border:1px solid var(--cream-dark);border-radius:8px;padding:6px 10px;">
+        <div class="flex-between" style="cursor:pointer;" onclick="state.openAddOnPhases['${key}']=${open?'false':'true'};render();">
+          <strong>${escHtml(ph.name||('Phase '+(i+1)))}</strong>
+          <span class="small">$${total.toFixed(0)} · ${paidCount}/${pays.length} paid ${open?'▲':'▼'}</span>
+        </div>
+        ${open ? `
+          ${!first ? `
+          <div class="row" style="margin-top:6px;">
+            <div><label class="small">Phase name</label><input value="${escHtml(ph.name||'')}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','name',this.value)"></div>
+            <div><label class="small">Phase fee ($)</label><input type="number" step="1" value="${ph.fee||0}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','fee',parseFloat(this.value)||0)" style="max-width:120px;"></div>
+            <div><label class="small">Phase Day 1</label><input type="date" value="${ph.startDate||''}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','startDate',this.value)"></div>
+            ${a.buildAssistantId ? `<div><label class="small">Build cost her % is based on ($)</label><input type="number" step="1" value="${ph.basisAmount!=null?ph.basisAmount:(ph.fee||0)}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','basisAmount',parseFloat(this.value)||0)" style="max-width:120px;"></div>` : ""}
+          </div>
+          <div class="small">Changing the phase fee re-splits its unpaid payments 50/25/25; Day 1 sets their due dates (Day 1 / 15 / 30), same as Phase 1.</div>` : (multi ? `<div class="small" style="margin-top:4px;">Phase 1 uses the build's flat fee and Day 1 above.</div>` : "")}
+          ${pays.map(p=>renderAddOnPaymentRow(clientId,a,p)).join("") || `<div class="small">No payments in this phase.</div>`}
+          ${!first && paidCount===0 ? `<div style="margin-top:6px;"><button class="danger" style="padding:2px 8px;" onclick="removeAddOnPhase('${clientId}','${a.id}','${ph.id}')">Remove phase</button></div>` : ""}
+        ` : ""}
+      </div>`;
+  }).join("") + `<div style="margin-top:8px;"><button class="secondary" onclick="addAddOnPhase('${clientId}','${a.id}')">+ Add phase</button></div>`;
+}
+function updateAddOnById(clientId, addOnId, fn){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? fn(a) : a);
+  upsert("clients", clientId, { addOns });
+}
+// Standard 3-payment split (50/25/25 at Day 1/15/30) for a new phase —
+// amounts and dates stay editable per payment afterward.
+function addAddOnPhase(clientId, addOnId){
+  updateAddOnById(clientId, addOnId, a=>{
+    const phases = addOnPhases(a).map(ph=>({ ...ph }));
+    const phase = { id:newId("phase"), name:"Phase "+(phases.length+1), fee:0, startDate:"" };
+    const payments = [...(a.payments||[]), ...defaultAddOnPayments(0, "").map(p=>({ ...p, phaseId:phase.id }))];
+    state.openAddOnPhases = state.openAddOnPhases || {};
+    state.openAddOnPhases[a.id+":"+phase.id] = true;
+    return { ...a, phases:[...phases, phase], payments };
+  });
+}
+function updateAddOnPhaseField(clientId, addOnId, phaseId, field, value){
+  updateAddOnById(clientId, addOnId, a=>{
+    const phases = addOnPhases(a).map(ph=> ph.id===phaseId ? { ...ph, [field]: value } : { ...ph });
+    let payments = a.payments||[];
+    const SPLIT = { 0:0.5, 14:0.25, 29:0.25 };
+    if(field==="fee"){
+      // Re-split only standard (offset-tagged), unpaid payments — a paid
+      // payment is history and a hand-added one is left as entered.
+      payments = payments.map(p=>{
+        if(paymentPhaseId(a,p)!==phaseId || p.paid || SPLIT[p.dueDayOffset]==null) return p;
+        return { ...p, amount: Math.round((value||0)*SPLIT[p.dueDayOffset]*100)/100 };
+      });
+    }
+    if(field==="startDate" && value){
+      payments = payments.map(p=>{
+        if(paymentPhaseId(a,p)!==phaseId || p.paid || p.dueDayOffset==null) return p;
+        return { ...p, dueDate: new Date(parseYMD(value).getTime() + p.dueDayOffset*86400000).toISOString().slice(0,10) };
+      });
+    }
+    return { ...a, phases, payments };
+  });
+}
+function removeAddOnPhase(clientId, addOnId, phaseId){
+  if(!confirm("Remove this phase and its unpaid payments?")) return;
+  updateAddOnById(clientId, addOnId, a=>{
+    if((a.payments||[]).some(p=>paymentPhaseId(a,p)===phaseId && p.paid)) return a; // never drop payment history
+    return { ...a,
+      phases: addOnPhases(a).filter(ph=>ph.id!==phaseId),
+      payments: (a.payments||[]).filter(p=>paymentPhaseId(a,p)!==phaseId) };
+  });
+}
+// ---- Mark a monthly maintenance fee paid (Dashboard alert + build) ----
+// Same idea as the membership charge Complete button: asks for a name
+// (admin logins are shared), stamps date + amount + who, and the alert
+// comes back by itself next month because that month has no paid row yet.
+// Maintenance runs on calendar months (YYYY-MM rows), so "next due date"
+// is simply next month. The maintenance rows ARE the payment history.
+function markMaintenanceFeePaid(clientId, addOnId, month){
+  const client = state.clients.find(c=>c.id===clientId);
+  const addOn = client && (client.addOns||[]).find(a=>a.id===addOnId);
+  if(!addOn) return;
+  let lastName = "";
+  try { lastName = localStorage.getItem("tmcBillingCheckName") || ""; } catch(e){}
+  const name = (prompt("Mark "+client.name+"'s "+formatMaintenanceMonth(month)+" maintenance fee ($"+(addOn.monthlyMaintenance||0)+") as paid?\n\nYour name (saved with the payment):", lastName) || "").trim();
+  if(!name) return;
+  try { localStorage.setItem("tmcBillingCheckName", name); } catch(e){}
+  const today = new Date().toISOString().slice(0,10);
+  const stamp = { paid:true, paidDate:today, paidBy:name, paidMarkedAt:new Date().toISOString() };
+  updateAddOnMaintenancePayments(clientId, addOnId, (list, a)=>{
+    const existing = list.find(p=>p.month===month);
+    if(existing) return list.map(p=> p.id===existing.id ? { ...p, ...stamp, amount: p.amount || a.monthlyMaintenance || 0 } : p);
+    return [...list, { id:newId("maintpay"), month, amount:a.monthlyMaintenance||0, ...stamp }];
+  });
 }
 function renderAddOnPaymentRow(clientId, a, p){
   const addOnId = a.id;
@@ -9010,9 +9266,18 @@ function removeBuildTodo(clientId, addOnId, todoId){
 // payment's own dollar amount, which would silently use flatFee as the
 // basis even when a separate basis amount has been set.
 function buildAssistantCut(addOn, payment){
-  if(!addOn.buildAssistantId || !addOn.buildAssistantPercent || !addOn.flatFee) return 0;
-  const basis = addOn.buildAssistantBasisAmount!=null ? addOn.buildAssistantBasisAmount : addOn.flatFee;
-  const proportionOfTotal = (payment.amount||0) / addOn.flatFee;
+  if(!addOn.buildAssistantId || !addOn.buildAssistantPercent) return 0;
+  // Each phase has its own fee and basis (Phase 1 = the build's flatFee /
+  // buildAssistantBasisAmount, as before phases existed).
+  const phaseId = paymentPhaseId(addOn, payment);
+  const phase = addOnPhases(addOn).find(ph=>ph.id===phaseId);
+  const first = isFirstPhase(addOn, phaseId);
+  const fee = first ? addOn.flatFee : (phase.fee||0);
+  if(!fee) return 0;
+  const basis = first
+    ? (addOn.buildAssistantBasisAmount!=null ? addOn.buildAssistantBasisAmount : addOn.flatFee)
+    : (phase.basisAmount!=null ? phase.basisAmount : fee);
+  const proportionOfTotal = (payment.amount||0) / fee;
   return Math.round(basis * proportionOfTotal * (addOn.buildAssistantPercent/100) * 100) / 100;
 }
 function buildTodoDueDate(addOn, todo){
@@ -9128,8 +9393,9 @@ function updateAddOnField(clientId, addOnId, field, value){
     // wanted) and never touching one that's already been paid, since
     // that's history, not a schedule to keep adjusting.
     if(field==="buildStartDate" && value){
+      // Day 1 here is Phase 1's — later phases have their own Phase Day 1.
       updated.payments = (a.payments||[]).map(p=>{
-        if(p.paid || p.dueDayOffset==null) return p;
+        if(p.paid || p.dueDayOffset==null || !isFirstPhase(a, paymentPhaseId(a,p))) return p;
         return { ...p, dueDate: new Date(parseYMD(value).getTime() + p.dueDayOffset*86400000).toISOString().slice(0,10) };
       });
     }
@@ -9158,7 +9424,7 @@ function renderMaintenancePaymentRow(clientId, a, p){
       <div><label class="small">Amount ($)</label><input id="addon_maintpay_amt_${p.id}" type="number" step="1" value="${p.amount||0}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
         <input type="checkbox" ${p.paid?'checked':''} onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','paid',this.checked)">
-        Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+')' : ''}
+        Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+(p.paidBy?', marked by '+escHtml(p.paidBy):'')+')' : ''}
       </label>
       <div style="padding-bottom:6px;"><button class="secondary" style="padding:2px 8px;" onclick="removeMaintenancePayment('${clientId}','${a.id}','${p.id}')">✕</button></div>
     </div>
@@ -9190,6 +9456,7 @@ function updateMaintenancePaymentField(clientId, addOnId, paymentId, field, valu
     const updated = { ...p, [field]: value };
     // Same as build payments: checking Paid stamps today, unchecking clears it.
     if(field==="paid") updated.paidDate = value ? (p.paidDate || new Date().toISOString().slice(0,10)) : "";
+    if(field==="paid" && !value) updated.paidBy = "";
     return updated;
   }));
 }
@@ -13003,6 +13270,7 @@ function renderClientPortal(){
       </div>
       <div class="main">
         <h2>Welcome, ${client.name}</h2>
+        ${termEnd && isMembershipClient(client) ? `<div class="small" style="margin:-6px 0 12px;">Your current term ends <strong>${termEnd.toLocaleDateString()}</strong>${notice && noticeDays!==null && noticeDays>=0 ? ` · cancellation notice due by ${notice.toLocaleDateString()}` : ''}</div>` : ""}
         ${!client.orientationBookingDismissed ? `
         <div class="card" style="border-left:4px solid var(--rose-dark);">
           <div class="flex-between">
