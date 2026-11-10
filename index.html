@@ -1884,15 +1884,20 @@ function buildClientReport(client, window, kind){
     return d >= window.start && d < window.end;
   });
   const completedIds = new Set(completed.map(t=>t.id));
-  const workedOn = tasks.filter(t=>!completedIds.has(t.id) && (windowHoursByTask.get(t.id)||0) > 0);
+  // Still clocked in when the report goes out = In progress, not "worked
+  // on" (Heidi's ask for the automatic Friday 4pm send). KEEP IN SYNC with
+  // buildWeeklyReport in functions/weeklyReports.js.
+  const runningIds = new Set(entriesForClient(client.id).filter(e=>!e.clockOut).map(e=>e.taskId));
+  const workedOn = tasks.filter(t=>!completedIds.has(t.id) && !runningIds.has(t.id) && (windowHoursByTask.get(t.id)||0) > 0);
   const workedOnIds = new Set(workedOn.map(t=>t.id));
   // Time on a task that's since been deleted still counts toward hours — show
   // it as one lump so the hours on the report add up to the total.
   const taskIds = new Set(tasks.map(t=>t.id));
   const otherHours = windowEntries.filter(e=>!taskIds.has(e.taskId)).reduce((s,e)=>s+entryDurationHours(e), 0);
-  const inProgress = tasks.filter(t=>t.status==="In progress" && !workedOnIds.has(t.id));
-  const researching = tasks.filter(t=>t.status==="Researching" && !workedOnIds.has(t.id));
-  const todo = tasks.filter(t=>t.status==="To do" && !workedOnIds.has(t.id));
+  const inProgress = tasks.filter(t=>!completedIds.has(t.id) && !workedOnIds.has(t.id) && (t.status==="In progress" || runningIds.has(t.id)));
+  const inProgressIds = new Set(inProgress.map(t=>t.id));
+  const researching = tasks.filter(t=>t.status==="Researching" && !workedOnIds.has(t.id) && !inProgressIds.has(t.id));
+  const todo = tasks.filter(t=>t.status==="To do" && !workedOnIds.has(t.id) && !inProgressIds.has(t.id));
   const isPeriodKind = kind==="period" || kind==="lastPeriod";
   const used = isPeriodKind ? hoursForClientInPeriod(client.id, window) : hoursUsed(client.id);
   const pkg = isPeriodKind ? effectivePackageHours(client, window) : effectivePackageHours(client);
@@ -2135,6 +2140,8 @@ async function copyReportCoverNote(clientId, kind, btnEl){
   const text = clientReportCoverNote(report, url);
   navigator.clipboard.writeText(text).then(()=>{
     if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
+    // So the automatic Friday 4pm send skips a client someone already sent by hand.
+    if(kind==="week") upsert("clients", clientId, { weeklyRecapSentForWeek: toLocalDateInputValue(reportWindow.friday.toISOString()) });
     // Copying the message IS sending it — the receipts embedded in this
     // report don't need to keep sitting on the task too, and this way it
     // actually happens every time instead of depending on an assistant
@@ -8662,7 +8669,20 @@ function renderClientEmailTemplates(client){
     <div class="card">
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
-      <div class="small" style="margin-bottom:8px;">To send: click "Copy message," then paste into whatever email or text you use with this client — works the same for everyone, nothing to attach or download.</div>
+      ${(()=>{
+        const autoOn = !!state.settings.weeklyReportAutoSend;
+        const clientOn = client.autoWeeklyReport!==false;
+        const sentThisWeek = client.weeklyRecapSentForWeek === toLocalDateInputValue(week.friday.toISOString());
+        const a = (state.settings.assistants||[]).find(x=>x.id===(client.assistantIds||[])[0]);
+        return `<div class="small" style="margin-bottom:8px;padding:8px 10px;border-radius:6px;background:var(--cream);">
+          ${sentThisWeek ? `<strong style="color:var(--ok);">✓ Sent for this week</strong> — ` : ""}
+          ${!autoOn ? `Automatic Friday 4pm sending isn't turned on yet (admin, Team tab).`
+            : !clientOn ? `Automatic Friday send is off for this client.`
+            : !client.email ? `<span style="color:var(--warn);">Automatic Friday send is on, but this client has no email on file.</span>`
+            : `Sends automatically Fridays at 4pm from ${a ? escHtml(a.name)+"'s" : "the assigned assistant's"} email, with receipts from this week's card purchases attached.`}
+          ${state.role==='admin' ? `<label style="display:flex;align-items:center;gap:8px;margin-top:6px;"><input type="checkbox" ${clientOn?'checked':''} onchange="updateClientField('${client.id}','autoWeeklyReport',this.checked)"> Auto-send this client's weekly recap</label>` : ""}
+        </div>`; })()}
+      <div class="small" style="margin-bottom:8px;">To send by hand: click "Copy message," then paste into whatever email or text you use with this client — works the same for everyone, nothing to attach or download.</div>
       <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
       <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
       ${client.includeReceiptsInReport && weekReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','week')">Clear sent receipts (${weekReceiptCount})</button>` : ""}
@@ -11953,6 +11973,7 @@ function renderTeamAdmin(){
       <div class="small" style="margin-top:6px;">Fully closed out and hidden everywhere — this section is just here in case one needs to come back.</div>
       ` : ""}
     </div>` : ""}
+    ${renderWeeklyRecapAdminCard()}
     <div class="card">
       <h3>Admin passcode</h3>
       <input id="admin_passcode" value="${state.settings.adminPasscode}" onchange="updateAdminPasscode(this.value)">
@@ -11981,6 +12002,187 @@ function updateMyNotifyPref(key, checked){
   state.currentAssistant = state.settings.assistants.find(a=>a.id===state.currentAssistant.id);
   upsert("settings","access", { assistants: state.settings.assistants });
   render();
+}
+// ---- Automatic Friday 4pm weekly recaps (functions/weeklyReports.js) ----
+// Each assistant connects their own Gmail (send-only) so their clients'
+// recaps come from them; anyone not connected falls back to support@ with
+// replies going to them. Admin turns the whole thing on, sets the CC (Kaylan + Tori) and support@ BCC,
+// sends test copies, and sees the last run's log.
+function fetchReportGmailStatus(force){
+  const r = state.reportGmail = state.reportGmail || { byId:{}, loadedAt:0, inFlight:false };
+  if(r.inFlight || (!force && Date.now()-r.loadedAt < 5*60*1000)) return;
+  if(PREVIEW_MODE){
+    r.byId = {}; (state.settings.assistants||[]).forEach(a=>{ r.byId[a.id] = a.id==="asst_2" ? { connected:true, email:"victoria@example.com" } : { connected:false }; });
+    r.loadedAt = Date.now(); return;
+  }
+  if(!fns) return;
+  r.inFlight = true;
+  const ids = state.role==='admin' ? undefined : (state.currentAssistant ? [state.currentAssistant.id] : []);
+  fns.httpsCallable("getReportGmailStatus")({ assistantIds: ids })
+    .then(({data})=>{ r.byId = { ...r.byId, ...(data||{}) }; r.unavailable = false; })
+    .catch(err=>{ console.warn("getReportGmailStatus failed:", err); r.unavailable = true; })
+    .finally(()=>{ r.inFlight = false; r.loadedAt = Date.now(); if(!state.modal) render(); });
+}
+async function connectReportGmail(){
+  if(PREVIEW_MODE){ alert("Connecting Gmail only works in the real app."); return; }
+  if(!fns || !state.currentAssistant){ alert("This isn't available right now — try reloading the page."); return; }
+  const authTab = window.open("", "_blank");
+  try{
+    const { data } = await fns.httpsCallable("getReportGmailAuthConfig")({ assistantId: state.currentAssistant.id });
+    const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
+      + "?client_id=" + encodeURIComponent(data.clientId)
+      + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
+      + "&response_type=code"
+      + "&scope=" + encodeURIComponent(data.scope)
+      + "&access_type=offline&prompt=consent"
+      + (state.currentAssistant.email ? "&login_hint=" + encodeURIComponent(state.currentAssistant.email) : "")
+      + "&state=" + encodeURIComponent(data.state);
+    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
+    window.addEventListener("focus", ()=>fetchReportGmailStatus(true), { once:true });
+  }catch(err){
+    console.error(err);
+    if(authTab) authTab.close();
+    alert("Couldn't start the Gmail connection — check the console for details.");
+  }
+}
+async function disconnectReportGmail(){
+  if(!confirm("Disconnect your Gmail? Your clients' Friday recaps will come from support@ instead.")) return;
+  if(PREVIEW_MODE){ state.reportGmail.byId[state.currentAssistant.id] = { connected:false }; render(); return; }
+  try{
+    await fns.httpsCallable("disconnectReportGmail")({ assistantId: state.currentAssistant.id });
+    state.reportGmail.byId[state.currentAssistant.id] = { connected:false };
+    render();
+  }catch(err){ console.error(err); alert("Couldn't disconnect — try again."); }
+}
+function renderMyReportGmailCard(){
+  fetchReportGmailStatus();
+  const me = state.currentAssistant;
+  const st = (state.reportGmail && state.reportGmail.byId[me.id]) || null;
+  const myClients = state.clients.filter(c=>(c.assistantIds||[])[0]===me.id && c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==='active'));
+  return `
+    <div class="card">
+      <h3>Friday client recaps</h3>
+      <div class="small" style="margin-bottom:10px;">${state.settings.weeklyReportAutoSend ? "Weekly recaps go out automatically every Friday at 4pm" : "Once turned on, weekly recaps will go out automatically every Friday at 4pm"} to the clients you're the main assistant for${myClients.length ? ` (${myClients.map(c=>escHtml(c.name)).join(", ")})` : ""}. Just make sure your tasks and time are in by 4pm. Anything you're still clocked in on shows as In progress.</div>
+      ${!st && state.reportGmail && state.reportGmail.unavailable ? `<div class="small">Not set up yet — Kaylan needs to finish turning this on.</div>`
+        : !st ? `<div class="small">Checking your Gmail connection…</div>`
+        : st.connected ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="color:var(--ok);">✓ Sending from ${escHtml(st.email||'your Gmail')}</span><button class="secondary" style="padding:2px 8px;" onclick="disconnectReportGmail()">Disconnect</button></div>`
+        : `<div class="small" style="margin-bottom:8px;color:var(--warn);">Not connected. Your clients' recaps will come from support@ (replies still come to you) until you connect.</div><button onclick="connectReportGmail()">Connect my Gmail</button>`}
+    </div>`;
+}
+function setWeeklyRecapSetting(field, value){
+  state.settings[field] = value;
+  upsert("settings","access", { [field]: value });
+  render();
+}
+// KEEP IN SYNC with recapCcList / recapBccSupport in functions/weeklyReports.js.
+// CC = typed emails (Kaylan) + team members ticked by id (Tori, so her
+// current email is always used). Never set = the admin notify email.
+const WEEKLY_RECAP_SUPPORT_BCC = "support@themodernconcierge.co";
+function weeklyRecapTypedCc(){
+  const s = state.settings;
+  if(Array.isArray(s.weeklyReportCc)) return s.weeklyReportCc;
+  return s.weeklyReportCc===undefined && s.adminNotifyEmail ? [s.adminNotifyEmail] : [];
+}
+function weeklyRecapCcList(){
+  const ids = state.settings.weeklyReportCcAssistantIds || [];
+  const team = (state.settings.assistants||[]).filter(a=>ids.includes(a.id) && a.active!==false).map(a=>a.email);
+  const seen = new Set(), out = [];
+  [...weeklyRecapTypedCc(), ...team].forEach(e=>{ const t=String(e||"").trim(); if(/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(t) && !seen.has(t.toLowerCase())){ seen.add(t.toLowerCase()); out.push(t); } });
+  return out;
+}
+function weeklyRecapBccSupport(){
+  const v = state.settings.weeklyReportBccSupport;
+  return v===undefined ? WEEKLY_RECAP_SUPPORT_BCC : String(v||"").trim();
+}
+function setWeeklyRecapCcEmails(text){
+  const list = String(text||"").split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean);
+  const bad = list.filter(e=>!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+  if(bad.length){ alert("These don't look like email addresses: " + bad.join(", ")); render(); return; }
+  setWeeklyRecapSetting("weeklyReportCc", list);
+}
+function toggleWeeklyRecapCcAssistant(id, on){
+  const ids = new Set(state.settings.weeklyReportCcAssistantIds||[]);
+  on ? ids.add(id) : ids.delete(id);
+  setWeeklyRecapSetting("weeklyReportCcAssistantIds", [...ids]);
+}
+function fetchLastWeeklyRun(force){
+  const w = state.weeklyRun = state.weeklyRun || { doc:null, loadedAt:0, inFlight:false };
+  if(w.inFlight || (!force && Date.now()-w.loadedAt < 5*60*1000)) return;
+  if(PREVIEW_MODE){
+    w.doc = { id:"preview", ranAt: new Date(Date.now()-3*86400000).toISOString(), results:[
+      { clientName:"Jordan Sample", status:"sent", to:"jordan@example.com", sentFrom:"victoria@example.com", receiptsAttached:1 },
+      { clientName:"Sample Business LLC", status:"sent", to:"ops@example.com", sentFrom:"support@", via:"support", receiptsAttached:0 },
+      { clientName:"Test Client (Demo)", status:"skipped", reason:"No client email on file" } ] };
+    w.loadedAt = Date.now(); return;
+  }
+  if(!db) return;
+  w.inFlight = true;
+  db.collection("weeklyReportRuns").orderBy("ranAt","desc").limit(1).get()
+    .then(snap=>{ w.doc = snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() }; })
+    .catch(err=>console.warn("weeklyReportRuns read failed:", err))
+    .finally(()=>{ w.inFlight = false; w.loadedAt = Date.now(); if(!state.modal) render(); });
+}
+async function sendWeeklyRecapTest(){
+  const clientId = document.getElementById("wr_test_client").value;
+  const to = document.getElementById("wr_test_to").value.trim();
+  if(!clientId){ alert("Pick a client."); return; }
+  if(!to){ alert("Enter the email to send the test to."); return; }
+  if(PREVIEW_MODE){ alert("Preview: a test of this week's recap would go to " + to + " only."); return; }
+  if(!fns){ alert("This isn't available right now — try reloading the page."); return; }
+  state.weeklyTestBusy = true; render();
+  try{
+    const { data } = await fns.httpsCallable("sendWeeklyReportTest")({ clientId, to });
+    alert("Test sent to " + to + " (from " + data.sentFrom + (data.receiptsAttached ? ", " + data.receiptsAttached + " receipt(s) attached" : "") + "). The client did NOT get it.");
+  }catch(err){
+    console.error(err);
+    alert("Test didn't send — " + (err.message||err));
+  }finally{ state.weeklyTestBusy = false; render(); }
+}
+function renderWeeklyRecapAdminCard(){
+  fetchReportGmailStatus(); fetchLastWeeklyRun();
+  const on = !!state.settings.weeklyReportAutoSend;
+  const statuses = (state.reportGmail && state.reportGmail.byId) || {};
+  const primaryIds = new Set(state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus||c.clientStatus==='active') && isMembershipClient(c)).map(c=>(c.assistantIds||[])[0]).filter(Boolean));
+  const people = (state.settings.assistants||[]).filter(a=>a.active!==false && primaryIds.has(a.id));
+  const run = state.weeklyRun && state.weeklyRun.doc;
+  const clientOpts = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus||c.clientStatus==='active') && isMembershipClient(c)).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const ccList = weeklyRecapCcList();
+  const bccSupport = weeklyRecapBccSupport();
+  const ccIds = state.settings.weeklyReportCcAssistantIds || [];
+  const team = (state.settings.assistants||[]).filter(a=>a.active!==false).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const bccDefault = ccList[0] || state.settings.adminNotifyEmail || bccSupport || "";
+  return `
+    <div class="card">
+      <h3>Automatic Friday recaps</h3>
+      <div class="small" style="margin-bottom:10px;">Every Friday at 4pm Central, each active Membership client with an email gets their weekly recap from their main assistant's Gmail, CC'd to the people below and BCC'd to support@, with receipt photos from that week's card purchases attached. The secondary assistant is never copied. Skips clients already sent by hand that week, clients turned off on their Email Templates tab, and weeks with no time, completed tasks or purchases.</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:10px;">
+        <input type="checkbox" ${on?'checked':''} onchange="setWeeklyRecapSetting('weeklyReportAutoSend', this.checked)"> <strong>Auto-send weekly recaps</strong>
+      </label>
+      <div><label class="small">CC these emails (Kaylan) — separate with commas</label><input type="text" id="wr_cc" value="${escHtml(weeklyRecapTypedCc().join(", "))}" placeholder="kaylan@…" onchange="setWeeklyRecapCcEmails(this.value)"></div>
+      <div class="small" style="margin-top:8px;">Also CC these team members (Tori) — uses their current email from their Team card:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;">
+        ${team.map(a=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" ${ccIds.includes(a.id)?'checked':''} onchange="toggleWeeklyRecapCcAssistant('${a.id}', this.checked)"> ${escHtml(a.name||'')}${a.email?'':' <span style="color:var(--warn);">(no email)</span>'}</label>`).join("") || `<span class="small">No team members yet.</span>`}
+      </div>
+      <div class="small" style="margin-top:6px;">${ccList.length ? `CC on every recap: <strong>${ccList.map(escHtml).join(", ")}</strong>` : `<span style="color:var(--warn);">No CC set — add Kaylan and tick Tori.</span>`}</div>
+      <div style="margin-top:10px;"><label class="small">BCC every recap to</label><input type="email" id="wr_bcc" value="${escHtml(bccSupport)}" placeholder="${WEEKLY_RECAP_SUPPORT_BCC}" onchange="setWeeklyRecapSetting('weeklyReportBccSupport', this.value.trim())"></div>
+      <div class="small" style="margin-top:4px;">${bccSupport ? `Left off when a recap is sent from support@ itself (assistant not connected), since support@'s Sent folder already has it.` : `<span style="color:var(--warn);">No BCC — support@ won't get a copy of recaps sent from assistants' Gmail.</span>`}</div>
+      <div class="section-label" style="margin-top:14px;font-size:11px;letter-spacing:1.5px;color:var(--rose-dark);font-weight:600;">Who's connected</div>
+      ${people.length ? people.map(a=>{ const st = statuses[a.id];
+        return `<div class="small" style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;"><span>${escHtml(a.name)}</span><span style="color:${st&&st.connected?'var(--ok)':'var(--warn)'};">${!st ? (state.reportGmail && state.reportGmail.unavailable ? 'not deployed yet' : 'checking…') : st.connected ? '✓ '+escHtml(st.email||'connected') : 'Not connected — sends from support@'}</span></div>`; }).join("")
+        : `<div class="small">No assistants are the main assistant on an active client yet.</div>`}
+      <div class="small" style="margin-top:4px;">Each assistant connects on their own Team tab (Connect my Gmail).</div>
+      <div class="section-label" style="margin-top:14px;font-size:11px;letter-spacing:1.5px;color:var(--rose-dark);font-weight:600;">Send a test</div>
+      <div class="row" style="align-items:flex-end;">
+        <div><label class="small">Client</label><select id="wr_test_client">${clientOpts.map(c=>`<option value="${c.id}">${escHtml(c.name)}</option>`).join("")}</select></div>
+        <div><label class="small">Send to (team emails only)</label><input type="email" id="wr_test_to" value="${escHtml(bccDefault)}"></div>
+        <div style="flex:0;"><button class="secondary" ${state.weeklyTestBusy?'disabled':''} onclick="sendWeeklyRecapTest()">${state.weeklyTestBusy?'Sending…':'Send test'}</button></div>
+      </div>
+      <div class="small" style="margin-top:4px;">Sends this week's recap exactly as the client would get it, but only to you. Doesn't count as sent.</div>
+      <div class="section-label" style="margin-top:14px;font-size:11px;letter-spacing:1.5px;color:var(--rose-dark);font-weight:600;">Last run</div>
+      ${!run ? `<div class="small">No automatic run yet.</div>` : run.disabled ? `<div class="small">${new Date(run.ranAt).toLocaleString()} — auto-send was off, nothing sent.</div>` : `
+        <div class="small" style="margin-bottom:4px;">${new Date(run.ranAt).toLocaleString()} · ${(run.results||[]).filter(r=>r.status==='sent').length} sent</div>
+        ${(run.results||[]).map(r=>`<div class="small" style="padding:2px 0;">${r.status==='sent' ? '✓' : r.status==='failed' ? '<span style="color:var(--danger);">✕</span>' : '–'} ${escHtml(r.clientName||'')} ${r.status==='sent' ? `<span style="color:#8a7a72;">from ${escHtml(r.sentFrom||'')}${(r.cc||[]).length?` · cc ${escHtml(r.cc.join(', '))}`:''}${r.bcc?` · bcc ${escHtml(r.bcc)}`:''}${r.receiptsAttached?` · ${r.receiptsAttached} receipt${r.receiptsAttached===1?'':'s'}`:''}${r.receiptsTooLarge?` · ${r.receiptsTooLarge} too large`:''}</span>` : `<span style="color:${r.status==='failed'?'var(--danger)':'#8a7a72'};">${escHtml(r.reason||'')}</span>`}</div>`).join("")}`}
+    </div>`;
 }
 // Team-member view of the Team tab: a contact list only. Deliberately reads
 // just name/email/phone off each assistant record — everything else on it
@@ -12017,6 +12219,7 @@ function renderTeamDirectory(){
         </label>
       </div>
     </div>` : ""}
+    ${state.currentAssistant ? renderMyReportGmailCard() : ""}
     <div class="small" style="margin-bottom:14px;">Contact info for everyone on the team.</div>
     <div class="card">
       ${people.length ? `
