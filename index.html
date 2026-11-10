@@ -1355,14 +1355,19 @@ function renderDriveControls(entry){
     <div style="display:flex;gap:6px;margin-top:6px;"><button onclick="arriveDrive('${entry.id}')">I've arrived</button><button class="secondary" onclick="cancelDrive('${entry.id}')">Cancel drive</button></div>`;
   return `<div class="small" style="margin-top:8px;">🚗 Arrived ${new Date(entry.driveEnd.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})} — ${entry.driveMiles!=null ? entry.driveMiles+" mi drive logged" : "miles need review"}. You're still clocked in.</div>`;
 }
-// Small clickable badge on time entry rows — only for drives with TMC
-// overage miles, or ones still missing miles that admin needs to fill in.
+// Small clickable badge on time entry rows — on every finished drive (or
+// any entry admin has entered miles for), so admin can always open it and
+// correct the miles. Drives fully covered by the client (no TMC overage)
+// get a lighter badge showing the trip miles instead of the TMC miles.
 function driveBadge(e){
-  if(!e.driveStart || !e.driveEnd) return "";
+  const finishedDrive = e.driveStart && e.driveEnd;
+  if(!finishedDrive && e.driveMiles==null) return "";
   const tmc = e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : null;
-  if(tmc===0) return "";
-  const label = tmc!=null ? tmc+" mi TMC" : "miles?";
-  return `<span class="badge" style="background:#8a7a72;cursor:pointer;white-space:nowrap;" title="View drive" onclick="event.stopPropagation(); openDriveMap('${e.id}')">🚗 ${label}</span>`;
+  const clientOnly = tmc===0;
+  const label = tmc==null ? "miles?" : clientOnly ? e.driveMiles+" mi" : tmc+" mi TMC";
+  const style = clientOnly ? "background:transparent;color:#8a7a72;border:1px solid #c9bdb6;" : "background:#8a7a72;";
+  const title = clientOnly ? "View drive — covered by the client, no TMC miles" : "View drive";
+  return `<span class="badge" style="${style}cursor:pointer;white-space:nowrap;" title="${title}" onclick="event.stopPropagation(); openDriveMap('${e.id}')">🚗 ${label}</span>`;
 }
 function openDriveMap(entryId){
   state.modal = { type:"driveMap", entryId, returnTo: state.modal };
@@ -1382,7 +1387,7 @@ function renderDriveMapModal(){
       <div class="small" style="margin-bottom:8px;">${task ? task.title : '(deleted task)'} · ${assistantName(e.assistantId)}</div>
       ${hasPoints ? `<div id="driveMap" style="height:260px;border-radius:8px;margin-bottom:6px;background:var(--cream);"></div>
         <a class="small" href="https://www.google.com/maps/dir/?api=1&origin=${s.lat},${s.lng}&destination=${d.lat},${d.lng}&travelmode=driving" target="_blank" rel="noopener">Open route in Google Maps ↗</a>`
-        : `<div class="alert warn">No map — ${s.error || d.error || (e.driveEnd ? "location missing" : "drive still in progress")}.</div>`}
+        : `<div class="alert warn">No map — ${s.error || d.error || (!e.driveStart ? "this drive wasn't logged with Start drive / I've arrived" : e.driveEnd ? "location missing" : "drive still in progress")}.</div>`}
       <div class="stat-row" style="margin:10px 0;">
         <div class="stat-tile"><div class="stat-label">TMC miles</div><div class="stat-value">${split ? split.tmc : "—"}</div><div class="stat-sub">over the first ${DRIVE_CLIENT_MILES}</div></div>
         <div class="stat-tile"><div class="stat-label">Trip miles</div><div class="stat-value">${e.driveMiles!=null ? e.driveMiles : "—"}</div><div class="stat-sub">${e.driveMilesManual ? "entered by admin" : "road distance"}</div></div>
@@ -1392,7 +1397,10 @@ function renderDriveMapModal(){
       <div class="row" style="margin-top:10px;align-items:flex-end;">
         <div><label class="small">Set miles manually</label><input type="number" id="drive_miles" min="0" step="0.1" value="${e.driveMiles!=null ? e.driveMiles : ''}"></div>
         <div style="flex:0;"><button class="secondary" onclick="saveDriveMiles('${e.id}')">Save miles</button></div>
-      </div>` : ""}
+      </div>
+      ${state.driveBusy===e.id ? `<div class="small" style="margin-top:6px;">Working out the road distance…</div>`
+        : e.driveMilesManual && hasPoints ? `<div style="margin-top:6px;"><button class="secondary" style="padding:2px 8px;" onclick="resetDriveMiles('${e.id}')">Reset to road distance</button></div>`
+        : e.driveMiles!=null && !hasPoints ? `<div style="margin-top:6px;"><button class="secondary" style="padding:2px 8px;" onclick="clearDriveMiles('${e.id}')">Remove miles</button></div>` : ""}` : ""}
       <div style="margin-top:14px;text-align:right;"><button class="secondary" onclick="closeTimeModal()">Close</button></div>
     </div>`;
 }
@@ -1400,6 +1408,22 @@ function saveDriveMiles(entryId){
   const v = parseFloat(document.getElementById("drive_miles").value);
   if(isNaN(v) || v<0){ alert("Enter the miles as a number."); return; }
   upsert("timeEntries", entryId, { driveMiles: Math.round(v*10)/10, driveMilesManual: true }).then(()=>render());
+}
+// Undoes a manual override: re-asks the router for the road distance
+// between the recorded start and arrival points.
+async function resetDriveMiles(entryId){
+  const e = state.timeEntries.find(x=>x.id===entryId);
+  if(!e || !e.driveStart || !e.driveEnd || e.driveStart.lat==null || e.driveEnd.lat==null) return;
+  state.driveBusy = entryId; render();
+  const miles = await routeMiles(e.driveStart, e.driveEnd);
+  state.driveBusy = null;
+  if(miles==null){ render(); alert("Couldn't work out the road distance right now — try again in a minute, or keep the miles you entered."); return; }
+  upsert("timeEntries", entryId, { driveMiles: miles, driveMilesManual: false }).then(()=>render());
+}
+// For miles admin added to an entry with no logged drive.
+function clearDriveMiles(entryId){
+  if(!confirm("Remove the miles from this time entry?")) return;
+  upsert("timeEntries", entryId, { driveMiles: null, driveMilesManual: false }).then(()=>render());
 }
 // Leaflet is only loaded the first time someone opens a drive map.
 let _leafletLoading = null;
@@ -14161,7 +14185,13 @@ function renderTimeEntryEditorModal(entry){
       <div style="margin-top:8px;">
         <label class="small">Flag reason (optional)</label>
         <input id="tef_flagnote" value="${(entry.flagNote||'').replace(/"/g,'&quot;')}">
-      </div>` : ""}
+      </div>
+      ${(()=>{ const cur = state.timeEntries.find(x=>x.id===entry.id) || entry;
+        const logged = cur.driveMiles!=null || (cur.driveStart && cur.driveEnd);
+        return `<div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+          <button class="secondary" style="padding:2px 8px;" onclick="openDriveMap('${entry.id}')">🚗 ${logged ? 'View / edit drive miles' : 'Add drive miles'}</button>
+          <span class="small">${cur.driveMiles!=null ? cur.driveMiles+' mi'+(cur.driveMilesManual?' (entered by admin)':'') : logged ? 'miles need review' : 'No drive logged'}</span>
+        </div>`; })()}` : ""}
       <div style="margin-top:14px;display:flex;justify-content:space-between;">
         <button class="danger" onclick="deleteTimeEntry('${entry.id}'); closeTimeModal();">Delete</button>
         <div>
