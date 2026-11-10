@@ -1090,6 +1090,7 @@ function mapAgreementTypeToTermType(agreementType){
   if(!text.trim()) return null;
   if(text.includes("pilot") || text.includes("1 month") || text.includes("one (1) month")) return "pilot";
   if(text.includes("three") || text.includes("3 month") || text.includes("3-month")) return "3month";
+  if(text.includes("six") || text.includes("6 month") || text.includes("6-month")) return "6month";
   if(text.includes("twelve") || text.includes("12 month") || text.includes("1 year") || text.includes("annual")) return "12month_new";
   return null;
 }
@@ -2115,7 +2116,7 @@ async function copyReportCoverNote(clientId, kind, btnEl){
   }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
 }
 // ---- 8d. Contract renewal email ----
-const NEXT_TERM_TYPE = { pilot:"3month", "3month":"12month_new", "12month_new":"12month_renewal", "12month_renewal":"12month_renewal" };
+const NEXT_TERM_TYPE = { pilot:"3month", "3month":"12month_new", "6month":"12month_new", "12month_new":"12month_renewal", "12month_renewal":"12month_renewal" };
 function buildRenewalEmail(client){
   const end = termEndDate(client);
   const notice = noticeDeadline(client);
@@ -3004,8 +3005,8 @@ function upcomingReminders(windowDays){
 // ---- Term end + cancellation notice deadlines ----
 // Per the Services Agreement §2: written notice is required this many days
 // before the term ends, or it auto-renews and the card on file gets charged.
-const TERM_LENGTH_DAYS = { pilot:30, "3month":90, "12month_new":365, "12month_renewal":365 };
-const TERM_NOTICE_DAYS = { pilot:5, "3month":30, "12month_new":60, "12month_renewal":60 };
+const TERM_LENGTH_DAYS = { pilot:30, "3month":90, "6month":180, "12month_new":365, "12month_renewal":365 };
+const TERM_NOTICE_DAYS = { pilot:5, "3month":30, "6month":30, "12month_new":60, "12month_renewal":60 };
 // Day 21 of the pilot is Tory's cue to check in — separate from (and
 // earlier than) the day-25 cancellation notice deadline (30-day pilot
 // minus the 5-day notice window above). Pilot clients get this check-in
@@ -3017,7 +3018,7 @@ function pilotCheckInDueDate(client){
   if(!client.termStartDate) return null;
   return new Date(parseYMD(client.termStartDate).getTime() + PILOT_CHECKIN_DAY*24*3600000);
 }
-const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "12month_new":"Twelve Month Term (New)", "12month_renewal":"Twelve Month Term (Renewal)" };
+const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "6month":"Six Month Term", "12month_new":"Twelve Month Term (New)", "12month_renewal":"Twelve Month Term (Renewal)" };
 function termEndDate(client){
   // A manual override always wins — the 30/90/365-day formula is a default,
   // not every real contract lines up with it exactly.
@@ -6858,6 +6859,7 @@ const CLIENT_GROUP_DEFS = [
     } },
   { key:"pilot", label:"Pilot", match:c=>(c.termType||"pilot")==="pilot" },
   { key:"3month", label:"3 Month", match:c=>c.termType==="3month" },
+  { key:"6month", label:"6 Month", match:c=>c.termType==="6month" },
   { key:"1year", label:"1 Year", match:c=>c.termType==="12month_new"||c.termType==="12month_renewal" },
 ];
 function toggleClientGroup(key){
@@ -8719,6 +8721,7 @@ function renderClientMembership(client){
           <select onchange="updateClientField('${client.id}','termType',this.value)">
             <option value="pilot" ${(!client.termType||client.termType==='pilot')?'selected':''}>One Month Pilot</option>
             <option value="3month" ${client.termType==='3month'?'selected':''}>Three Month Term</option>
+            <option value="6month" ${client.termType==='6month'?'selected':''}>Six Month Term</option>
             <option value="12month_new" ${client.termType==='12month_new'?'selected':''}>Twelve Month Term (New)</option>
             <option value="12month_renewal" ${client.termType==='12month_renewal'?'selected':''}>Twelve Month Term (Renewal)</option>
           </select>
@@ -8744,7 +8747,7 @@ function renderClientMembership(client){
         <div><label class="small">Contract end date</label><div style="padding:8px 10px;">${termEndDate(client)?termEndDate(client).toLocaleDateString():'—'}</div></div>
         <div><label class="small">Cancellation notice due by</label><div style="padding:8px 10px;">${noticeDeadline(client)?noticeDeadline(client).toLocaleDateString():'—'}</div></div>
       </div>
-      <div class="small" style="margin-top:4px;">Auto-calculated from the contract start date above (pilot = +30 days, 3-month = +90 days, 12-month = +365 days) — separate from the 30-day hours period on the Package card above. Wrong for this client's actual contract? Override either one directly below; leave blank to go back to the computed value.</div>
+      <div class="small" style="margin-top:4px;">Auto-calculated from the contract start date above (pilot = +30 days, 3-month = +90 days, 6-month = +180 days, 12-month = +365 days) — separate from the 30-day hours period on the Package card above. Wrong for this client's actual contract? Override either one directly below; leave blank to go back to the computed value.</div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Term end override (optional)</label><input type="date" value="${client.termEndOverride?client.termEndOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','termEndOverride',this.value)"></div>
         <div><label class="small">Cancellation deadline override (optional)</label><input type="date" value="${client.noticeDeadlineOverride?client.noticeDeadlineOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','noticeDeadlineOverride',this.value)"></div>
