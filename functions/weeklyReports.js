@@ -315,7 +315,13 @@ function clientReportHtml(report) {
   </div>
   </body></html>`;
 }
-function clientReportCoverNote(report, reportUrl, attachedCount) {
+// Signed with the sending assistant's first name (Kaylan, Nov 2026), since
+// the email comes from them. No name on file = "The Modern Concierge Team".
+function coverNoteSignoff(signerName) {
+  const first = String(signerName || "").trim().split(/\s+/)[0];
+  return first ? first + "\nThe Modern Concierge" : "The Modern Concierge Team";
+}
+function clientReportCoverNote(report, reportUrl, attachedCount, signerName) {
   const firstName = (report.client.name || "").split(" ")[0] || report.client.name;
   const endDate = report.billingPeriod ? new Date(report.billingPeriod.end.getTime() - 1).toLocaleDateString("en-US") : null;
   const receiptsLine = report.receipts && report.receipts.length
@@ -330,7 +336,7 @@ function clientReportCoverNote(report, reportUrl, attachedCount) {
     + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + overageLine + receiptsLine + "\n\n"
     + (attachedCount ? "I've attached " + (attachedCount === 1 ? "the receipt" : "the " + attachedCount + " receipts") + " from this week's purchases.\n\n" : "")
     + "Please let me know if you have any questions regarding this report.\n\n"
-    + "The Modern Concierge Team";
+    + coverNoteSignoff(signerName);
 }
 // ================= end KEEP IN SYNC =================
 
@@ -515,8 +521,8 @@ module.exports = function createWeeklyReports(deps) {
     const subject = (override ? "[TEST] " : "") + "Your weekly recap — " + fmt(window.start) + " – " + fmt(new Date(window.end.getTime() - 1));
     const weekPurchases = ctx.cardPurchases.filter((p) => p.clientId === client.id && new Date(p.submittedAt) >= window.start && new Date(p.submittedAt) < window.end);
     const { attached, skipped } = receiptAttachments(weekPurchases, report);
-    let bodyText = clientReportCoverNote(report, url, attached.length);
-    if (skipped.length) bodyText = bodyText.replace("The Modern Concierge Team", "(" + skipped.length + " more receipt" + (skipped.length === 1 ? " was" : "s were") + " too large to attach — just reply and I'll send " + (skipped.length === 1 ? "it" : "them") + " separately.)\n\nThe Modern Concierge Team");
+    let bodyText = clientReportCoverNote(report, url, attached.length, assistant && assistant.name);
+    if (skipped.length) bodyText = bodyText.replace("Please let me know if you have any questions regarding this report.\n\n", "Please let me know if you have any questions regarding this report.\n\n(" + skipped.length + " more receipt" + (skipped.length === 1 ? " was" : "s were") + " too large to attach — just reply and I'll send " + (skipped.length === 1 ? "it" : "them") + " separately.)\n\n");
     const to = override ? override.to : client.email;
     // CC: Kaylan + Tori, minus the client (and, below, minus whoever is
     // sending it). BCC: support@ (dropped below when support@ is the sender).
