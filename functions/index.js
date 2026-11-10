@@ -30,6 +30,7 @@
  */
 const { onDocumentUpdated, onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, onRequest, HttpsError } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { defineString } = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const { google } = require("googleapis");
@@ -1498,7 +1499,24 @@ exports.googleCalendarOAuthCallback = onRequest(async (req, res) => {
     const { tokens } = await oauth2Client.getToken(code);
     if (!tokens.refresh_token) {
       console.error("Calendar OAuth callback: no refresh_token — connect flow must include access_type=offline&prompt=consent.");
-      return redirectTo(false);
+      return pending.purpose === "reportGmail" ? reportRedirect(res, false) : redirectTo(false);
+    }
+    // "Connect Gmail for weekly recaps" shares this redirect URI (so it
+    // needs no extra Cloud Run/OAuth-client setup) — see weeklyReports.js.
+    if (pending.purpose === "reportGmail") {
+      if (!String(tokens.scope || "").split(" ").includes(weeklyReports.REPORT_GMAIL_SCOPE)) {
+        await oauth2Client.revokeToken(tokens.refresh_token).catch(() => {});
+        return reportRedirect(res, false, "scopes");
+      }
+      oauth2Client.setCredentials(tokens);
+      let email = null;
+      try {
+        email = (await google.oauth2({ version: "v2", auth: oauth2Client }).userinfo.get()).data.email || null;
+      } catch (e) {
+        console.warn("Report Gmail OAuth: couldn't read account email (non-fatal):", e.message);
+      }
+      await weeklyReports.saveConnection(pending.assistantId, tokens, email);
+      return reportRedirect(res, true);
     }
     // Google's consent screen lets people untick individual permissions.
     const granted = String(tokens.scope || "").split(" ");
@@ -1686,3 +1704,70 @@ exports.disconnectGoogleCalendar = onCall(async (request) => {
 // it — the connector does its own sign-in and token checks.
 const { createClaudeConnector } = require("./claudeConnector");
 exports.claudeConnector = onRequest({ cors: false }, createClaudeConnector({ getDb: () => admin.firestore() }));
+
+// ---- Automatic weekly client recaps (functions/weeklyReports.js) ----
+const createWeeklyReports = require("./weeklyReports");
+const weeklyReports = createWeeklyReports({
+  admin, google, encryptSecret, decryptSecret,
+  newOAuthClient: () => newCalendarOAuthClient(),
+  getSupportGmailClient: () => getValidGmailOAuth2Client(),
+});
+function reportRedirect(res, ok, reason) {
+  return res.redirect(302, `https://modern-co-dashboard.web.app/gmail-connected.html?for=reports&ok=${ok ? "1" : "0"}${reason ? `&reason=${reason}` : ""}`);
+}
+// Every Friday at 4:00pm Central. Does nothing until admin turns on
+// "Auto-send weekly recaps" in the app (settings/access.weeklyReportAutoSend).
+exports.sendWeeklyClientReports = onSchedule(
+  { schedule: "0 16 * * 5", timeZone: weeklyReports.REPORT_TZ, timeoutSeconds: 540, memory: "512MiB", retryCount: 1 },
+  async () => {
+    const out = await weeklyReports.runWeekly();
+    console.log("sendWeeklyClientReports:", JSON.stringify(out.disabled ? { disabled: true } : { sent: out.sent, total: out.results.length }));
+  }
+);
+// Each assistant connects their own Gmail (send-only) from the Team tab.
+exports.getReportGmailAuthConfig = onCall(async (request) => {
+  requireSignedIn(request);
+  const assistantId = request.data && request.data.assistantId;
+  await requireKnownAssistant(assistantId);
+  const state = crypto.randomBytes(24).toString("base64url");
+  await admin.firestore().collection("calendarOAuthStates").doc(state).set({ assistantId, purpose: "reportGmail", expiresAt: Date.now() + 10 * 60 * 1000 });
+  return { clientId: GMAIL_CLIENT_ID.value(), redirectUri: CALENDAR_REDIRECT_URI.value(), scope: [weeklyReports.REPORT_GMAIL_SCOPE, "openid", "email"].join(" "), state };
+});
+// assistantIds omitted = every assistant (admin's Team tab overview).
+exports.getReportGmailStatus = onCall(async (request) => {
+  requireSignedIn(request);
+  const snap = await admin.firestore().collection("settings").doc("access").get();
+  const known = ((snap.exists && snap.data().assistants) || []).map((a) => a.id);
+  const asked = Array.isArray(request.data && request.data.assistantIds) ? request.data.assistantIds.filter((id) => known.includes(id)) : known;
+  const out = {};
+  for (const id of asked) out[id] = await weeklyReports.statusFor(id);
+  return out;
+});
+exports.disconnectReportGmail = onCall(async (request) => {
+  requireSignedIn(request);
+  const assistantId = request.data && request.data.assistantId;
+  await requireKnownAssistant(assistantId);
+  return weeklyReports.disconnect(assistantId);
+});
+// Admin "Send me a test" — emails this week's recap for one client to the
+// given address only. Never the client, no BCC, not marked as sent.
+exports.sendWeeklyReportTest = onCall({ timeoutSeconds: 120, memory: "512MiB" }, async (request) => {
+  requireSignedIn(request);
+  const { clientId, to } = request.data || {};
+  if (!clientId || typeof clientId !== "string") throw new HttpsError("invalid-argument", "Pick a client.");
+  if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(to))) throw new HttpsError("invalid-argument", "Enter the email to send the test to.");
+  // Only to someone on the team — this trusts any signed-in session (see
+  // "Known remaining gap" in CLAUDE.md), so it must not be a way to email a
+  // client's report to an arbitrary address.
+  const settingsSnap = await admin.firestore().collection("settings").doc("access").get();
+  const sd = settingsSnap.exists ? settingsSnap.data() : {};
+  const allowed = new Set([sd.weeklyReportBcc, sd.adminNotifyEmail, ...((sd.assistants || []).map((a) => a.email))]
+    .filter(Boolean).map((e) => String(e).trim().toLowerCase()));
+  if (!allowed.has(String(to).trim().toLowerCase())) throw new HttpsError("permission-denied", "Tests can only go to the BCC email, the admin email, or a team member's email.");
+  try {
+    return await weeklyReports.sendTest(clientId, String(to).trim());
+  } catch (err) {
+    console.error("sendWeeklyReportTest failed:", err);
+    throw new HttpsError("internal", String((err && err.message) || err).slice(0, 300));
+  }
+});
