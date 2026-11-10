@@ -3641,16 +3641,14 @@ function isDevDirector(){
 }
 // Who can see the Software side of the business (Software tab on Clients,
 // each client's Software Build tab, build payment / maintenance alerts):
-// the admin login, the Dev Director, and anyone with "Can view Software"
-// ticked on the Team tab (Hannah, Tori, Heidi as of Nov 2026).
+// the admin login and the Director of Development only (Kaylan's call,
+// Nov 2026).
 // UI-ONLY: build data still lives inside each client doc, which every
 // signed-in session can read (see CLAUDE.md → Security → Known remaining
 // gap). Real enforcement needs per-role auth claims + moving addOns into
 // their own collection with its own rules — a separate follow-up.
 function canViewSoftware(){
-  if(state.role==="admin") return true;
-  const a = state.role==="team" ? state.currentAssistant : null;
-  return !!(a && (a.isDevDirector || a.canViewSoftware));
+  return state.role==="admin" || isDevDirector();
 }
 // Client categories. A client can be Membership (hour package), Software
 // (software/website build), or both — each side keeps its own records
@@ -11993,10 +11991,6 @@ function renderAssistantRow(a){
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Director of Software Development &amp; Web Design: always sees the Builds tab with every build and its finances, and every team Tech Support request (can change status). No other admin tabs. Takes effect on their next login.">
             <input type="checkbox" ${a.isDevDirector?'checked':''} onchange="updateAssistantField('${a.id}','isDevDirector',this.checked)">
             Director of Development
-          </label>
-          <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Sees the Software side: the Software list on the Clients tab, each client's Software Build tab (build payments, phases, maintenance). Admin and the Director of Development always can. Hidden in the app only — not yet locked down in the database. Takes effect on their next login.">
-            <input type="checkbox" ${a.canViewSoftware||a.isDevDirector?'checked':''} ${a.isDevDirector?'disabled':''} onchange="updateAssistantField('${a.id}','canViewSoftware',this.checked)">
-            Can view Software
           </label>
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Lets ${escHtml(a.name||'them')} connect their own Claude account to their own tasks, builds, goals and deadlines (nothing else). Turning this off cuts off an existing connection right away.">
             <input type="checkbox" ${a.claudeConnectorEnabled?'checked':''} onchange="updateAssistantField('${a.id}','claudeConnectorEnabled',this.checked)">
