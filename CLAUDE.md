@@ -140,6 +140,14 @@ Checked against Intuit's published security requirements for App Store listing:
 - **Goals and concurrency:** settings/access is loaded once at boot, so app goal edits go through `mutateActiveGoals(fn)`, which re-reads the latest goals in a transaction before saving. That keeps connector edits from being overwritten by a stale browser. The Goals tab also refetches goals at most every 30s.
 - **Setup (after deploying functions + rules):** (1) grant `allUsers` the **Cloud Run Invoker** role on the `claudeconnector` Cloud Run service; (2) tick Claude connector for the person; (3) in Claude: Settings → Connectors → Add custom connector, URL = the function's **run.app** URL + `/mcp` (from the deploy output or Cloud Run). Not the cloudfunctions.net URL, because OAuth discovery needs `/.well-known/…` at the host root. On a Team/Enterprise Claude plan, an owner may need to add it for the workspace first.
 
+## Membership vs Software clients (Nov 2026)
+
+- A client can be **Membership** (hour package), **Software** (software/website build = `client.addOns`), or both. `isMembershipClient` (`membershipClient!==false`) and `isSoftwareClient` (`softwareClient` if set, else "has a non-cancelled add-on"). Set per client on the Software Build tab → Client categories. No migration: unset flags fall back to those defaults.
+- Clients tab has Membership / Software views; dual clients appear in both with "Also a … client →" links.
+- **Who sees Software:** admin, Dev Director, and anyone with **Can view Software** ticked on the Team tab (`canViewSoftware()`). **UI-only** — addOns live inside each client doc, which every session can read. Real enforcement = the per-role auth project (Security → Known remaining gap) plus moving addOns to their own collection with rules.
+- **Build phases:** `addOn.phases` (optional) + `payment.phaseId`; a payment without a phaseId is Phase 1, so old schedules need no migration. Payments stay one flat `addOn.payments` list, so alerts/emails/payroll/revenue cover every phase. Phase 1 uses the build's `flatFee`/`buildStartDate`; later phases carry their own `fee`/`startDate`/`basisAmount` (`buildAssistantCut` is per phase).
+- **Maintenance Mark paid** (`markMaintenanceFeePaid`): Dashboard alert + build card; stamps `paidDate`/`paidBy`. Maintenance runs on calendar months (`month: YYYY-MM`), so it comes back next month by itself.
+
 ## Working Conventions
 
 - This is a single-file app — keep it that way unless explicitly asked to split it up.
