@@ -10109,14 +10109,31 @@ function renderTimeTracking(){
 function taskSearchOptions(tasks){
   return tasks.map(t=>`<option value="#${t.taskNumber||'?'} — ${(t.title||'').replace(/"/g,'&quot;')}">`).join("");
 }
+// The picker's options read "#123 — Title". Task numbers are NOT
+// guaranteed unique (allocateTaskNumber falls back to local numbering on a
+// timeout), so matching on the number alone silently picked whichever
+// task with that number came first — which is how time logged on one task
+// landed on a different client's task with the same number. Match the
+// number AND the title; if several still match, prefer an open task
+// assigned to whoever is logged in.
 function resolveTaskFromSearch(value){
   const v = (value||"").trim();
-  const m = v.match(/^#(\d+)/);
+  if(!v) return null;
+  const m = v.match(/^#(\d+|\?)\s*(?:—|-)?\s*(.*)$/);
+  let candidates;
   if(m){
-    const t = state.tasks.find(t=>t.taskNumber===parseInt(m[1],10));
-    if(t) return t;
+    const num = m[1]==="?" ? null : parseInt(m[1],10);
+    const title = m[2].trim();
+    const byNum = state.tasks.filter(t=>(t.taskNumber||null)===num);
+    candidates = title ? byNum.filter(t=>(t.title||"").trim()===title) : byNum;
+    if(!candidates.length && title) candidates = state.tasks.filter(t=>(t.title||"").trim()===title);
+  } else {
+    candidates = state.tasks.filter(t=>(t.title||"").trim()===v);
   }
-  return state.tasks.find(t=>t.title===v) || null;
+  if(candidates.length<=1) return candidates[0] || null;
+  const me = state.currentAssistant && state.currentAssistant.id;
+  const score = t => (t.status!=="Done" ? 2 : 0) + (me && (t.assignees||[]).includes(me) ? 1 : 0);
+  return candidates.slice().sort((a,b)=>score(b)-score(a))[0];
 }
 function doClockIn(){
   const sel = document.getElementById("clockInTaskSelect");
@@ -13629,7 +13646,11 @@ async function allocateTaskNumber(){
         // First run ever (counter doc doesn't exist yet): start from whatever
         // the highest existing task number already is, so it doesn't restart
         // at 1 and collide with real tasks already numbered well past that.
-        const current = snap.exists ? (snap.data().value || 0) : bestEffortTaskNumber() - 1;
+        // Never hand out a number at or below one this browser can already
+        // see — a past timeout fallback can have used numbers the shared
+        // counter never recorded, and re-issuing them is how duplicate
+        // task numbers happen.
+        const current = Math.max(snap.exists ? (snap.data().value || 0) : 0, bestEffortTaskNumber() - 1);
         const next = current + 1;
         tx.set(counterRef, { value: next }, { merge: true });
         return next;
