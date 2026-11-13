@@ -492,6 +492,8 @@ const ADDON_CATALOG = [
   { key:"sop_standard", category:"SOP", label:"Standard SOP", flatFee:450, maintenance:0, note:"Single process, single system" },
   { key:"sop_complex", category:"SOP", label:"Complex SOP", flatFee:750, maintenance:0, note:"Multi-step, cross-system, incl. research/interviews" },
   { key:"build_custom", category:"Software Build", label:"Custom Build", flatFee:0, maintenance:0, note:"Every build is different — enter the quoted flat fee and any monthly maintenance after selecting." },
+  { key:"website_build", category:"Software Build", label:"Website Build", flatFee:0, maintenance:0, note:"New website — enter the quoted flat fee and any monthly maintenance after selecting." },
+  { key:"website_refresh", category:"Software Build", label:"Website Refresh", flatFee:0, maintenance:0, note:"Refresh/redesign of an existing website — enter the quoted flat fee and any monthly maintenance after selecting." },
   { key:"ai_quick", category:"AI Integration", label:"Quick Automation", flatFee:650, maintenance:100, note:"Single automated workflow" },
   { key:"ai_workflow", category:"AI Integration", label:"AI Workflow Build", flatFee:2200, maintenance:200, note:"Multi-step automation, AI decision-making, 3–5 systems" },
   { key:"ai_custom", category:"AI Integration", label:"Custom AI System", flatFee:null, noteDefault:4500, maintenance:350, note:"Full AI agent/integration across multiple platforms — from $4,500, custom quoted" },
@@ -10643,6 +10645,7 @@ function addGoalsYear(){
 // unset (could be either) until someone picks.
 function addOnBuildType(a){
   if(a.buildType) return a.buildType;
+  if(a.catalogKey==="website_build" || a.catalogKey==="website_refresh") return "website";
   if(a.category==="SOP") return "none";
   if(a.category==="Productized Software" || a.category==="AI Integration") return "software";
   return "";
