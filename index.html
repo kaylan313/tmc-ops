@@ -450,6 +450,14 @@ const MARKETS = ["Lafayette","Baton Rouge","Denver","Virtual"];
 // yes/no (approve, or ask for changes) — see respondToClientReview() and
 // the client portal's Open Tasks card.
 const STATUSES = ["To do","Researching","In progress","Paused","Pending approval","Needs Client Review","Done"];
+// Display names only — the stored status values above stay the same, so
+// existing tasks, the client-request email trigger (functions/index.js) and
+// the Claude connector keep working. "Pending approval" was renamed for the
+// team because it read like a twin of "Needs Client Review".
+const STATUS_LABELS = { "Pending approval":"New client request" };
+function statusLabel(s){ return STATUS_LABELS[s] || s; }
+// What a CLIENT sees for their own task in the portal.
+function clientStatusLabel(s){ return s==="Pending approval" ? "Submitted" : s; }
 const TIER_THRESHOLDS = [50,75,90,100];
 // Real rate card from the Personal Assistant Services Agreement — same
 // pricing regardless of term type (pilot / 3-month / 12-month). A client
@@ -4437,7 +4445,7 @@ function renderAdminDashboard(){
               <td><span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>${t.title}</td>
               <td>${client?client.name:'Internal'}</td>
               <td>${names}</td>
-              <td>${t.status}</td>
+              <td>${statusLabel(t.status)}</td>
               <td>${Math.floor(days)}d</td>
             </tr>`;
           }).join("")}
@@ -7010,7 +7018,7 @@ function renderTaskMiniList(tasks){
         ${t.repeat ? `<span class="badge" style="background:#8a7a72;" title="${repeatSummary(t.repeat)}">🔁</span>` : ''}
         ${t.title} <span class="small">(${client?client.name:'Internal'})</span>
       </div>
-      <span class="small">${t.status} &middot; ${hoursForTask(t.id).toFixed(1)} hrs logged</span>
+      <span class="small">${statusLabel(t.status)} &middot; ${hoursForTask(t.id).toFixed(1)} hrs logged</span>
     </div>`;
   }).join("");
 }
@@ -8531,7 +8539,7 @@ function renderClientTasks(client){
           <label class="small">Status</label>
           <select onchange="setClientTaskListFilter('status',this.value)">
             <option value="all" ${(f.status||'all')==='all'?'selected':''}>All statuses</option>
-            ${STATUSES.map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${s}</option>`).join("")}
+            ${STATUSES.map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${statusLabel(s)}</option>`).join("")}
           </select>
         </div>
         <div>
@@ -9873,7 +9881,7 @@ function renderKanban(){
     <div class="kanban">
       ${visibleStatuses.map(status=>`
         <div class="kanban-col">
-          <h4>${status}</h4>
+          <h4>${statusLabel(status)}</h4>
           ${sortKanbanTasks(filtered.filter(t=>t.status===status), f.sort).map(renderKanbanCard).join("")}
         </div>
       `).join("")}
@@ -13234,10 +13242,10 @@ ${html}
 function appGuideHtml(){
   return `
     <p><strong>Dashboard</strong> — your homepage. Shows your open tasks, a live clock-in timer if you're currently working, and any overdue/upcoming reminders across your clients.</p>
-    <p><strong>Task Board</strong> — every task moves through 5 columns: To do → Researching → In progress → Pending approval → Done.</p>
+    <p><strong>Task Board</strong> — every task moves through these columns: To do → Researching → In progress → Paused → New client request → Needs Client Review → Done.</p>
     <ul>
       <li>Click any task card to open it — add subtasks, leave a comment for whoever else is assigned, or attach a file/photo.</li>
-      <li>"Pending approval" is used for tasks a client submitted themselves — accept or decline it from there.</li>
+      <li>"New client request" is for tasks a client submitted themselves — accept or decline it from there. "Needs Client Review" is the opposite: you finished something and the client needs to approve it.</li>
       <li>Completed tasks are hidden from the board by default now (there's a "Hide completed" checkbox at the top) so your board doesn't fill up forever — nothing is deleted, you can always click "Show them" to see history.</li>
       <li>Use "My tasks only" to filter to just what's assigned to you.</li>
     </ul>
@@ -13724,7 +13732,7 @@ function renderClientPortal(){
                   ${(t.subtasks||[]).length ? `<div class="small">${(t.subtasks||[]).length} subtasks</div>` : ""}
                 </div>
                 <div style="text-align:right;">
-                  <span class="small">${t.status}</span>
+                  <span class="small">${clientStatusLabel(t.status)}</span>
                   <div class="small">${hoursForTask(t.id).toFixed(1)} hrs logged</div>
                 </div>
               </div>
@@ -14006,7 +14014,7 @@ function renderTaskEditorModal(task){
         </div>
         <div><label class="small">Status</label>
           <select id="tf_status" onchange="state.modal.task.status=this.value;render();">
-            ${STATUSES.map(s=>`<option ${task.status===s?'selected':''}>${s}</option>`).join("")}
+            ${STATUSES.map(s=>`<option value="${s}" ${task.status===s?'selected':''}>${statusLabel(s)}</option>`).join("")}
           </select>
         </div>
         <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}" onchange="state.modal.task.dueDate=this.value;if(state.modal.task.repeat)render();"></div>
