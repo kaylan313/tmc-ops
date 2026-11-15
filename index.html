@@ -925,7 +925,7 @@ function switchPreviewRole(key){
   // Mirror a real login: team roles start on their own tasks only.
   state.kanbanFilter.onlyMine = key==="team" || key==="director" || key==="newHire";
   if(key==="admin"){ state.role = "admin"; state.activeTab = "dashboard"; }
-  else if(key==="team"){ state.role = "team"; state.currentAssistant = state.settings.assistants.find(a=>a.id==="asst_3"); state.activeTab = "dashboard"; if(weeklyRecapPromptDue(state.currentAssistant)) state.modal = { type:"weeklyRecapPrompt" }; }
+  else if(key==="team"){ state.role = "team"; state.currentAssistant = state.settings.assistants.find(a=>a.id==="asst_3"); state.activeTab = "dashboard"; state.modal = weeklyTaskReviewDue(state.currentAssistant) ? { type:"weeklyTaskReview" } : weeklyRecapPromptDue(state.currentAssistant) ? { type:"weeklyRecapPrompt" } : null; }
   else if(key==="director"){ state.role = "team"; state.currentAssistant = { ...state.settings.assistants.find(a=>a.id==="asst_3"), isDevDirector:true }; state.activeTab = "builds"; }
   else if(key==="newHire"){
     // A brand-new hire who hasn't done any onboarding steps yet, so the
@@ -1043,7 +1043,14 @@ async function boot(){
   }
 
   render();
-  setInterval(()=>{ if(!state.modal) render(); }, 60000); // refresh live timers every minute, but not mid-form
+  setInterval(()=>{
+    if(!state.modal){
+      // Catches a tab left open from Thursday into Friday — login isn't the
+      // only moment this needs to trigger.
+      if(state.role==="team" && state.currentAssistant && !nextOnboardingGateFor(state.currentAssistant) && weeklyTaskReviewDue(state.currentAssistant)) state.modal = { type:"weeklyTaskReview" };
+      render();
+    }
+  }, 60000); // refresh live timers every minute, but not mid-form
   setInterval(checkClockReminders, 30*60*1000); // 30-min reminder
 }
 let appDataSubscribed = false;
@@ -3392,9 +3399,12 @@ function tryTeamLogin(code){
     // Team members start the Task Board on just their own assigned tasks,
     // with a "Show all tasks" tick to widen it.
     state.kanbanFilter.onlyMine = true;
-    // Onboarding gates always come first; the Friday recap reminder only
-    // shows when there's no gate to get through.
-    state.modal = nextOnboardingGateFor(match) || (weeklyRecapPromptDue(match) ? { type:"weeklyRecapPrompt" } : null);
+    // Onboarding gates always come first; the Friday task review comes next
+    // (makes the automated client report accurate), then the old manual
+    // "did you send recaps" reminder for anyone auto-send isn't live for yet.
+    state.modal = nextOnboardingGateFor(match)
+      || (weeklyTaskReviewDue(match) ? { type:"weeklyTaskReview" } : null)
+      || (weeklyRecapPromptDue(match) ? { type:"weeklyRecapPrompt" } : null);
     subscribeAppData(); render();
   } else alert("Access code not recognized.");
 }
@@ -14875,8 +14885,9 @@ function renderModal(){
     : state.modal.type==="newSupportTicket" ? renderNewSupportTicketModal()
     : state.modal.type==="supportTicketDetail" ? renderSupportTicketDetailModal(state.modal.ticketId)
     : state.modal.type==="weeklyRecapPrompt" ? renderWeeklyRecapPromptModal()
+    : state.modal.type==="weeklyTaskReview" ? renderWeeklyTaskReviewModal()
     : "";
-  const NON_DISMISSABLE_MODALS = ["changeCodeGate","waitingOnRateGate","agreementGate","handbookGate","idUploadGate","appGuide"];
+  const NON_DISMISSABLE_MODALS = ["changeCodeGate","waitingOnRateGate","agreementGate","handbookGate","idUploadGate","appGuide","weeklyTaskReview"];
   const dismissable = !NON_DISMISSABLE_MODALS.includes(state.modal.type);
   return `<div class="modal-bg" onclick="${dismissable ? "if(event.target===this) closeModal()" : ""}">${content}</div>`;
 }
@@ -14896,12 +14907,88 @@ function recapAssistantClients(assistant){
 function weeklyRecapPromptDue(assistant, now){
   now = now || new Date();
   if(!assistant || assistant.isContentCreator) return false;
+  // Once auto-send is live, recaps go out on their own — asking "did you
+  // send it by hand" no longer makes sense (see weeklyTaskReviewDue instead,
+  // which replaces this for making sure the automated report is accurate).
+  if(state.settings.weeklyReportAutoSend) return false;
   // index.html?preview&friday pretends it's Friday, so the reminder can be
   // previewed any day of the week.
   const isFriday = now.getDay()===5 || (PREVIEW_MODE && /[?&]friday(=|&|$)/.test(location.search));
   if(!isFriday) return false;
   if(!recapAssistantClients(assistant).length) return false;
   return (state.settings.weeklyRecapDone||{})[assistant.id] !== ymd(now);
+}
+// ---- Friday: review every task touched this week before the automated
+// client report uses it (Kaylan's ask — a stale status would otherwise make
+// the Friday 5pm report wrong, and nobody but the client would notice).
+// "Touched this week" reuses the exact definition buildClientReport already
+// uses per client (worked-on hours + currently In progress), just scanning
+// all of this assistant's own tasks across every client at once. Excludes
+// Paused (already explained) and the two client-facing statuses (those stay
+// manual, same rule as everywhere else in the app).
+function weeklyTaskReviewItems(assistant, window){
+  window = window || currentReportWeek();
+  const todayYMD = ymd(new Date());
+  const myEntries = state.timeEntries.filter(e=>e.assistantId===assistant.id);
+  const windowHoursByTask = new Map();
+  myEntries.forEach(e=>{
+    const d = new Date(e.clockIn);
+    if(d>=window.start && d<window.end) windowHoursByTask.set(e.taskId, (windowHoursByTask.get(e.taskId)||0)+entryDurationHours(e));
+  });
+  const runningTaskIds = new Set(myEntries.filter(e=>!e.clockOut).map(e=>e.taskId));
+  return state.tasks.filter(t=>
+    (t.assignees||[]).includes(assistant.id) &&
+    !["Done","Paused","Pending approval","Needs Client Review"].includes(t.status) &&
+    ymd(t.lastWeeklyReviewAt||"")!==todayYMD &&
+    (runningTaskIds.has(t.id) || t.status==="In progress" || (windowHoursByTask.get(t.id)||0)>0)
+  ).map(t=>({ task:t, hoursThisWeek: windowHoursByTask.get(t.id)||0, running: runningTaskIds.has(t.id), client: state.clients.find(c=>c.id===t.clientId) }))
+   .sort((a,b)=>(a.client?a.client.name:'').localeCompare(b.client?b.client.name:''));
+}
+function weeklyTaskReviewDue(assistant, now){
+  now = now || new Date();
+  if(!assistant || assistant.isContentCreator) return false;
+  const isFriday = now.getDay()===5 || (PREVIEW_MODE && /[?&]friday(=|&|$)/.test(location.search));
+  if(!isFriday) return false;
+  return weeklyTaskReviewItems(assistant).length>0;
+}
+// done = client got it, saw it finished. today = still open, but they're
+// committing to finish it today (bumps the due date so it surfaces as due
+// today elsewhere too). inprogress = just confirming it's accurately
+// still open and being worked, nothing else changes.
+function resolveWeeklyReviewTask(taskId, choice){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const now = new Date().toISOString();
+  const patch = { lastWeeklyReviewAt: now };
+  if(choice==="done"){ patch.status = "Done"; patch.completedAt = now; }
+  else if(choice==="today"){ patch.status = "In progress"; patch.dueDate = ymd(new Date()); }
+  else if(choice==="inprogress"){ patch.status = "In progress"; }
+  upsert("tasks", taskId, patch);
+}
+function renderWeeklyTaskReviewModal(){
+  const a = state.currentAssistant || {};
+  const items = weeklyTaskReviewItems(a);
+  if(!items.length){
+    return `<div class="modal"><h3>✅ All caught up</h3><p>Every task you touched this week is up to date — nice work. Have a great Friday!</p><div style="margin-top:12px;text-align:right;"><button onclick="closeModal()">Close</button></div></div>`;
+  }
+  return `
+    <div class="modal">
+      <h3>📋 Quick task check before today's client reports</h3>
+      <p>Clients' recap emails go out today at 5pm, pulled straight from these. Update each one so what they see is accurate — ${items.length} left.</p>
+      ${items.map(({task:t,hoursThisWeek,running,client})=>`
+        <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+          <div>
+            <strong>${escHtml(t.title||'(untitled task)')}</strong>
+            <span class="small"> · ${client?escHtml(client.name):'Internal'}${hoursThisWeek>0?' · '+formatHoursMinutes(hoursThisWeek)+' this week':''}${running?' · clocked in now':''}</span>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="secondary" style="padding:4px 10px;" onclick="resolveWeeklyReviewTask('${t.id}','done')">✅ Completed</button>
+            <button class="secondary" style="padding:4px 10px;" onclick="resolveWeeklyReviewTask('${t.id}','today')">🕐 Finishing today</button>
+            <button class="secondary" style="padding:4px 10px;" onclick="resolveWeeklyReviewTask('${t.id}','inprogress')">🔄 Still in progress</button>
+          </div>
+        </div>
+      `).join("")}
+    </div>`;
 }
 function completeWeeklyRecap(){
   const a = state.currentAssistant;
