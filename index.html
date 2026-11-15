@@ -10763,7 +10763,12 @@ function renderGoogleCalendarPanel(g, prefs){
 // --- Weekly client reports (admin only) ---
 function renderReportsTab(){
   const week = currentReportWeek();
-  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID);
+  // Unlike computeScorecardMetrics/renderLeadOrganizerTab/renderPayrollTool
+  // above, which intentionally need every client (historical stats, or
+  // their own active-only derivation downstream), a cancelled client has no
+  // business showing up in a list of reports to send out. Paused clients
+  // still count as "active" here, same as the Clients tab's own grouping.
+  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.clientStatus!=="cancelled");
   const rows = realClients.map(client=>{
     const weekReport = buildClientReport(client, week, "week");
     const periodWindow = currentBillingPeriod(client);
