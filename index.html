@@ -12094,7 +12094,7 @@ function renderMyReportGmailCard(){
   return `
     <div class="card">
       <h3>Friday client recaps</h3>
-      <div class="small" style="margin-bottom:10px;">${state.settings.weeklyReportAutoSend ? "Weekly recaps go out automatically every Friday at 4pm" : "Once turned on, weekly recaps will go out automatically every Friday at 4pm"} to the clients you're the main assistant for${myClients.length ? ` (${myClients.map(c=>escHtml(c.name)).join(", ")})` : ""}. Just make sure your tasks and time are in by 4pm. Anything you're still clocked in on shows as In progress.</div>
+      <div class="small" style="margin-bottom:10px;">${state.settings.weeklyReportAutoSend ? "Weekly recaps go out automatically every Friday at 5pm" : "Once turned on, weekly recaps will go out automatically every Friday at 5pm"} to the clients you're the main assistant for${myClients.length ? ` (${myClients.map(c=>escHtml(c.name)).join(", ")})` : ""}. Just make sure your tasks and time are in by 5pm. Anything you're still clocked in on shows as In progress.</div>
       ${!st && state.reportGmail && state.reportGmail.unavailable ? `<div class="small">Not set up yet — Kaylan needs to finish turning this on.</div>`
         : !st ? `<div class="small">Checking your Gmail connection…</div>`
         : st.connected ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="color:var(--ok);">✓ Sending from ${escHtml(st.email||'your Gmail')}</span><button class="secondary" style="padding:2px 8px;" onclick="disconnectReportGmail()">Disconnect</button></div>`
@@ -12186,7 +12186,7 @@ function renderWeeklyRecapAdminCard(){
   return `
     <div class="card">
       <h3>Automatic Friday recaps</h3>
-      <div class="small" style="margin-bottom:10px;">Every Friday at 4pm Central, each active Membership client with an email gets their weekly recap from their main assistant's Gmail, CC'd to the people below and BCC'd to support@, with receipt photos from that week's card purchases attached. The secondary assistant is never copied. Skips clients already sent by hand that week, clients turned off on their Email Templates tab, and weeks with no time, completed tasks or purchases.</div>
+      <div class="small" style="margin-bottom:10px;">Every Friday at 5pm Central, each active Membership client with an email gets their weekly recap from their main assistant's Gmail, CC'd to the people below and BCC'd to support@, with receipt photos from that week's card purchases attached. The secondary assistant is never copied. Skips clients already sent by hand that week, clients turned off on their Email Templates tab, and weeks with no time, completed tasks or purchases.</div>
       <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:10px;">
         <input type="checkbox" ${on?'checked':''} onchange="setWeeklyRecapSetting('weeklyReportAutoSend', this.checked)"> <strong>Auto-send weekly recaps</strong>
       </label>

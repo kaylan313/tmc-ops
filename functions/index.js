@@ -1715,10 +1715,10 @@ const weeklyReports = createWeeklyReports({
 function reportRedirect(res, ok, reason) {
   return res.redirect(302, `https://modern-co-dashboard.web.app/gmail-connected.html?for=reports&ok=${ok ? "1" : "0"}${reason ? `&reason=${reason}` : ""}`);
 }
-// Every Friday at 4:00pm Central. Does nothing until admin turns on
+// Every Friday at 5:00pm Central. Does nothing until admin turns on
 // "Auto-send weekly recaps" in the app (settings/access.weeklyReportAutoSend).
 exports.sendWeeklyClientReports = onSchedule(
-  { schedule: "0 16 * * 5", timeZone: weeklyReports.REPORT_TZ, timeoutSeconds: 540, memory: "512MiB", retryCount: 1 },
+  { schedule: "0 17 * * 5", timeZone: weeklyReports.REPORT_TZ, timeoutSeconds: 540, memory: "512MiB", retryCount: 1 },
   async () => {
     const out = await weeklyReports.runWeekly();
     console.log("sendWeeklyClientReports:", JSON.stringify(out.disabled ? { disabled: true } : { sent: out.sent, total: out.results.length }));

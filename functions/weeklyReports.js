@@ -1,5 +1,5 @@
 /**
- * Automatic weekly client recaps — every Friday at 4:00pm Central.
+ * Automatic weekly client recaps — every Friday at 5:00pm Central.
  *
  * What it does, per client:
  *  1. Builds the same Saturday–Friday "End-of-Week Recap" the app's
