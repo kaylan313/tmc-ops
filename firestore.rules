@@ -67,6 +67,13 @@ service cloud.firestore {
     // it. Cloud Functions only — same reasoning as qbTokens/gmailTokens.
     match /calendarTokens/{document=**} { allow read, write: if false; }
     match /calendarOAuthStates/{document=**} { allow read, write: if false; }
+    // Each assistant's Gmail send-only token for the automatic Friday
+    // recaps (functions/weeklyReports.js) — can send mail as them, so
+    // Cloud Functions only.
+    match /reportGmailTokens/{document=**} { allow read, write: if false; }
+    // Log of each Friday's automatic recap run, shown to admin. Written
+    // only by the function.
+    match /weeklyReportRuns/{document=**} { allow read: if request.auth != null; allow write: if false; }
     // Claude connector (functions/claudeConnector.js): OAuth clients, auth
     // codes, access/refresh tokens and the wrong-code lockout counter are
     // Cloud Functions only — a token here IS access to someone's portal.

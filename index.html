@@ -450,6 +450,14 @@ const MARKETS = ["Lafayette","Baton Rouge","Denver","Virtual"];
 // yes/no (approve, or ask for changes) — see respondToClientReview() and
 // the client portal's Open Tasks card.
 const STATUSES = ["To do","Researching","In progress","Paused","Pending approval","Needs Client Review","Done"];
+// Display names only — the stored status values above stay the same, so
+// existing tasks, the client-request email trigger (functions/index.js) and
+// the Claude connector keep working. "Pending approval" was renamed for the
+// team because it read like a twin of "Needs Client Review".
+const STATUS_LABELS = { "Pending approval":"New client request" };
+function statusLabel(s){ return STATUS_LABELS[s] || s; }
+// What a CLIENT sees for their own task in the portal.
+function clientStatusLabel(s){ return s==="Pending approval" ? "Submitted" : s; }
 const TIER_THRESHOLDS = [50,75,90,100];
 // Real rate card from the Personal Assistant Services Agreement — same
 // pricing regardless of term type (pilot / 3-month / 12-month). A client
@@ -492,6 +500,8 @@ const ADDON_CATALOG = [
   { key:"sop_standard", category:"SOP", label:"Standard SOP", flatFee:450, maintenance:0, note:"Single process, single system" },
   { key:"sop_complex", category:"SOP", label:"Complex SOP", flatFee:750, maintenance:0, note:"Multi-step, cross-system, incl. research/interviews" },
   { key:"build_custom", category:"Software Build", label:"Custom Build", flatFee:0, maintenance:0, note:"Every build is different — enter the quoted flat fee and any monthly maintenance after selecting." },
+  { key:"website_build", category:"Software Build", label:"Website Build", flatFee:0, maintenance:0, note:"New website — enter the quoted flat fee and any monthly maintenance after selecting." },
+  { key:"website_refresh", category:"Software Build", label:"Website Refresh", flatFee:0, maintenance:0, note:"Refresh/redesign of an existing website — enter the quoted flat fee and any monthly maintenance after selecting." },
   { key:"ai_quick", category:"AI Integration", label:"Quick Automation", flatFee:650, maintenance:100, note:"Single automated workflow" },
   { key:"ai_workflow", category:"AI Integration", label:"AI Workflow Build", flatFee:2200, maintenance:200, note:"Multi-step automation, AI decision-making, 3–5 systems" },
   { key:"ai_custom", category:"AI Integration", label:"Custom AI System", flatFee:null, noteDefault:4500, maintenance:350, note:"Full AI agent/integration across multiple platforms — from $4,500, custom quoted" },
@@ -825,7 +835,7 @@ function seedPreviewData(){
   const settings = { ...SEED_SETTINGS, adminPasscode: "preview", assistants };
   const c2 = { id:"client_preview_2", name:"Jordan Sample", packageHours:10, packagePrice:500, cycleType:"monthly",
     renewalDate: new Date(now - 20*24*3600000).toISOString().slice(0,10), assistantIds:["asst_2"], email:"jordan@example.com",
-    portalCode:"preview-client2", termType:"pilot", clientStatus:"active", createdAt: hoursAgo(24*20), notes:[],
+    portalCode:"preview-client2", termType:"pilot", termStartDate: new Date(now - 20*24*3600000).toISOString().slice(0,10), clientStatus:"active", createdAt: hoursAgo(24*20), notes:[],
     profile:{ serviceType:"home", phone:"555-222-3333", homeAddress:"789 Example St, Lafayette, LA", homeAccess:"Garage code 0000. Dog is friendly." } };
   // Already confirmed in QuickBooks this cycle, so the dashboard's
   // membership-charge card shows a completed row too.
@@ -837,6 +847,7 @@ function seedPreviewData(){
     // A fake assigned build so the Builds tab isn't empty in preview.
     addOns:[{ id:"addon_preview_1", label:"Website Build", status:"Active", flatFee:3000, buildAssistantId:"asst_3", buildAssistantPercent:30,
       monthlyMaintenance:150, maintenanceActive:true, maintenanceAssistantId:"asst_3", maintenanceAssistantPercent:30,
+      maintenanceStartDate: new Date(now - 33*24*3600000).toISOString().slice(0,10),
       maintenancePayments:[
         { id:"maintpay_preview_1", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(new Date(now).getFullYear(), new Date(now).getMonth()-1, 1)), amount:150, paid:true, paidDate: new Date(now - 3*24*3600000).toISOString().slice(0,10) },
         { id:"maintpay_preview_2", month: (d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0"))(new Date(now)), amount:150, paid:false, paidDate:"" }
@@ -845,8 +856,13 @@ function seedPreviewData(){
       payments:[
         { id:"pay_preview_1", label:"50% Deposit", amount:1500, paid:true, paidDate: new Date(now - 10*24*3600000).toISOString().slice(0,10) },
         { id:"pay_preview_2", label:"25% Progress Payment", amount:750, paid:false, paidDate:"" },
-        { id:"pay_preview_3", label:"25% Final Payment", amount:750, paid:false, paidDate:"" }
+        { id:"pay_preview_3", label:"25% Final Payment", amount:750, paid:false, paidDate:"" },
+        // Phase 2 — shows the multi-phase schedule in preview.
+        { id:"pay_preview_4", phaseId:"phase_preview_2", label:"50% Deposit", amount:1000, dueDayOffset:0, dueDate: new Date(now - 1*24*3600000).toISOString().slice(0,10), paid:false, paidDate:"" },
+        { id:"pay_preview_5", phaseId:"phase_preview_2", label:"25% Progress Payment", amount:500, dueDayOffset:14, dueDate: new Date(now + 13*24*3600000).toISOString().slice(0,10), paid:false, paidDate:"" },
+        { id:"pay_preview_6", phaseId:"phase_preview_2", label:"25% Final Payment", amount:500, dueDayOffset:29, dueDate: new Date(now + 28*24*3600000).toISOString().slice(0,10), paid:false, paidDate:"" }
       ],
+      phases:[ { id:"phase_1", name:"Phase 1" }, { id:"phase_preview_2", name:"Phase 2", fee:2000, startDate: new Date(now - 1*24*3600000).toISOString().slice(0,10) } ],
       buildTodos:[
         { id:"todo_preview_1", phase:"Setup", text:"Review intake details (brand, colors, fonts, logo, content)", dueDayOffset:3, done:true, doneAt: hoursAgo(24*7) },
         { id:"todo_preview_2", phase:"Build", text:"Build out all pages/features", dueDayOffset:10, done:false, doneAt:"" },
@@ -860,8 +876,11 @@ function seedPreviewData(){
     { id:"task_preview_4", title:"Inbox triage", clientId:c3.id, status:"To do", category:"Business", assignees:["asst_5"], subtasks:[], discussion:[], description:"", dueDate: daysFromNow(2), repeat:{ type:"weekly", days:[1,4] } }
   ];
   const timeEntries = [...base.timeEntries,
-    { id:"te_preview_1", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(30), clockOut: hoursAgo(26) },
-    { id:"te_preview_2", taskId:"task_preview_2", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(42), clockOut: hoursAgo(37) },
+    { id:"te_preview_1", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(30), clockOut: hoursAgo(26),
+      driveStart:{ lat:30.2241, lng:-92.0198, at: hoursAgo(30) }, driveEnd:{ lat:30.0035, lng:-91.8187, at: hoursAgo(29.5) }, driveMiles:20.4 },
+    { id:"te_preview_2", taskId:"task_preview_2", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(42), clockOut: hoursAgo(37),
+      driveStart:{ error:"Location permission denied", at: hoursAgo(42) }, driveEnd:{ lat:30.2010, lng:-92.0300, at: hoursAgo(41.8) },
+      flagged:true, flagNote:"Drive location missing (Location permission denied) — enter the miles" },
     { id:"te_preview_3", taskId:"task_preview_3", assistantId:"asst_4", clientId:c3.id, clockIn: hoursAgo(12), clockOut: hoursAgo(9) },
     { id:"te_preview_4", taskId:"task_preview_1", assistantId:"asst_2", clientId:c2.id, clockIn: hoursAgo(1), clockOut: null }
   ];
@@ -1087,6 +1106,7 @@ function mapAgreementTypeToTermType(agreementType){
   if(!text.trim()) return null;
   if(text.includes("pilot") || text.includes("1 month") || text.includes("one (1) month")) return "pilot";
   if(text.includes("three") || text.includes("3 month") || text.includes("3-month")) return "3month";
+  if(text.includes("six") || text.includes("6 month") || text.includes("6-month")) return "6month";
   if(text.includes("twelve") || text.includes("12 month") || text.includes("1 year") || text.includes("annual")) return "12month_new";
   return null;
 }
@@ -1223,14 +1243,14 @@ function watchOrientationSync(attempt){
 function activeEntryFor(assistantId){
   return state.timeEntries.find(t => t.assistantId === assistantId && !t.clockOut);
 }
-function clockIn(taskId, assistantId, note){
+function clockIn(taskId, assistantId, note, clientId){
   const existing = activeEntryFor(assistantId);
   if(existing){ alert("You're already clocked in on another task. Clock out first."); return; }
   const task = state.tasks.find(t=>t.id===taskId);
   const entry = {
     id: newId("te"),
     taskId, assistantId,
-    clientId: task ? task.clientId : INTERNAL_CLIENT_ID,
+    clientId: clientId || (task ? task.clientId : INTERNAL_CLIENT_ID),
     clockIn: new Date().toISOString(),
     clockOut: null,
     note: note || ""
@@ -1271,7 +1291,186 @@ function clockOut(entryId, editedTime){
   // clocking in is always real-time already (see clockIn()), so this is the
   // only point a manually-entered time can slip in, and admin wants visibility
   // into that rather than it blending in with real-time clock-outs.
-  return upsert("timeEntries", entryId, { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime });
+  const entry = state.timeEntries.find(e=>e.id===entryId);
+  const payload = { clockOut: editedTime || new Date().toISOString(), clockOutManual: !!editedTime };
+  // A drive that was started but never marked "arrived" has no miles —
+  // flag it so admin can fill them in rather than it silently reading 0.
+  if(entry && entry.driveStart && !entry.driveEnd){
+    Object.assign(payload, { driveEnd: { at: payload.clockOut, error: "Clocked out before tapping I've arrived" } });
+    Object.assign(payload, driveFlagFields(entry, "Drive never marked arrived — enter the miles"));
+  }
+  return upsert("timeEntries", entryId, payload);
+}
+
+// ---- 7a. Drive mileage (admin view only — doesn't change hours/billing) ----
+// An assistant driving to a client task taps "Start drive" on their running
+// clock, then "I've arrived" when they get there. Both points are captured
+// once (no tracking in between) and the road miles come from the free OSRM
+// router. The client covers the first DRIVE_CLIENT_MILES of each trip and TMC
+// any overage — shown as a mileage split only; the entry's hours are untouched.
+const DRIVE_CLIENT_MILES = 10;
+const DRIVE_ROUTER_URL = "https://router.project-osrm.org/route/v1/driving/";
+function getCurrentLocation(){
+  return new Promise(resolve=>{
+    if(!navigator.geolocation){ resolve({ error:"Location isn't supported on this device" }); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos=>resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: Math.round(pos.coords.accuracy) }),
+      err=>resolve({ error: err.code===1 ? "Location permission denied" : "Couldn't get location" }),
+      { enableHighAccuracy:true, timeout:15000, maximumAge:60000 }
+    );
+  });
+}
+async function routeMiles(start, end){
+  try{
+    const res = await withTimeout(fetch(DRIVE_ROUTER_URL + start.lng+","+start.lat+";"+end.lng+","+end.lat + "?overview=false"), 15000, "route");
+    const data = await res.json();
+    if(data.code!=="Ok" || !data.routes || !data.routes[0]) return null;
+    return Math.round(data.routes[0].distance / 1609.344 * 10) / 10;
+  }catch(e){ return null; }
+}
+// Keeps any flag reason admin already wrote rather than overwriting it.
+function driveFlagFields(entry, reason){
+  return { flagged:true, flagNote: entry.flagged && entry.flagNote ? entry.flagNote : reason };
+}
+function driveMilesSplit(miles){
+  return { client: Math.min(miles, DRIVE_CLIENT_MILES), tmc: Math.max(0, Math.round((miles - DRIVE_CLIENT_MILES)*10)/10) };
+}
+async function startDrive(entryId){
+  state.driveBusy = entryId; render();
+  const loc = await getCurrentLocation();
+  state.driveBusy = null;
+  upsert("timeEntries", entryId, { driveStart: { ...loc, at: new Date().toISOString() } }).then(()=>render());
+}
+async function arriveDrive(entryId){
+  const entry = state.timeEntries.find(e=>e.id===entryId);
+  if(!entry || !entry.driveStart) return;
+  state.driveBusy = entryId; render();
+  const loc = await getCurrentLocation();
+  const driveEnd = { ...loc, at: new Date().toISOString() };
+  const payload = { driveEnd };
+  if(entry.driveStart.error || driveEnd.error){
+    Object.assign(payload, driveFlagFields(entry, "Drive location missing (" + (entry.driveStart.error || driveEnd.error) + ") — enter the miles"));
+  } else {
+    const miles = await routeMiles(entry.driveStart, driveEnd);
+    if(miles==null) Object.assign(payload, driveFlagFields(entry, "Couldn't work out the drive route — enter the miles"));
+    else payload.driveMiles = miles;
+  }
+  state.driveBusy = null;
+  upsert("timeEntries", entryId, payload).then(()=>render());
+}
+function cancelDrive(entryId){
+  if(!confirm("Cancel this drive? The start location will be cleared.")) return;
+  upsert("timeEntries", entryId, { driveStart: null }).then(()=>render());
+}
+// Shown under the "Currently clocked in" timer (dashboard + Time Tracking).
+function renderDriveControls(entry){
+  if(state.driveBusy===entry.id) return `<div class="small" style="margin-top:8px;">Getting your location…</div>`;
+  if(!entry.driveStart) return `<button class="secondary" style="margin-top:10px;" onclick="startDrive('${entry.id}')">🚗 Start drive</button>
+    <div class="small" style="margin-top:4px;">Driving to this task? Tap when you pull out, then "I've arrived" when you get there — you'll stay clocked in.</div>`;
+  if(!entry.driveEnd) return `<div class="small" style="margin-top:8px;">🚗 Drive started ${new Date(entry.driveStart.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})}${entry.driveStart.error ? ` — <span style="color:var(--warn);">${entry.driveStart.error}</span>` : ""}</div>
+    <div style="display:flex;gap:6px;margin-top:6px;"><button onclick="arriveDrive('${entry.id}')">I've arrived</button><button class="secondary" onclick="cancelDrive('${entry.id}')">Cancel drive</button></div>`;
+  return `<div class="small" style="margin-top:8px;">🚗 Arrived ${new Date(entry.driveEnd.at).toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})} — ${entry.driveMiles!=null ? entry.driveMiles+" mi drive logged" : "miles need review"}. You're still clocked in.</div>`;
+}
+// Small clickable badge on time entry rows — on every finished drive (or
+// any entry admin has entered miles for), so admin can always open it and
+// correct the miles. Drives fully covered by the client (no TMC overage)
+// get a lighter badge showing the trip miles instead of the TMC miles.
+function driveBadge(e){
+  const finishedDrive = e.driveStart && e.driveEnd;
+  if(!finishedDrive && e.driveMiles==null) return "";
+  const tmc = e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : null;
+  const clientOnly = tmc===0;
+  const label = tmc==null ? "miles?" : clientOnly ? e.driveMiles+" mi" : tmc+" mi TMC";
+  const style = clientOnly ? "background:transparent;color:#8a7a72;border:1px solid #c9bdb6;" : "background:#8a7a72;";
+  const title = clientOnly ? "View drive — covered by the client, no TMC miles" : "View drive";
+  return `<span class="badge" style="${style}cursor:pointer;white-space:nowrap;" title="${title}" onclick="event.stopPropagation(); openDriveMap('${e.id}')">🚗 ${label}</span>`;
+}
+function openDriveMap(entryId){
+  state.modal = { type:"driveMap", entryId, returnTo: state.modal };
+  render();
+}
+function renderDriveMapModal(){
+  const e = state.timeEntries.find(x=>x.id===state.modal.entryId);
+  if(!e) return `<div class="modal"><div class="small">This entry no longer exists.</div><button class="secondary" onclick="closeTimeModal()">Close</button></div>`;
+  const task = state.tasks.find(t=>t.id===e.taskId);
+  const s = e.driveStart || {}, d = e.driveEnd || {};
+  const hasPoints = s.lat!=null && d.lat!=null;
+  const split = e.driveMiles!=null ? driveMilesSplit(e.driveMiles) : null;
+  const time = iso => iso ? new Date(iso).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) : "—";
+  return `
+    <div class="modal">
+      <h3>Drive</h3>
+      <div class="small" style="margin-bottom:8px;">${task ? task.title : '(deleted task)'} · ${assistantName(e.assistantId)}</div>
+      ${hasPoints ? `<div id="driveMap" style="height:260px;border-radius:8px;margin-bottom:6px;background:var(--cream);"></div>
+        <a class="small" href="https://www.google.com/maps/dir/?api=1&origin=${s.lat},${s.lng}&destination=${d.lat},${d.lng}&travelmode=driving" target="_blank" rel="noopener">Open route in Google Maps ↗</a>`
+        : `<div class="alert warn">No map — ${s.error || d.error || (!e.driveStart ? "this drive wasn't logged with Start drive / I've arrived" : e.driveEnd ? "location missing" : "drive still in progress")}.</div>`}
+      <div class="stat-row" style="margin:10px 0;">
+        <div class="stat-tile"><div class="stat-label">TMC miles</div><div class="stat-value">${split ? split.tmc : "—"}</div><div class="stat-sub">over the first ${DRIVE_CLIENT_MILES}</div></div>
+        <div class="stat-tile"><div class="stat-label">Trip miles</div><div class="stat-value">${e.driveMiles!=null ? e.driveMiles : "—"}</div><div class="stat-sub">${e.driveMilesManual ? "entered by admin" : "road distance"}</div></div>
+      </div>
+      <div class="small">Left ${time(s.at)} · Arrived ${time(d.at)}</div>
+      ${state.role==='admin' ? `
+      <div class="row" style="margin-top:10px;align-items:flex-end;">
+        <div><label class="small">Set miles manually</label><input type="number" id="drive_miles" min="0" step="0.1" value="${e.driveMiles!=null ? e.driveMiles : ''}"></div>
+        <div style="flex:0;"><button class="secondary" onclick="saveDriveMiles('${e.id}')">Save miles</button></div>
+      </div>
+      ${state.driveBusy===e.id ? `<div class="small" style="margin-top:6px;">Working out the road distance…</div>`
+        : e.driveMilesManual && hasPoints ? `<div style="margin-top:6px;"><button class="secondary" style="padding:2px 8px;" onclick="resetDriveMiles('${e.id}')">Reset to road distance</button></div>`
+        : e.driveMiles!=null && !hasPoints ? `<div style="margin-top:6px;"><button class="secondary" style="padding:2px 8px;" onclick="clearDriveMiles('${e.id}')">Remove miles</button></div>` : ""}` : ""}
+      <div style="margin-top:14px;text-align:right;"><button class="secondary" onclick="closeTimeModal()">Close</button></div>
+    </div>`;
+}
+function saveDriveMiles(entryId){
+  const v = parseFloat(document.getElementById("drive_miles").value);
+  if(isNaN(v) || v<0){ alert("Enter the miles as a number."); return; }
+  upsert("timeEntries", entryId, { driveMiles: Math.round(v*10)/10, driveMilesManual: true }).then(()=>render());
+}
+// Undoes a manual override: re-asks the router for the road distance
+// between the recorded start and arrival points.
+async function resetDriveMiles(entryId){
+  const e = state.timeEntries.find(x=>x.id===entryId);
+  if(!e || !e.driveStart || !e.driveEnd || e.driveStart.lat==null || e.driveEnd.lat==null) return;
+  state.driveBusy = entryId; render();
+  const miles = await routeMiles(e.driveStart, e.driveEnd);
+  state.driveBusy = null;
+  if(miles==null){ render(); alert("Couldn't work out the road distance right now — try again in a minute, or keep the miles you entered."); return; }
+  upsert("timeEntries", entryId, { driveMiles: miles, driveMilesManual: false }).then(()=>render());
+}
+// For miles admin added to an entry with no logged drive.
+function clearDriveMiles(entryId){
+  if(!confirm("Remove the miles from this time entry?")) return;
+  upsert("timeEntries", entryId, { driveMiles: null, driveMilesManual: false }).then(()=>render());
+}
+// Leaflet is only loaded the first time someone opens a drive map.
+let _leafletLoading = null;
+function loadLeaflet(){
+  if(window.L) return Promise.resolve();
+  if(_leafletLoading) return _leafletLoading;
+  const css = document.createElement("link");
+  css.rel = "stylesheet"; css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+  document.head.appendChild(css);
+  _leafletLoading = new Promise((resolve, reject)=>{
+    const s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.onload = resolve; s.onerror = ()=>{ _leafletLoading = null; reject(); };
+    document.head.appendChild(s);
+  });
+  return _leafletLoading;
+}
+function initDriveMap(){
+  const el = document.getElementById("driveMap");
+  const e = state.modal && state.timeEntries.find(x=>x.id===state.modal.entryId);
+  if(!el || !e) return;
+  loadLeaflet().then(()=>{
+    if(!document.body.contains(el)) return;
+    const a = [e.driveStart.lat, e.driveStart.lng], b = [e.driveEnd.lat, e.driveEnd.lng];
+    const map = L.map(el, { scrollWheelZoom:false });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom:19, attribution:"© OpenStreetMap" }).addTo(map);
+    L.marker(a).addTo(map).bindTooltip("Start");
+    L.marker(b).addTo(map).bindTooltip("Arrived");
+    L.polyline([a,b], { color:"#a97f7c", dashArray:"6 6" }).addTo(map);
+    map.fitBounds([a,b], { padding:[30,30], maxZoom:15 });
+  }).catch(()=>{ el.innerHTML = `<div class="small" style="padding:10px;">Map couldn't load — use the Google Maps link below.</div>`; });
 }
 function entryDurationHours(entry){
   const start = new Date(entry.clockIn);
@@ -1418,7 +1617,8 @@ function tierAlert(client){
   const overage = overageFor(client);
   return { pct: Math.round(pct), used: used.toFixed(1), pkg, level,
     text: client.name + " is at " + Math.round(pct) + "% of package (" + used.toFixed(1) + "/" + pkg + " hrs)" +
-      (overage.overHours>0 ? " — $" + overage.amount.toFixed(2) + " overage" : "") };
+      (overage.overHours>0 ? " — $" + overage.amount.toFixed(2) + " overage to bill"
+        : pct>=90 ? " — " + Math.max(0, pkg-used).toFixed(1) + " hrs left before overage" : "") };
 }
 // Client-to-client referral program (distinct from the assistant referral
 // payout above): a client who refers another client earns 20% off one month
@@ -1694,15 +1894,20 @@ function buildClientReport(client, window, kind){
     return d >= window.start && d < window.end;
   });
   const completedIds = new Set(completed.map(t=>t.id));
-  const workedOn = tasks.filter(t=>!completedIds.has(t.id) && (windowHoursByTask.get(t.id)||0) > 0);
+  // Still clocked in when the report goes out = In progress, not "worked
+  // on" (Heidi's ask for the automatic Friday 4pm send). KEEP IN SYNC with
+  // buildWeeklyReport in functions/weeklyReports.js.
+  const runningIds = new Set(entriesForClient(client.id).filter(e=>!e.clockOut).map(e=>e.taskId));
+  const workedOn = tasks.filter(t=>!completedIds.has(t.id) && !runningIds.has(t.id) && (windowHoursByTask.get(t.id)||0) > 0);
   const workedOnIds = new Set(workedOn.map(t=>t.id));
   // Time on a task that's since been deleted still counts toward hours — show
   // it as one lump so the hours on the report add up to the total.
   const taskIds = new Set(tasks.map(t=>t.id));
   const otherHours = windowEntries.filter(e=>!taskIds.has(e.taskId)).reduce((s,e)=>s+entryDurationHours(e), 0);
-  const inProgress = tasks.filter(t=>t.status==="In progress" && !workedOnIds.has(t.id));
-  const researching = tasks.filter(t=>t.status==="Researching" && !workedOnIds.has(t.id));
-  const todo = tasks.filter(t=>t.status==="To do" && !workedOnIds.has(t.id));
+  const inProgress = tasks.filter(t=>!completedIds.has(t.id) && !workedOnIds.has(t.id) && (t.status==="In progress" || runningIds.has(t.id)));
+  const inProgressIds = new Set(inProgress.map(t=>t.id));
+  const researching = tasks.filter(t=>t.status==="Researching" && !workedOnIds.has(t.id) && !inProgressIds.has(t.id));
+  const todo = tasks.filter(t=>t.status==="To do" && !workedOnIds.has(t.id) && !inProgressIds.has(t.id));
   const isPeriodKind = kind==="period" || kind==="lastPeriod";
   const used = isPeriodKind ? hoursForClientInPeriod(client.id, window) : hoursUsed(client.id);
   const pkg = isPeriodKind ? effectivePackageHours(client, window) : effectivePackageHours(client);
@@ -1901,6 +2106,22 @@ function clientReportHtml(report){
 // sending a report never depends on what mail app is set up on a given
 // computer. The itemized task breakdown lives in the linked report itself,
 // so this message doesn't repeat it.
+// Signed with an assistant's first name (Kaylan, Nov 2026) — KEEP IN SYNC
+// with coverNoteSignoff in functions/weeklyReports.js. The automatic Friday
+// email signs as the client's main assistant (it sends from their Gmail);
+// a manual "Copy message" signs as whoever copies it if they're on this
+// client, else the main assistant. No name = "The Modern Concierge Team".
+function coverNoteSignoff(signerName){
+  const first = String(signerName||"").trim().split(/\s+/)[0];
+  return first ? first + "\nThe Modern Concierge" : "The Modern Concierge Team";
+}
+function coverNoteSignerName(client){
+  const ids = (client && client.assistantIds) || [];
+  const me = state.currentAssistant;
+  const id = me && ids.includes(me.id) ? me.id : ids[0];
+  const a = (state.settings.assistants||[]).find(x=>x.id===id);
+  return a ? a.name : "";
+}
 function clientReportCoverNote(report, reportUrl){
   const isPeriod = report.kind === "period" || report.kind === "lastPeriod";
   const noun = isPeriod ? "end-of-period" : "weekly";
@@ -1921,7 +2142,7 @@ function clientReportCoverNote(report, reportUrl){
     + " You have used " + formatHoursMinutes(report.hoursUsed)
     + " and have " + formatHoursMinutes(report.hoursRemaining) + " left" + (endDate ? " in your period ending on " + endDate : "") + "." + overageLine + receiptsLine + "\n\n"
     + "Please let me know if you have any questions regarding this report.\n\n"
-    + "The Modern Concierge Team";
+    + coverNoteSignoff(coverNoteSignerName(report.client));
 }
 async function copyReportCoverNote(clientId, kind, btnEl){
   const client = state.clients.find(c=>c.id===clientId);
@@ -1945,6 +2166,8 @@ async function copyReportCoverNote(clientId, kind, btnEl){
   const text = clientReportCoverNote(report, url);
   navigator.clipboard.writeText(text).then(()=>{
     if(kind==="period" || kind==="lastPeriod") markPeriodRecapSent(clientId, reportWindow);
+    // So the automatic Friday 4pm send skips a client someone already sent by hand.
+    if(kind==="week") upsert("clients", clientId, { weeklyRecapSentForWeek: toLocalDateInputValue(reportWindow.friday.toISOString()) });
     // Copying the message IS sending it — the receipts embedded in this
     // report don't need to keep sitting on the task too, and this way it
     // actually happens every time instead of depending on an assistant
@@ -1957,7 +2180,7 @@ async function copyReportCoverNote(clientId, kind, btnEl){
   }).catch(()=>{ alert("Couldn't copy to clipboard — your browser may be blocking it."); });
 }
 // ---- 8d. Contract renewal email ----
-const NEXT_TERM_TYPE = { pilot:"3month", "3month":"12month_new", "12month_new":"12month_renewal", "12month_renewal":"12month_renewal" };
+const NEXT_TERM_TYPE = { pilot:"3month", "3month":"12month_new", "6month":"12month_new", "12month_new":"12month_renewal", "12month_renewal":"12month_renewal" };
 function buildRenewalEmail(client){
   const end = termEndDate(client);
   const notice = noticeDeadline(client);
@@ -2277,7 +2500,7 @@ function exportTimeEntriesCsv(){
   const filtered = mineAll
     .filter(e => !period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))
     .filter(e => assistantFilterId==="all" || e.assistantId===assistantFilterId);
-  const rows = [["Assistant","Task","Client","Clock in","Clock out","Hours","Manual clock-out","Admin work"]];
+  const rows = [["Assistant","Task","Client","Clock in","Clock out","Hours","Manual clock-out","Admin work","TMC drive miles"]];
   filtered.slice().reverse().forEach(e=>{
     const task = state.tasks.find(t=>t.id===e.taskId);
     const client = state.clients.find(c=>c.id===e.clientId);
@@ -2289,7 +2512,8 @@ function exportTimeEntriesCsv(){
       e.clockOut ? new Date(e.clockOut).toLocaleString() : "(still clocked in)",
       e.clockOut ? entryDurationHours(e).toFixed(2) : "",
       e.clockOutManual ? "yes" : "no",
-      e.clientId===INTERNAL_CLIENT_ID ? "yes" : "no"
+      e.clientId===INTERNAL_CLIENT_ID ? "yes" : "no",
+      e.driveMiles!=null && driveMilesSplit(e.driveMiles).tmc>0 ? driveMilesSplit(e.driveMiles).tmc : ""
     ]);
   });
   downloadCsv("time-entries-" + new Date().toISOString().slice(0,10) + ".csv", rows);
@@ -2591,6 +2815,42 @@ function assignableAssistants(alreadyIds){
   const already = new Set(alreadyIds||[]);
   return state.settings.assistants.filter(a=>(a.active!==false && !a.isContentCreator) || already.has(a.id));
 }
+// A client's assistantIds is ordered: [main, secondary, ...older extras].
+// The main assistant is who the client sees; the secondary is internal only (task access, assignments, "My
+// clients") and never shown to the client. Clients assigned to 3+ people
+// before this existed keep the extras after the first two.
+function composeAssistantIds(mainId, secondaryId, previousIds){
+  const out = [];
+  [mainId, secondaryId, ...((previousIds||[]).slice(2))].forEach(id=>{ if(id && !out.includes(id)) out.push(id); });
+  return out;
+}
+function mainAssistantId(client){ return (client.assistantIds||[])[0] || null; }
+function assistantRolesSummary(client){
+  const ids = client.assistantIds||[];
+  if(!ids.length) return "No assistant assigned yet.";
+  return "Main: " + assistantName(ids[0]) + (ids[1] ? " · Secondary: " + assistantName(ids[1]) : "") + (ids.length>2 ? " · Also: " + ids.slice(2).map(assistantName).join(", ") : "");
+}
+function assistantPickersHtml(ids, idPrefix, onchangeMain, onchangeSecondary){
+  const opts = assignableAssistants(ids);
+  const opt = (a, sel) => `<option value="${a.id}" ${sel===a.id?'selected':''}>${escHtml(a.name)}${a.active===false?' (former)':''}</option>`;
+  return `
+    <div class="row">
+      <div><label class="small">Main assistant</label>
+        <select id="${idPrefix}_main" ${onchangeMain?`onchange="${onchangeMain}"`:''}>
+          <option value="" ${!ids[0]?'selected':''}>— Select —</option>
+          ${opts.map(a=>opt(a, ids[0])).join("")}
+        </select>
+      </div>
+      <div><label class="small">Secondary assistant (optional)</label>
+        <select id="${idPrefix}_secondary" ${onchangeSecondary?`onchange="${onchangeSecondary}"`:''}>
+          <option value="" ${!ids[1]?'selected':''}>— None —</option>
+          ${opts.map(a=>opt(a, ids[1])).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="small" style="margin-top:4px;">The client only ever sees their main assistant. The secondary assistant gets the same access to the client's tasks but is never shown to the client.</div>
+    ${ids.length>2 ? `<div class="small" style="margin-top:4px;">Also assigned from before: ${ids.slice(2).map(id=>escHtml(assistantName(id))).join(", ")}</div>` : ""}`;
+}
 // A client's package hours are quoted on their own (monthly/quarterly/annual)
 // billing cycle, not on the semi-monthly payroll calendar. To compare what a
 // client paid for against what got clocked in a given payroll period, prorate
@@ -2845,8 +3105,8 @@ function upcomingReminders(windowDays){
 // ---- Term end + cancellation notice deadlines ----
 // Per the Services Agreement §2: written notice is required this many days
 // before the term ends, or it auto-renews and the card on file gets charged.
-const TERM_LENGTH_DAYS = { pilot:30, "3month":90, "12month_new":365, "12month_renewal":365 };
-const TERM_NOTICE_DAYS = { pilot:5, "3month":30, "12month_new":60, "12month_renewal":60 };
+const TERM_LENGTH_DAYS = { pilot:30, "3month":90, "6month":180, "12month_new":365, "12month_renewal":365 };
+const TERM_NOTICE_DAYS = { pilot:5, "3month":30, "6month":30, "12month_new":60, "12month_renewal":60 };
 // Day 21 of the pilot is Tory's cue to check in — separate from (and
 // earlier than) the day-25 cancellation notice deadline (30-day pilot
 // minus the 5-day notice window above). Pilot clients get this check-in
@@ -2858,7 +3118,7 @@ function pilotCheckInDueDate(client){
   if(!client.termStartDate) return null;
   return new Date(parseYMD(client.termStartDate).getTime() + PILOT_CHECKIN_DAY*24*3600000);
 }
-const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "12month_new":"Twelve Month Term (New)", "12month_renewal":"Twelve Month Term (Renewal)" };
+const TERM_LABELS = { pilot:"One Month Pilot", "3month":"Three Month Term", "6month":"Six Month Term", "12month_new":"Twelve Month Term (New)", "12month_renewal":"Twelve Month Term (Renewal)" };
 function termEndDate(client){
   // A manual override always wins — the 30/90/365-day formula is a default,
   // not every real contract lines up with it exactly.
@@ -3321,6 +3581,7 @@ function render(){
     const canvas = document.getElementById('sigPad_'+sigClientId);
     if(canvas) initClientSigPad(sigClientId);
   }
+  if(state.modal && state.modal.type==="driveMap") initDriveMap();
 }
 window.addEventListener('resize', ()=>{ if(typeof resizeClientSigCanvas==='function') resizeClientSigCanvas(); });
 
@@ -3447,6 +3708,44 @@ function submitLoginCode(){
 // team ticket. Nothing else admin-only opens up. Set via the Team tab.
 function isDevDirector(){
   return state.role==="team" && !!(state.currentAssistant && state.currentAssistant.isDevDirector);
+}
+// Who can see the Software side of the business (Software tab on Clients,
+// each client's Software Build tab, build payment / maintenance alerts):
+// the admin login and the Director of Development only (Kaylan's call,
+// Nov 2026).
+// UI-ONLY: build data still lives inside each client doc, which every
+// signed-in session can read (see CLAUDE.md → Security → Known remaining
+// gap). Real enforcement needs per-role auth claims + moving addOns into
+// their own collection with its own rules — a separate follow-up.
+function canViewSoftware(){
+  return state.role==="admin" || isDevDirector();
+}
+// Client categories. A client can be Membership (hour package), Software
+// (software/website build), or both — each side keeps its own records
+// (Membership tab vs Software Build tab on the same client). Both flags are
+// unset on existing clients, so nothing needs migrating: Membership
+// defaults on, Software defaults to "has a build that isn't cancelled"
+// (what the old "Software Builds" client group used). Setting either flag
+// explicitly overrides the default — e.g. a website built on package hours
+// (grandfathered) is Membership only, softwareClient:false.
+function isSoftwareClient(c){
+  if(c.softwareClient===true || c.softwareClient===false) return c.softwareClient;
+  return (c.addOns||[]).some(a=>a.status!=="Cancelled");
+}
+function isMembershipClient(c){ return c.membershipClient!==false; }
+function openClientAs(clientId, category){
+  state.activeTab = "clients";
+  state.selectedClientId = clientId;
+  state.crmSubTab = category==="software" ? "softwareBuild" : "membership";
+  if(category!=="software" && state.role!=="admin") state.crmSubTab = "tasks";
+  render();
+}
+// "Ending soon" = contract (term) end within the next 14 days.
+function contractEndingSoon(client){
+  const end = termEndDate(client);
+  if(!end) return false;
+  const days = (end.getTime() - Date.now()) / 86400000;
+  return days >= -1 && days <= 14;
 }
 // Dark mode is a per-browser preference (localStorage), applied early in
 // <head> so there's no light flash on load; see the dark-mode CSS block.
@@ -3734,7 +4033,7 @@ function renderDocsLeadColumn(assistant, d){
         <button class="secondary" onclick="ackTaskAssignment('${task.id}','${a.id}')">Got it</button>
       </div>`).join("")}
   `);
-  if(d.paymentsReady.length) sections.push(`
+  if(d.paymentsReady.length && canViewSoftware()) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Payments ready to process</div>
     ${d.paymentsReady.map(({client,addOn,payment})=>{
       const todayStr = new Date().toISOString().slice(0,10);
@@ -3742,7 +4041,7 @@ function renderDocsLeadColumn(assistant, d){
       return `
       <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
         <div>
-          <strong>${client.name}</strong> — ${addOn.category||'Add-On'}: ${payment.label}
+          <strong>${client.name}</strong> — ${addOn.category||'Add-On'}: ${phaseName(addOn,payment) ? escHtml(phaseName(addOn,payment))+' · ' : ''}${payment.label}
           <div class="small" style="color:var(--rose-dark);">Separate from ${client.name}'s membership billing — charge it on its own.</div>
           <div class="small">${payment.dueDate ? (overdue?'overdue, was due ':'due ')+parseYMD(payment.dueDate).toLocaleDateString() : (payment.readyMarkedAt?'flagged '+parseYMD(payment.readyMarkedAt).toLocaleDateString():'')}</div>
         </div>
@@ -3750,16 +4049,19 @@ function renderDocsLeadColumn(assistant, d){
       </div>`;
     }).join("")}
   `);
-  if(d.maintenanceFeesDue.length) sections.push(`
+  if(d.maintenanceFeesDue.length && canViewSoftware()) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Maintenance fees due</div>
-    ${d.maintenanceFeesDue.map(({client,addOn,month,overdue,notYetLogged})=>`
+    ${d.maintenanceFeesDue.map(({client,addOn,key,overdue,notYetLogged})=>`
       <div class="list-item" style="cursor:pointer;" onclick="viewClientSoftwareBuild('${client.id}')">
         <div>
           <strong>${client.name}</strong> — ${addOn.label||addOn.category||'Build'}
           <div class="small" style="color:var(--rose-dark);">Separate from ${client.name}'s membership billing — charge it on its own.</div>
-          <div class="small" ${overdue?'style="color:var(--danger);font-weight:600;"':''}>${formatMaintenanceMonth(month)}${notYetLogged?' — not yet logged':overdue?' — overdue, still unpaid':' — unpaid'}</div>
+          <div class="small" ${overdue?'style="color:var(--danger);font-weight:600;"':''}>${formatMaintenanceKey(key)}${overdue?' — overdue, still unpaid':' — unpaid'}</div>
         </div>
-        <strong>$${(addOn.monthlyMaintenance||0).toFixed(0)}</strong>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <strong>$${(addOn.monthlyMaintenance||0).toFixed(0)}</strong>
+          <button class="secondary" onclick="event.stopPropagation();markMaintenanceFeePaid('${client.id}','${addOn.id}','${key}')">Mark paid</button>
+        </div>
       </div>`).join("")}
   `);
   if(d.contractsReady.length) sections.push(`
@@ -4143,7 +4445,7 @@ function renderAdminDashboard(){
               <td><span class="badge ${t.category==='Home'?'home':'business'}">${t.category||'—'}</span>${t.title}</td>
               <td>${client?client.name:'Internal'}</td>
               <td>${names}</td>
-              <td>${t.status}</td>
+              <td>${statusLabel(t.status)}</td>
               <td>${Math.floor(days)}d</td>
             </tr>`;
           }).join("")}
@@ -4212,17 +4514,61 @@ function paymentsReadyToProcess(){
 // didn't happen, so a fee could go uncollected indefinitely with no
 // notification to Heidi. Due the moment the current month has no payment
 // row logged yet, or an earlier month's row is still unpaid.
+//
+// 30-day cycles (Nov 2026): once a build has a maintenanceStartDate (the
+// first fee's due date), the fee is due on that date and every 30 days
+// after — like membership charges, not on the 1st of the month. Those rows
+// are keyed by dueDate (YYYY-MM-DD). A build with no start date keeps the
+// old calendar-month rows (keyed by month, YYYY-MM) until one is set.
+// Cycles due before MAINT_CYCLES_TRACKED_FROM are never listed, so setting
+// a start date months back doesn't flood the Dashboard with cycles that
+// were already handled on the old monthly rows; a paid old monthly row also
+// counts for the cycle due in that same month (the switchover month).
+const MAINT_CYCLES_TRACKED_FROM = "2026-11-01";
+const MAINT_CYCLE_DAYS = 30;
+function addDaysYMD(str, n){ const d = parseYMD(str); d.setDate(d.getDate()+n); return ymd(d); }
+// Every cycle due date from the start through `uptoYMD` (inclusive).
+function maintenanceCycleDates(addOn, uptoYMD){
+  const out = [];
+  if(!addOn.maintenanceStartDate) return out;
+  for(let d = addOn.maintenanceStartDate; d <= uptoYMD && out.length < 1000; d = addDaysYMD(d, MAINT_CYCLE_DAYS)) out.push(d);
+  return out;
+}
+function nextMaintenanceDueDate(addOn){
+  if(!addOn.maintenanceStartDate) return null;
+  const today = ymd(new Date());
+  let d = addOn.maintenanceStartDate;
+  while(d <= today) d = addDaysYMD(d, MAINT_CYCLE_DAYS);
+  return d;
+}
+function maintenanceCyclePaid(addOn, dueYMD){
+  return (addOn.maintenancePayments||[]).some(p=>p.paid && (p.dueDate===dueYMD || (!p.dueDate && p.month===dueYMD.slice(0,7))));
+}
+// "2026-11-13" → "Due Nov 13, 2026"; "2026-11" → "November 2026".
+function formatMaintenanceKey(key){
+  if(key && key.length===10) return "Due " + parseYMD(key).toLocaleDateString(undefined, { month:"short", day:"numeric", year:"numeric" });
+  return formatMaintenanceMonth(key);
+}
 function maintenanceFeesDue(){
-  const todayYM = new Date().toISOString().slice(0,7);
+  const today = ymd(new Date());
+  const todayYM = today.slice(0,7);
   const rows = [];
   allClientAddOns().forEach(({client,addOn})=>{
     if(addOn.status!=="Active" || !(addOn.monthlyMaintenance>0) || addOn.maintenanceActive===false) return;
-    const payments = (addOn.maintenancePayments||[]).filter(p=>p.month);
-    const unpaid = payments.filter(p=>p.month<=todayYM && !p.paid).sort((a,b)=>a.month<b.month?-1:1);
-    if(unpaid.length) rows.push({ client, addOn, month:unpaid[0].month, overdue:unpaid[0].month<todayYM });
-    else if(!payments.some(p=>p.month===todayYM)) rows.push({ client, addOn, month:todayYM, overdue:false, notYetLogged:true });
+    const monthRows = (addOn.maintenancePayments||[]).filter(p=>p.month && !p.dueDate);
+    if(addOn.maintenanceStartDate){
+      // Old monthly rows left unpaid still need collecting.
+      const oldUnpaid = monthRows.filter(p=>!p.paid && p.month<MAINT_CYCLES_TRACKED_FROM.slice(0,7)).sort((a,b)=>a.month<b.month?-1:1);
+      const due = maintenanceCycleDates(addOn, today).filter(d=>d>=MAINT_CYCLES_TRACKED_FROM && !maintenanceCyclePaid(addOn, d));
+      const first = oldUnpaid.length ? oldUnpaid[0].month : due[0];
+      if(first) rows.push({ client, addOn, key:first, overdue: oldUnpaid.length>0 || first<today, notYetLogged: !(addOn.maintenancePayments||[]).some(p=>p.dueDate===first) && !oldUnpaid.length });
+      return;
+    }
+    const unpaid = monthRows.filter(p=>p.month<=todayYM && !p.paid).sort((a,b)=>a.month<b.month?-1:1);
+    if(unpaid.length) rows.push({ client, addOn, key:unpaid[0].month, overdue:unpaid[0].month<todayYM });
+    else if(!monthRows.some(p=>p.month===todayYM)) rows.push({ client, addOn, key:todayYM, overdue:false, notYetLogged:true });
   });
-  return rows.sort((a,b)=>a.month<b.month?-1:1);
+  return rows.sort((a,b)=>a.key<b.key?-1:1);
 }
 function renderAddOnsTab(){
   const rows = allClientAddOns();
@@ -5985,11 +6331,14 @@ function renderVendorTicketDetailModal(vendorId, ticketId){
         ${ticket.clientCharged && !ticket.vendorPaid ? `<button class="secondary" style="margin-top:8px;" onclick="markVendorTicketPaid('${vendor.id}','${ticket.id}',true)">Mark ${escHtml(vendor.name||'vendor')} paid</button>` : ""}
         ${ticket.vendorPaid ? `<div class="small" style="color:var(--ok);margin-top:8px;">✓ Paid ${escHtml(vendor.name||'')} on ${new Date(ticket.vendorPaidAt).toLocaleDateString()} <a href="#" onclick="markVendorTicketPaid('${vendor.id}','${ticket.id}',false);return false;">Undo</a></div>` : ""}
       ` : ""}
-      ${(ticket.receipts||[]).length ? `
       <div style="margin-top:10px;">
         <label class="small" style="font-weight:600;">Receipts</label>
-        ${ticket.receipts.map(r=>`<div class="small">📎 <a href="${r.dataUrl}" download="${r.name}">${escHtml(r.name||'receipt')}</a> — ${new Date(r.uploadedAt).toLocaleDateString()}</div>`).join("")}
-      </div>` : ""}
+        ${(ticket.receipts||[]).length ? ticket.receipts.map(r=>`<div class="small" style="display:flex;align-items:center;gap:8px;margin:2px 0;">📎 <a href="${r.dataUrl}" download="${r.name}">${escHtml(r.name||'receipt')}</a> — ${new Date(r.uploadedAt).toLocaleDateString()}${r.uploadedByName ? ` · ${escHtml(r.uploadedByName)}` : ''}${isAdmin && vendorTicketStage(ticket)!=="paid" ? ` <button class="danger" style="padding:1px 6px;" onclick="removeVendorTicketReceipt('${vendor.id}','${ticket.id}','${r.id}')">Remove</button>` : ''}</div>`).join("") : `<div class="small">None uploaded yet.</div>`}
+        <div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          <input type="file" id="vp_receipt_${ticket.id}" accept="image/*,.pdf">
+          <button class="secondary" onclick="uploadVendorTicketReceipt('${vendor.id}','${ticket.id}')">Upload receipt</button>
+        </div>
+      </div>
       ${renderVendorTicketDiscussion(vendor.id, ticket)}
       ${isAdmin ? (vendorTicketStage(ticket)==="paid"
         ? `<div class="small" style="margin-top:14px;">Paid &amp; closed — kept on record, including its receipts.</div>`
@@ -6160,7 +6509,8 @@ async function uploadVendorTicketReceipt(vendorId, ticketId){
   }
   addVendorTicketReceipt(vendorId, ticketId, {
     id: newId("receipt"), name: file.name, type: file.type || "application/octet-stream",
-    dataUrl, uploadedAt: new Date().toISOString()
+    dataUrl, uploadedAt: new Date().toISOString(),
+    uploadedByName: state.role==="vendor" ? (vendor.name||"Vendor") : state.role==="admin" ? "Admin" : (state.currentAssistant && state.currentAssistant.name) || ""
   });
   input.value = "";
 }
@@ -6628,6 +6978,7 @@ function renderTeamDashboard(){
         </div>
         ${isStale(myEntry) ? `<div class="alert danger" style="margin-top:8px;">This clock has been running over 8 hours — check if it's stale.</div>` : ""}
         <button style="margin-top:10px;" onclick="doClockOut('${myEntry.id}')">Clock out</button>
+        ${renderDriveControls(myEntry)}
       </div>` : ""}
     <div class="card">
       <h3>Hour-usage alerts</h3>
@@ -6667,7 +7018,7 @@ function renderTaskMiniList(tasks){
         ${t.repeat ? `<span class="badge" style="background:#8a7a72;" title="${repeatSummary(t.repeat)}">🔁</span>` : ''}
         ${t.title} <span class="small">(${client?client.name:'Internal'})</span>
       </div>
-      <span class="small">${t.status} &middot; ${hoursForTask(t.id).toFixed(1)} hrs logged</span>
+      <span class="small">${statusLabel(t.status)} &middot; ${hoursForTask(t.id).toFixed(1)} hrs logged</span>
     </div>`;
   }).join("");
 }
@@ -6686,17 +7037,18 @@ function setOnlyMyClients(on){ state.onlyMyClients = !!on; render(); }
 // Home Reset flat-rate packages) is checked before term type, since those
 // clients don't go through the pilot -> 3month -> 1year membership
 // lifecycle at all. Checked in order; first match wins.
+// Software clients used to be pulled out into their own group here (and
+// so vanished from their term group). They now have their own Software
+// view on the Clients tab instead — see renderSoftwareClientList — and this
+// list is the Membership view only.
 const CLIENT_GROUP_DEFS = [
-  // Checked first — a client with an active software build/custom package
-  // shows up here instead of their term group, not in both, so builds
-  // don't get lost mixed in among regular Pilot/3-Month/1-Year clients.
-  { key:"softwareBuild", label:"Software Builds & Custom Packages", match:c=>(c.addOns||[]).some(a=>a.status!=="Cancelled") },
   { key:"oneTime", label:"One-Time", match:c=>{
       const tier = PACKAGE_TIERS.find(t=>t.hours===c.packageHours && t.price===c.packagePrice);
       return !!(tier && tier.key.startsWith("reset_"));
     } },
   { key:"pilot", label:"Pilot", match:c=>(c.termType||"pilot")==="pilot" },
   { key:"3month", label:"3 Month", match:c=>c.termType==="3month" },
+  { key:"6month", label:"6 Month", match:c=>c.termType==="6month" },
   { key:"1year", label:"1 Year", match:c=>c.termType==="12month_new"||c.termType==="12month_renewal" },
 ];
 function toggleClientGroup(key){
@@ -6709,12 +7061,19 @@ function renderClientListItem(c){
   const atRisk = c.id!==INTERNAL_CLIENT_ID && isAtRiskClient(c);
   const notStarted = c.id!==INTERNAL_CLIENT_ID && isNotStartedClient(c);
   const termDue = c.id!==INTERNAL_CLIENT_ID && needsTermUpdate(c);
+  const period = c.id!==INTERNAL_CLIENT_ID ? currentBillingPeriod(c) : null;
+  const termEnd = c.id!==INTERNAL_CLIENT_ID ? termEndDate(c) : null;
+  const fmtDate = d => d.toLocaleDateString('en-US', { month:'short', day:'numeric', year: d.getFullYear()!==new Date().getFullYear() ? 'numeric' : undefined });
+  const dates = [period ? "Renews " + fmtDate(period.end) : "", termEnd ? "Contract ends " + fmtDate(termEnd) : ""].filter(Boolean).join(" · ");
+  const endingSoon = c.id!==INTERNAL_CLIENT_ID && contractEndingSoon(c);
+  const alsoSoftware = c.id!==INTERNAL_CLIENT_ID && canViewSoftware() && isSoftwareClient(c);
   return `<div class="list-item" style="cursor:pointer;" onclick="openClient('${c.id}')">
     <div>
-      <strong>${c.name}</strong> ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
-      <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map(id=>{
-        const a = state.settings.assistants.find(x=>x.id===id); return a?a.name:id;
+      <strong>${c.name}</strong> ${endingSoon ? `<span class="alert warn" style="margin:0;padding:2px 8px;">contract ends ${fmtDate(termEnd)}</span>` : ''} ${alsoSoftware ? `<a href="#" class="small" onclick="event.stopPropagation();openClientAs('${c.id}','software');return false;">Also a Software client →</a>` : ''} ${atRisk ? `<span class="alert warn" style="margin:0;padding:2px 8px;" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">at risk</span>` : ''} ${notStarted ? '<span class="alert warn" style="margin:0;padding:2px 8px;" title="Contract not signed and no home orientation yet">not started</span>' : ''} ${termDue ? '<span class="alert danger" style="margin:0;padding:2px 8px;">term needs updating</span>' : ''}
+      <div class="small">${c.market||'Lafayette'} · ${c.packageHours||0} hrs, ${cycleLabel(c.cycleType)} · ${(c.assistantIds||[]).map((id,i)=>{
+        const a = state.settings.assistants.find(x=>x.id===id); return (a?a.name:id) + (i===1 ? " (secondary)" : "");
       }).join(", ")}</div>
+      ${dates ? `<div class="small">${dates}</div>` : ""}
     </div>
     <div style="display:flex;align-items:center;gap:10px;">
       ${alert ? `<span class="alert ${alert.level}" style="margin:0;">${alert.pct}%</span>` : ""}
@@ -6742,6 +7101,29 @@ function renderClientGroups(activeClients, opts){
     </div>
   `).join("");
 }
+// Software view of the Clients tab: one row per Software client with their
+// builds, the next unpaid payment across every phase, and monthly fee.
+function renderSoftwareClientList(clients){
+  const todayStr = new Date().toISOString().slice(0,10);
+  const fmt = d => parseYMD(d).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+  const rows = clients.slice().sort((a,b)=>(a.name||'').localeCompare(b.name||'')).map(c=>{
+    const builds = (c.addOns||[]).filter(a=>a.status!=="Cancelled");
+    const lines = builds.map(a=>{
+      const phases = addOnPhases(a);
+      const next = (a.payments||[]).filter(p=>!p.paid).sort((x,y)=>(x.dueDate||'9999')<(y.dueDate||'9999')?-1:1)[0];
+      const nextPhase = next && phases.length>1 ? (phases.find(ph=>ph.id===paymentPhaseId(a,next))||{}).name : "";
+      const overdue = next && next.dueDate && next.dueDate<todayStr;
+      return `<div class="small">${escHtml(a.label||a.category||'Build')} · ${a.status||'—'}${phases.length>1?` · ${phases.length} phases`:''}${a.monthlyMaintenance>0?` · $${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}`:''}${next?` · <span ${overdue?'style="color:var(--danger);font-weight:600;"':''}>next: ${nextPhase?escHtml(nextPhase)+' ':''}${escHtml(next.label||'payment')} $${(next.amount||0).toFixed(0)}${next.dueDate?(overdue?', overdue since ':', due ')+fmt(next.dueDate):''}</span>`:''}</div>`;
+    }).join("");
+    return `<div class="list-item" style="cursor:pointer;" onclick="openClientAs('${c.id}','software')">
+      <div>
+        <strong>${c.name}</strong> ${isMembershipClient(c) ? `<a href="#" class="small" onclick="event.stopPropagation();openClientAs('${c.id}','membership');return false;">Also a Membership client →</a>` : ''}
+        ${lines || `<div class="small">No builds added yet.</div>`}
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="card">${rows}</div>`;
+}
 function renderClientsList(){
   const isCancelled = c => c.clientStatus === "cancelled";
   const marketFilter = state.clientMarketFilter;
@@ -6749,11 +7131,21 @@ function renderClientsList(){
   const showToggle = state.role==="team" && !!state.currentAssistant;
   const mineOnly = onlyMyClients();
   const matchesMine = c => !mineOnly || (c.assistantIds||[]).includes(state.currentAssistant.id);
-  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c) && matchesMine(c));
-  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c) && matchesMine(c));
+  const showSoftware = canViewSoftware();
+  const category = showSoftware && state.clientsCategory==="software" ? "software" : "membership";
+  // Software-only clients (Membership switched off) stay out of the
+  // Membership view, so people without Software access never see them.
+  const inView = c => category==="software" ? isSoftwareClient(c) : (isMembershipClient(c) || c.id===INTERNAL_CLIENT_ID);
+  const activeClients = state.clients.filter(c=>!isCancelled(c) && matchesMarket(c) && matchesMine(c) && inView(c));
+  const pastClients = state.clients.filter(c=>isCancelled(c) && matchesMarket(c) && matchesMine(c) && inView(c));
+  const categoryTabs = showSoftware ? `
+    <div class="tabs">
+      <button class="${category==='membership'?'active':''}" onclick="state.clientsCategory='membership';render();">Membership</button>
+      <button class="${category==='software'?'active':''}" onclick="state.clientsCategory='software';render();">Software</button>
+    </div>` : "";
   return `
     <div class="flex-between" style="flex-wrap:wrap;gap:8px;">
-      <h2>${mineOnly ? "My clients" : "Clients"}</h2>
+      <h2>${mineOnly ? "My clients" : "Clients"}${category==="software" ? " — Software" : ""}</h2>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         ${showToggle ? (mineOnly
           ? `<button class="secondary" onclick="setOnlyMyClients(false)">View all clients</button>`
@@ -6765,8 +7157,9 @@ function renderClientsList(){
         <button onclick="openClientEditor(null)">+ New client</button>
       </div>
     </div>
-    ${activeClients.length===0 ? `<div class="card"><div class="small">${mineOnly ? `You're not assigned to any active clients${marketFilter!=='all'?' in '+marketFilter:''} yet. Click "View all clients" to see everyone.` : `No clients${marketFilter!=='all'?' in '+marketFilter:''} yet.`}</div></div>` :
-      renderClientGroups(activeClients, { hideEmpty: mineOnly })}
+    ${categoryTabs}
+    ${activeClients.length===0 ? `<div class="card"><div class="small">${mineOnly ? `You're not assigned to any active ${category==='software'?'Software ':''}clients${marketFilter!=='all'?' in '+marketFilter:''} yet. Click "View all clients" to see everyone.` : `No ${category==='software'?'Software ':''}clients${marketFilter!=='all'?' in '+marketFilter:''} yet.`}</div></div>` :
+      category==="software" ? renderSoftwareClientList(activeClients) : renderClientGroups(activeClients, { hideEmpty: mineOnly })}
     ${pastClients.length ? `
     <div class="card">
       <div class="flex-between" style="cursor:pointer;" onclick="state.showPastClients=!state.showPastClients;render();">
@@ -6791,13 +7184,15 @@ function renderClientsList(){
 function openClient(id){ state.selectedClientId = id; state.crmSubTab="tasks"; state.profileOpenSections = new Set(["visit"]); render(); }
 function openClientEditor(id){
   const existing = id ? state.clients.find(x=>x.id===id) : null;
-  const client = existing || { name:"", packageHours:"", cycleType:"monthly", assistantIds:[] };
+  // A copy, so Cancel really discards edits (the modal used to edit the
+  // live client object in place).
+  const client = existing ? { ...existing, assistantIds:[...(existing.assistantIds||[])] } : { name:"", packageHours:"", cycleType:"monthly", assistantIds:[] };
   state.modal = { type:"clientEditor", client };
   render();
 }
-function toggleClientAssistantDraft(id, checked){
-  const list = state.modal.client.assistantIds || [];
-  state.modal.client.assistantIds = checked ? [...list, id] : list.filter(x=>x!==id);
+function setClientAssistantDraft(){
+  const prev = state.modal.client.assistantIds || [];
+  state.modal.client.assistantIds = composeAssistantIds(document.getElementById("cf_asst_main").value, document.getElementById("cf_asst_secondary").value, prev);
 }
 // Permanent, not the same as cancelling/pausing a real client — for test
 // records or ones created by mistake that shouldn't show up anywhere at
@@ -6842,9 +7237,22 @@ function renderClientCRM(clientId){
   // inside renderClientProfile's "contract" body) — matches the original
   // single Profile tab's behavior before this split.
   const subtabs = [["profileDetails","Details"],["profileNotes","Notes & Dates"],["tasks","Tasks"],["profileContract","Contract & Payment"]];
-  if(state.role==="admin") subtabs.push(["membership","Membership"],["softwareBuild","Software Build"]);
-  else if(isDevDirector()) subtabs.push(["softwareBuild","Software Build"]);
+  if(state.role==="admin") subtabs.push(["membership","Membership"]);
+  if(canViewSoftware()) subtabs.push(["softwareBuild","Software Build"]);
   subtabs.push(["emailTemplates","Email Templates"]);
+  // Which side(s) of the business this client is — with a jump between the
+  // two records for clients who are both.
+  const showSw = canViewSoftware() && client.id!==INTERNAL_CLIENT_ID;
+  const isSw = isSoftwareClient(client), isMem = isMembershipClient(client);
+  const termEnd = client.id!==INTERNAL_CLIENT_ID ? termEndDate(client) : null;
+  const categoryLine = client.id===INTERNAL_CLIENT_ID ? "" : `
+    <div class="small" style="margin:4px 0 8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+      ${isMem ? `<span class="badge">Membership</span>` : ""}
+      ${showSw && isSw ? `<span class="badge">Software</span>` : ""}
+      ${showSw && isSw && isMem && state.crmSubTab!=="softwareBuild" ? `<a href="#" onclick="openClientAs('${client.id}','software');return false;">Also a Software client →</a>` : ""}
+      ${showSw && isSw && isMem && state.crmSubTab==="softwareBuild" && state.role==="admin" ? `<a href="#" onclick="openClientAs('${client.id}','membership');return false;">Also a Membership client →</a>` : ""}
+      ${isMem && termEnd ? `<span ${contractEndingSoon(client)?'class="alert warn" style="margin:0;padding:2px 8px;"':''}>Contract ends ${termEnd.toLocaleDateString()}</span>` : ""}
+    </div>`;
   return `
     <button class="secondary" onclick="state.selectedClientId=null;render();">&larr; All clients</button>
     <div class="flex-between" style="align-items:center;">
@@ -6857,6 +7265,7 @@ function renderClientCRM(clientId){
         </div>
       ` : ""}
     </div>
+    ${categoryLine}
     ${alert ? `<div class="alert ${alert.level}">${alert.text}</div>` : ""}
     <div class="tabs">
       ${subtabs.map(([key,label])=>`<button class="${state.crmSubTab===key?'active':''}" onclick="state.crmSubTab='${key}';render();">${label}</button>`).join("")}
@@ -6866,7 +7275,7 @@ function renderClientCRM(clientId){
     ${state.crmSubTab==="profileContract" ? renderClientProfile(client).contract : ""}
     ${state.crmSubTab==="tasks" ? renderClientTasks(client) : ""}
     ${state.crmSubTab==="membership" && state.role==="admin" ? renderClientMembership(client) : ""}
-    ${state.crmSubTab==="softwareBuild" && (state.role==="admin" || isDevDirector()) ? renderClientAddOnsSection(client) : ""}
+    ${state.crmSubTab==="softwareBuild" && canViewSoftware() ? renderClientCategoryCard(client) + renderClientAddOnsSection(client) : ""}
     ${state.crmSubTab==="emailTemplates" ? renderClientEmailTemplates(client) : ""}
   `;
 }
@@ -6919,7 +7328,7 @@ function renderClientOnboardingChecklist(client){
     <div class="card">
       <div class="flex-between"><h3>Onboarding checklist</h3><span class="small">${doneCount}/${items.length} done</span></div>
       <div class="small" style="margin-bottom:6px;">Home/business steps shown below are based on "Client type" further down — currently <strong>${serviceType}</strong>. Set it to "Both" for a client like Susan who needs both.</div>
-      <div class="checklist-item"><span class="small">${assistantAssigned ? '✅' : '⬜'} Assistant assigned ${assistantAssigned ? '— '+((client.assistantIds||[]).map(assistantName).join(', ')) : '(set on Membership tab)'}</span></div>
+      <div class="checklist-item"><span class="small">${assistantAssigned ? '✅' : '⬜'} Assistant assigned ${assistantAssigned ? '— '+escHtml(assistantRolesSummary(client)) : '(set on Membership tab)'}</span></div>
       <div class="checklist-item"><span class="small">${portalCodeSet ? '✅' : '⬜'} Client portal code set ${portalCodeSet ? '' : '(set on Membership tab)'}</span></div>
       <div class="checklist-item"><span class="small">${client.contractSigned || client.contractSignedExternally ? '✅' : '⬜'} Contract signed ${client.contractSigned ? '— by '+client.contractSignedName : client.contractSignedExternally ? '— signed externally' : '(sign it on the Service Agreement section below)'}</span></div>
       ${items.map(i=>`
@@ -8130,7 +8539,7 @@ function renderClientTasks(client){
           <label class="small">Status</label>
           <select onchange="setClientTaskListFilter('status',this.value)">
             <option value="all" ${(f.status||'all')==='all'?'selected':''}>All statuses</option>
-            ${STATUSES.map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${s}</option>`).join("")}
+            ${STATUSES.map(s=>`<option value="${s}" ${f.status===s?'selected':''}>${statusLabel(s)}</option>`).join("")}
           </select>
         </div>
         <div>
@@ -8286,7 +8695,20 @@ function renderClientEmailTemplates(client){
     <div class="card">
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
-      <div class="small" style="margin-bottom:8px;">To send: click "Copy message," then paste into whatever email or text you use with this client — works the same for everyone, nothing to attach or download.</div>
+      ${(()=>{
+        const autoOn = !!state.settings.weeklyReportAutoSend;
+        const clientOn = client.autoWeeklyReport!==false;
+        const sentThisWeek = client.weeklyRecapSentForWeek === toLocalDateInputValue(week.friday.toISOString());
+        const a = (state.settings.assistants||[]).find(x=>x.id===(client.assistantIds||[])[0]);
+        return `<div class="small" style="margin-bottom:8px;padding:8px 10px;border-radius:6px;background:var(--cream);">
+          ${sentThisWeek ? `<strong style="color:var(--ok);">✓ Sent for this week</strong> — ` : ""}
+          ${!autoOn ? `Automatic Friday 4pm sending isn't turned on yet (admin, Team tab).`
+            : !clientOn ? `Automatic Friday send is off for this client.`
+            : !client.email ? `<span style="color:var(--warn);">Automatic Friday send is on, but this client has no email on file.</span>`
+            : `Sends automatically Fridays at 4pm from ${a ? escHtml(a.name)+"'s" : "the assigned assistant's"} email, with receipts from this week's card purchases attached.`}
+          ${state.role==='admin' ? `<label style="display:flex;align-items:center;gap:8px;margin-top:6px;"><input type="checkbox" ${clientOn?'checked':''} onchange="updateClientField('${client.id}','autoWeeklyReport',this.checked)"> Auto-send this client's weekly recap</label>` : ""}
+        </div>`; })()}
+      <div class="small" style="margin-bottom:8px;">To send by hand: click "Copy message," then paste into whatever email or text you use with this client — works the same for everyone, nothing to attach or download.</div>
       <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
       <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
       ${client.includeReceiptsInReport && weekReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','week')">Clear sent receipts (${weekReceiptCount})</button>` : ""}
@@ -8553,6 +8975,7 @@ function renderClientMembership(client){
           <select onchange="updateClientField('${client.id}','termType',this.value)">
             <option value="pilot" ${(!client.termType||client.termType==='pilot')?'selected':''}>One Month Pilot</option>
             <option value="3month" ${client.termType==='3month'?'selected':''}>Three Month Term</option>
+            <option value="6month" ${client.termType==='6month'?'selected':''}>Six Month Term</option>
             <option value="12month_new" ${client.termType==='12month_new'?'selected':''}>Twelve Month Term (New)</option>
             <option value="12month_renewal" ${client.termType==='12month_renewal'?'selected':''}>Twelve Month Term (Renewal)</option>
           </select>
@@ -8578,7 +9001,7 @@ function renderClientMembership(client){
         <div><label class="small">Contract end date</label><div style="padding:8px 10px;">${termEndDate(client)?termEndDate(client).toLocaleDateString():'—'}</div></div>
         <div><label class="small">Cancellation notice due by</label><div style="padding:8px 10px;">${noticeDeadline(client)?noticeDeadline(client).toLocaleDateString():'—'}</div></div>
       </div>
-      <div class="small" style="margin-top:4px;">Auto-calculated from the contract start date above (pilot = +30 days, 3-month = +90 days, 12-month = +365 days) — separate from the 30-day hours period on the Package card above. Wrong for this client's actual contract? Override either one directly below; leave blank to go back to the computed value.</div>
+      <div class="small" style="margin-top:4px;">Auto-calculated from the contract start date above (pilot = +30 days, 3-month = +90 days, 6-month = +180 days, 12-month = +365 days) — separate from the 30-day hours period on the Package card above. Wrong for this client's actual contract? Override either one directly below; leave blank to go back to the computed value.</div>
       <div class="row" style="margin-top:8px;">
         <div><label class="small">Term end override (optional)</label><input type="date" value="${client.termEndOverride?client.termEndOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','termEndOverride',this.value)"></div>
         <div><label class="small">Cancellation deadline override (optional)</label><input type="date" value="${client.noticeDeadlineOverride?client.noticeDeadlineOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','noticeDeadlineOverride',this.value)"></div>
@@ -8589,7 +9012,7 @@ function renderClientMembership(client){
         <h3>Assigned assistants</h3>
         <button class="secondary" onclick="openReassignModal('${client.id}')">Reassign</button>
       </div>
-      <div class="small">${(client.assistantIds||[]).map(assistantName).join(", ") || "No assistant assigned yet."}</div>
+      <div class="small">${escHtml(assistantRolesSummary(client))}</div>
     </div>
   `;
 }
@@ -8630,6 +9053,7 @@ function renderAddOnRow(clientId, a){
       <div class="row">
         <div><label class="small">Flat fee ($)</label><input id="addon_fee_${a.id}" type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
         <div><label class="small">Monthly maintenance ($)</label><input id="addon_maint_${a.id}" type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
+        ${a.monthlyMaintenance>0 ? `<div><label class="small">First maintenance fee due</label><input type="date" value="${a.maintenanceStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceStartDate',this.value)" title="Due on this date, then every 30 days after"></div>` : ""}
         <div><label class="small">Date added</label><input type="date" value="${a.addedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','addedDate',this.value)"></div>
       </div>
       ${a.monthlyMaintenance>0 ? `
@@ -8656,9 +9080,19 @@ function renderAddOnRow(clientId, a){
       </div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Payment Schedule</label>
-        ${(a.payments&&a.payments.length) ? a.payments.map(p=>renderAddOnPaymentRow(clientId,a,p)).join("") : `
+        ${(a.payments&&a.payments.length) ? renderAddOnPhases(clientId, a) : `
           <div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>
         `}
+        ${a.monthlyMaintenance>0 ? (()=>{
+          const due = maintenanceFeesDue().find(r=>r.addOn.id===a.id);
+          return `<div class="list-item" style="margin-top:8px;">
+            <div><strong>Monthly fee</strong> — $${a.monthlyMaintenance} ${a.maintenanceStartDate?'every 30 days':'/mo'}${a.maintenanceActive===false?' (paused)':''}
+              <div class="small" ${due&&due.overdue?'style="color:var(--danger);font-weight:600;"':''}>${due ? formatMaintenanceKey(due.key)+(due.overdue?' — overdue, still unpaid':' — unpaid') : 'Paid up ✓'}${!due && nextMaintenanceDueDate(a) ? ' · next due '+parseYMD(nextMaintenanceDueDate(a)).toLocaleDateString() : ''}</div>
+              ${!a.maintenanceStartDate ? `<div class="small" style="color:var(--rose-dark);">Set "First maintenance fee due" above to bill every 30 days from that date (until then it's due on the 1st of each month).</div>` : ""}
+            </div>
+            ${due ? `<button class="secondary" onclick="markMaintenanceFeePaid('${clientId}','${a.id}','${due.key}')">Mark paid</button>` : ""}
+          </div>`;
+        })() : ""}
       </div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Recurring Monthly Maintenance — Assistant Split</label>
@@ -8675,8 +9109,8 @@ function renderAddOnRow(clientId, a){
           </div>
           <div><label class="small">Their %</label><input id="addon_maintpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.maintenanceAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
         </div>
-        ${(a.maintenancePayments||[]).slice().sort((x,y)=> (y.month||'') < (x.month||'') ? -1 : 1).map(p=>renderMaintenancePaymentRow(clientId,a,p)).join("")}
-        <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add month</button></div>` : ""}
+        ${(a.maintenancePayments||[]).slice().sort((x,y)=> (y.dueDate||y.month||'') < (x.dueDate||x.month||'') ? -1 : 1).map(p=>renderMaintenancePaymentRow(clientId,a,p)).join("")}
+        <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add ${a.maintenanceStartDate?'payment':'month'}</button></div>` : ""}
       </div>
       ${a.buildAssistantId ? `
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
@@ -8691,6 +9125,163 @@ function renderAddOnRow(clientId, a){
       <div><button class="danger" onclick="removeClientAddOn('${clientId}','${a.id}')">Delete</button></div>
     </div>
   `;
+}
+// Membership / Software switches for one client (top of Software Build).
+function renderClientCategoryCard(client){
+  if(client.id===INTERNAL_CLIENT_ID) return "";
+  const auto = (client.softwareClient!==true && client.softwareClient!==false);
+  return `
+    <div class="card">
+      <h3 style="margin:0 0 6px;">Client categories</h3>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${isMembershipClient(client)?'checked':''} onchange="updateClientField('${client.id}','membershipClient',this.checked)">
+          Membership (hour package)
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${isSoftwareClient(client)?'checked':''} onchange="updateClientField('${client.id}','softwareClient',this.checked)">
+          Software (software or website build)
+        </label>
+      </div>
+      <div class="small" style="margin-top:4px;">${auto ? "Software is set automatically (on when this client has a build that isn't cancelled) until you change it here." : "Set by hand."} A client with both shows up in both lists on the Clients tab, each with its own records. Untick Software for a website built on package hours.</div>
+    </div>`;
+}
+// ---- Build phases ----
+// A build's payments can be split into phases (Phase 1, Phase 2, …). Each
+// payment carries a phaseId; a payment without one belongs to the first
+// phase, so every schedule created before phases existed is Phase 1 with no
+// data migration. Payments stay one flat list on the add-on (addOn.payments)
+// so Heidi's due/ready alerts, payment emails, payroll build pay and revenue
+// all keep working for every phase unchanged.
+// Phase 1's fee and Day 1 are the build's own flatFee / buildStartDate;
+// later phases store their own fee / startDate / basisAmount.
+const FIRST_PHASE_ID = "phase_1";
+function addOnPhases(a){
+  return (a.phases && a.phases.length) ? a.phases : [{ id:FIRST_PHASE_ID, name:"Phase 1" }];
+}
+function paymentPhaseId(a, p){
+  const phases = addOnPhases(a);
+  return (p.phaseId && phases.some(ph=>ph.id===p.phaseId)) ? p.phaseId : phases[0].id;
+}
+function isFirstPhase(a, phaseId){ return addOnPhases(a)[0].id===phaseId; }
+function phaseFee(a, phase){ return isFirstPhase(a, phase.id) ? (a.flatFee||0) : (phase.fee||0); }
+function phaseName(a, p){
+  const phases = addOnPhases(a);
+  if(phases.length<2) return "";
+  return (phases.find(ph=>ph.id===paymentPhaseId(a,p))||{}).name || "";
+}
+function renderAddOnPhases(clientId, a){
+  const phases = addOnPhases(a);
+  const multi = phases.length > 1;
+  state.openAddOnPhases = state.openAddOnPhases || {};
+  return phases.map((ph, i)=>{
+    const pays = (a.payments||[]).filter(p=>paymentPhaseId(a,p)===ph.id);
+    const paidCount = pays.filter(p=>p.paid).length;
+    const total = pays.reduce((s,p)=>s+(p.amount||0),0);
+    const key = a.id+":"+ph.id;
+    // Open by default: the phase still being paid (or the only one).
+    const firstUnpaidIdx = phases.findIndex(x=>(a.payments||[]).some(p=>paymentPhaseId(a,p)===x.id && !p.paid));
+    const open = state.openAddOnPhases[key]!=null ? state.openAddOnPhases[key] : (!multi || i===firstUnpaidIdx || (firstUnpaidIdx<0 && i===phases.length-1));
+    const first = i===0;
+    return `
+      <div style="margin-top:8px;border:1px solid var(--cream-dark);border-radius:8px;padding:6px 10px;">
+        <div class="flex-between" style="cursor:pointer;" onclick="state.openAddOnPhases['${key}']=${open?'false':'true'};render();">
+          <strong>${escHtml(ph.name||('Phase '+(i+1)))}</strong>
+          <span class="small">$${total.toFixed(0)} · ${paidCount}/${pays.length} paid ${open?'▲':'▼'}</span>
+        </div>
+        ${open ? `
+          ${!first ? `
+          <div class="row" style="margin-top:6px;">
+            <div><label class="small">Phase name</label><input value="${escHtml(ph.name||'')}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','name',this.value)"></div>
+            <div><label class="small">Phase fee ($)</label><input type="number" step="1" value="${ph.fee||0}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','fee',parseFloat(this.value)||0)" style="max-width:120px;"></div>
+            <div><label class="small">Phase Day 1</label><input type="date" value="${ph.startDate||''}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','startDate',this.value)"></div>
+            ${a.buildAssistantId ? `<div><label class="small">Build cost her % is based on ($)</label><input type="number" step="1" value="${ph.basisAmount!=null?ph.basisAmount:(ph.fee||0)}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','basisAmount',parseFloat(this.value)||0)" style="max-width:120px;"></div>` : ""}
+          </div>
+          <div class="small">Changing the phase fee re-splits its unpaid payments 50/25/25; Day 1 sets their due dates (Day 1 / 15 / 30), same as Phase 1.</div>` : (multi ? `<div class="small" style="margin-top:4px;">Phase 1 uses the build's flat fee and Day 1 above.</div>` : "")}
+          ${pays.map(p=>renderAddOnPaymentRow(clientId,a,p)).join("") || `<div class="small">No payments in this phase.</div>`}
+          ${!first && paidCount===0 ? `<div style="margin-top:6px;"><button class="danger" style="padding:2px 8px;" onclick="removeAddOnPhase('${clientId}','${a.id}','${ph.id}')">Remove phase</button></div>` : ""}
+        ` : ""}
+      </div>`;
+  }).join("") + `<div style="margin-top:8px;"><button class="secondary" onclick="addAddOnPhase('${clientId}','${a.id}')">+ Add phase</button></div>`;
+}
+function updateAddOnById(clientId, addOnId, fn){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const addOns = (client.addOns||[]).map(a=> a.id===addOnId ? fn(a) : a);
+  upsert("clients", clientId, { addOns });
+}
+// Standard 3-payment split (50/25/25 at Day 1/15/30) for a new phase —
+// amounts and dates stay editable per payment afterward.
+function addAddOnPhase(clientId, addOnId){
+  updateAddOnById(clientId, addOnId, a=>{
+    const phases = addOnPhases(a).map(ph=>({ ...ph }));
+    const phase = { id:newId("phase"), name:"Phase "+(phases.length+1), fee:0, startDate:"" };
+    const payments = [...(a.payments||[]), ...defaultAddOnPayments(0, "").map(p=>({ ...p, phaseId:phase.id }))];
+    state.openAddOnPhases = state.openAddOnPhases || {};
+    state.openAddOnPhases[a.id+":"+phase.id] = true;
+    return { ...a, phases:[...phases, phase], payments };
+  });
+}
+function updateAddOnPhaseField(clientId, addOnId, phaseId, field, value){
+  updateAddOnById(clientId, addOnId, a=>{
+    const phases = addOnPhases(a).map(ph=> ph.id===phaseId ? { ...ph, [field]: value } : { ...ph });
+    let payments = a.payments||[];
+    const SPLIT = { 0:0.5, 14:0.25, 29:0.25 };
+    if(field==="fee"){
+      // Re-split only standard (offset-tagged), unpaid payments — a paid
+      // payment is history and a hand-added one is left as entered.
+      payments = payments.map(p=>{
+        if(paymentPhaseId(a,p)!==phaseId || p.paid || SPLIT[p.dueDayOffset]==null) return p;
+        return { ...p, amount: Math.round((value||0)*SPLIT[p.dueDayOffset]*100)/100 };
+      });
+    }
+    if(field==="startDate" && value){
+      payments = payments.map(p=>{
+        if(paymentPhaseId(a,p)!==phaseId || p.paid || p.dueDayOffset==null) return p;
+        return { ...p, dueDate: new Date(parseYMD(value).getTime() + p.dueDayOffset*86400000).toISOString().slice(0,10) };
+      });
+    }
+    return { ...a, phases, payments };
+  });
+}
+function removeAddOnPhase(clientId, addOnId, phaseId){
+  if(!confirm("Remove this phase and its unpaid payments?")) return;
+  updateAddOnById(clientId, addOnId, a=>{
+    if((a.payments||[]).some(p=>paymentPhaseId(a,p)===phaseId && p.paid)) return a; // never drop payment history
+    return { ...a,
+      phases: addOnPhases(a).filter(ph=>ph.id!==phaseId),
+      payments: (a.payments||[]).filter(p=>paymentPhaseId(a,p)!==phaseId) };
+  });
+}
+// ---- Mark a monthly maintenance fee paid (Dashboard alert + build) ----
+// Same idea as the membership charge Complete button: asks for a name
+// (admin logins are shared), stamps date + amount + who, and the alert
+// comes back by itself next month because that month has no paid row yet.
+// Maintenance runs on calendar months (YYYY-MM rows), so "next due date"
+// is simply next month. The maintenance rows ARE the payment history.
+// `key` is a cycle due date (YYYY-MM-DD, 30-day builds) or a month
+// (YYYY-MM, builds with no maintenance start date yet).
+function markMaintenanceFeePaid(clientId, addOnId, key){
+  const client = state.clients.find(c=>c.id===clientId);
+  const addOn = client && (client.addOns||[]).find(a=>a.id===addOnId);
+  if(!addOn) return;
+  const isCycle = key && key.length===10;
+  let lastName = "";
+  try { lastName = localStorage.getItem("tmcBillingCheckName") || ""; } catch(e){}
+  const name = (prompt("Mark "+client.name+"'s maintenance fee ("+formatMaintenanceKey(key)+", $"+(addOn.monthlyMaintenance||0)+") as paid?\n\nYour name (saved with the payment):", lastName) || "").trim();
+  if(!name) return;
+  try { localStorage.setItem("tmcBillingCheckName", name); } catch(e){}
+  const stamp = { paid:true, paidDate:ymd(new Date()), paidBy:name, paidMarkedAt:new Date().toISOString() };
+  updateAddOnMaintenancePayments(clientId, addOnId, (list, a)=>{
+    // A cycle can take over an unpaid old monthly row for the same month
+    // (switchover month), so history doesn't keep a stale unpaid row.
+    const existing = isCycle
+      ? (list.find(p=>p.dueDate===key) || list.find(p=>!p.dueDate && !p.paid && p.month===key.slice(0,7)))
+      : list.find(p=>!p.dueDate && p.month===key);
+    if(existing) return list.map(p=> p.id===existing.id ? { ...p, ...stamp, ...(isCycle?{ dueDate:key }:{}), amount: p.amount || a.monthlyMaintenance || 0 } : p);
+    const row = isCycle ? { dueDate:key } : { month:key };
+    return [...list, { id:newId("maintpay"), ...row, amount:a.monthlyMaintenance||0, ...stamp }];
+  });
 }
 function renderAddOnPaymentRow(clientId, a, p){
   const addOnId = a.id;
@@ -8817,9 +9408,18 @@ function removeBuildTodo(clientId, addOnId, todoId){
 // payment's own dollar amount, which would silently use flatFee as the
 // basis even when a separate basis amount has been set.
 function buildAssistantCut(addOn, payment){
-  if(!addOn.buildAssistantId || !addOn.buildAssistantPercent || !addOn.flatFee) return 0;
-  const basis = addOn.buildAssistantBasisAmount!=null ? addOn.buildAssistantBasisAmount : addOn.flatFee;
-  const proportionOfTotal = (payment.amount||0) / addOn.flatFee;
+  if(!addOn.buildAssistantId || !addOn.buildAssistantPercent) return 0;
+  // Each phase has its own fee and basis (Phase 1 = the build's flatFee /
+  // buildAssistantBasisAmount, as before phases existed).
+  const phaseId = paymentPhaseId(addOn, payment);
+  const phase = addOnPhases(addOn).find(ph=>ph.id===phaseId);
+  const first = isFirstPhase(addOn, phaseId);
+  const fee = first ? addOn.flatFee : (phase.fee||0);
+  if(!fee) return 0;
+  const basis = first
+    ? (addOn.buildAssistantBasisAmount!=null ? addOn.buildAssistantBasisAmount : addOn.flatFee)
+    : (phase.basisAmount!=null ? phase.basisAmount : fee);
+  const proportionOfTotal = (payment.amount||0) / fee;
   return Math.round(basis * proportionOfTotal * (addOn.buildAssistantPercent/100) * 100) / 100;
 }
 function buildTodoDueDate(addOn, todo){
@@ -8935,8 +9535,9 @@ function updateAddOnField(clientId, addOnId, field, value){
     // wanted) and never touching one that's already been paid, since
     // that's history, not a schedule to keep adjusting.
     if(field==="buildStartDate" && value){
+      // Day 1 here is Phase 1's — later phases have their own Phase Day 1.
       updated.payments = (a.payments||[]).map(p=>{
-        if(p.paid || p.dueDayOffset==null) return p;
+        if(p.paid || p.dueDayOffset==null || !isFirstPhase(a, paymentPhaseId(a,p))) return p;
         return { ...p, dueDate: new Date(parseYMD(value).getTime() + p.dueDayOffset*86400000).toISOString().slice(0,10) };
       });
     }
@@ -8961,15 +9562,17 @@ function renderMaintenancePaymentRow(clientId, a, p){
   const cut = maintenanceAssistantCut(a, p);
   return `
     <div class="row" style="align-items:flex-end;margin-top:6px;">
-      <div><label class="small">Month</label><input type="month" value="${p.month||''}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','month',this.value)" style="max-width:160px;"></div>
+      ${p.dueDate
+        ? `<div><label class="small">Due</label><input type="date" value="${p.dueDate}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','dueDate',this.value)" style="max-width:160px;"></div>`
+        : `<div><label class="small">Month</label><input type="month" value="${p.month||''}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','month',this.value)" style="max-width:160px;"></div>`}
       <div><label class="small">Amount ($)</label><input id="addon_maintpay_amt_${p.id}" type="number" step="1" value="${p.amount||0}" onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','amount',parseFloat(this.value)||0)" style="max-width:110px;"></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
         <input type="checkbox" ${p.paid?'checked':''} onchange="updateMaintenancePaymentField('${clientId}','${a.id}','${p.id}','paid',this.checked)">
-        Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+')' : ''}
+        Paid${p.paid && p.paidDate ? ' ('+parseYMD(p.paidDate).toLocaleDateString()+(p.paidBy?', marked by '+escHtml(p.paidBy):'')+')' : ''}
       </label>
       <div style="padding-bottom:6px;"><button class="secondary" style="padding:2px 8px;" onclick="removeMaintenancePayment('${clientId}','${a.id}','${p.id}')">✕</button></div>
     </div>
-    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${formatMaintenanceMonth(p.month)}: ${assistantName(a.maintenanceAssistantId)} earns $${cut.toFixed(2)} (${a.maintenanceAssistantPercent}%) ${p.paid?'— rolled into the '+formatPeriodRange(currentPayrollPeriod(new Date(p.paidDate)))+' paycheck':'— added to the next regular paycheck once this month is marked paid'}</div>` : ""}
+    ${cut>0 ? `<div class="small" style="color:var(--rose-dark);margin-top:2px;">${formatMaintenanceKey(p.dueDate||p.month)}: ${assistantName(a.maintenanceAssistantId)} earns $${cut.toFixed(2)} (${a.maintenanceAssistantPercent}%) ${p.paid?'— rolled into the '+formatPeriodRange(currentPayrollPeriod(new Date(p.paidDate)))+' paycheck':'— added to the next regular paycheck once this month is marked paid'}</div>` : ""}
   `;
 }
 function updateAddOnMaintenancePayments(clientId, addOnId, fn){
@@ -8982,6 +9585,15 @@ function updateAddOnMaintenancePayments(clientId, addOnId, fn){
 // yet), at the add-on's current monthly maintenance amount.
 function addMaintenancePayment(clientId, addOnId){
   updateAddOnMaintenancePayments(clientId, addOnId, (list, a)=>{
+    // 30-day builds: the next cycle due date after the latest one logged
+    // (or the first unlogged cycle from the start date).
+    if(a.maintenanceStartDate){
+      const logged = new Set(list.map(p=>p.dueDate).filter(Boolean));
+      const latest = [...logged].sort().pop();
+      let d = a.maintenanceStartDate;
+      while((latest && d <= latest) || logged.has(d)) d = addDaysYMD(d, MAINT_CYCLE_DAYS);
+      return [...list, { id:newId("maintpay"), dueDate:d, amount:a.monthlyMaintenance||0, paid:false, paidDate:"" }];
+    }
     const latest = list.map(p=>p.month).filter(Boolean).sort().pop();
     let month = new Date().toISOString().slice(0,7);
     if(latest){
@@ -8997,6 +9609,7 @@ function updateMaintenancePaymentField(clientId, addOnId, paymentId, field, valu
     const updated = { ...p, [field]: value };
     // Same as build payments: checking Paid stamps today, unchecking clears it.
     if(field==="paid") updated.paidDate = value ? (p.paidDate || new Date().toISOString().slice(0,10)) : "";
+    if(field==="paid" && !value) updated.paidBy = "";
     return updated;
   }));
 }
@@ -9099,11 +9712,7 @@ function renderReassignModal(client){
         Past time entries and completed tasks keep whoever actually did the work — nothing there changes.
       </div>
       <div>
-        ${assignableAssistants(client.assistantIds).map(a=>`
-          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;margin-bottom:6px;font-size:13px;">
-            <input type="checkbox" value="${a.id}" ${(client.assistantIds||[]).includes(a.id)?'checked':''} class="reassign_assistant"> ${a.name}${a.active===false?' (former)':''}
-          </label>
-        `).join("")}
+        ${assistantPickersHtml(client.assistantIds||[], "reassign")}
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
@@ -9113,8 +9722,10 @@ function renderReassignModal(client){
   `;
 }
 function confirmReassign(clientId){
-  const newIds = Array.from(document.querySelectorAll(".reassign_assistant:checked")).map(el=>el.value);
-  if(newIds.length===0){ alert("Select at least one assistant."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  const mainId = document.getElementById("reassign_main").value;
+  if(!mainId){ alert("Pick a main assistant."); return; }
+  const newIds = composeAssistantIds(mainId, document.getElementById("reassign_secondary").value, client && client.assistantIds);
   upsert("clients", clientId, { assistantIds: newIds });
   state.tasks.filter(t=>t.clientId===clientId && t.status!=="Done").forEach(t=>{
     upsert("tasks", t.id, { assignees: newIds });
@@ -9270,7 +9881,7 @@ function renderKanban(){
     <div class="kanban">
       ${visibleStatuses.map(status=>`
         <div class="kanban-col">
-          <h4>${status}</h4>
+          <h4>${statusLabel(status)}</h4>
           ${sortKanbanTasks(filtered.filter(t=>t.status===status), f.sort).map(renderKanbanCard).join("")}
         </div>
       `).join("")}
@@ -9443,7 +10054,8 @@ function renderTimeTracking(){
       const total = own_.reduce((s,e)=>s+entryDurationHours(e),0);
       const admin = own_.filter(e=>e.clientId===INTERNAL_CLIENT_ID).reduce((s,e)=>s+entryDurationHours(e),0);
       const manual = own_.filter(e=>e.clockOutManual).length;
-      return { assistant:a, total, admin, manual };
+      const miles = own_.reduce((s,e)=>s+(e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : 0),0);
+      return { assistant:a, total, admin, manual, miles };
     }).filter(r=>r.total>0 || r.assistant.active!==false).sort((a,b)=>b.total-a.total) : [];
 
   return `
@@ -9459,6 +10071,7 @@ function renderTimeTracking(){
         </div>
         ${isStale(active) ? `<div class="alert danger" style="margin-top:8px;">This clock has been running over 8 hours — check if it's stale.</div>` : ""}
         <button style="margin-top:10px;" onclick="doClockOut('${active.id}')">Clock out</button>
+        ${renderDriveControls(active)}
       </div>` : ""}
     ${state.currentAssistant && !active ? `
       <div class="card">
@@ -9483,7 +10096,7 @@ function renderTimeTracking(){
       <h3>Hours by assistant</h3>
       <div class="small" style="margin-bottom:8px;">${timeFilterLabel(period)} — "Admin hours" is time clocked to Internal / Modern Co. work. "Manual" counts clock-outs where a time was typed in instead of captured live.</div>
       <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Assistant</th><th>Total hours</th><th>Admin hours</th><th>Manual clock-outs</th></tr></thead>
+        <thead><tr><th>Assistant</th><th>Total hours</th><th>Admin hours</th><th>Manual clock-outs</th><th>TMC drive miles</th></tr></thead>
         <tbody>
           ${assistantSummary.map(r=>`
             <tr>
@@ -9491,7 +10104,8 @@ function renderTimeTracking(){
               <td>${r.total.toFixed(1)}</td>
               <td>${r.admin.toFixed(1)}</td>
               <td>${r.manual>0 ? `<span style="color:var(--warn);font-weight:600;">${r.manual}</span>` : "0"}</td>
-            </tr>`).join("") || `<tr><td colspan="4" class="small">No entries in this range.</td></tr>`}
+              <td>${r.miles.toFixed(1)}</td>
+            </tr>`).join("") || `<tr><td colspan="5" class="small">No entries in this range.</td></tr>`}
         </tbody>
       </table></div>
     </div>` : ""}
@@ -9535,7 +10149,7 @@ function renderTimeTracking(){
         const isAdminWork = e.clientId===INTERNAL_CLIENT_ID;
         const clientLabel = isAdminWork ? "Internal / Modern Co." : (state.clients.find(c=>c.id===e.clientId)?.name || (e.clientId ? "Unknown client" : ""));
         return `<div class="list-item">
-          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${task?task.title:'(deleted task)'}${clientLabel ? ` <span class="small">· ${clientLabel}</span>` : ''}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
+          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${driveBadge(e)}${task?task.title:'(deleted task)'}${clientLabel ? ` <span class="small">· ${clientLabel}</span>` : ''}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
           <div style="display:flex;align-items:center;gap:8px;">${e.clockOut ? entryDurationHours(e).toFixed(2)+" hrs" : `<button onclick="doClockOut('${e.id}')">Clock out</button>`}${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" title="Edit this time entry" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}${state.role==='admin' ? `<button class="secondary" style="padding:2px 8px;${e.flagged?'color:var(--danger);':''}" title="${e.flagged ? 'Unflag' : 'Flag for review'}" onclick="toggleFlagTimeEntry('${e.id}')">${e.flagged ? '⚑' : '⚐'}</button>` : ""}<button class="secondary" style="padding:2px 8px;" title="Delete this time entry" onclick="deleteTimeEntry('${e.id}')">✕</button></div>
         </div>`;
       }).join("") || `<div class="small">No entries in this range.</div>`}
@@ -9545,14 +10159,31 @@ function renderTimeTracking(){
 function taskSearchOptions(tasks){
   return tasks.map(t=>`<option value="#${t.taskNumber||'?'} — ${(t.title||'').replace(/"/g,'&quot;')}">`).join("");
 }
+// The picker's options read "#123 — Title". Task numbers are NOT
+// guaranteed unique (allocateTaskNumber falls back to local numbering on a
+// timeout), so matching on the number alone silently picked whichever
+// task with that number came first — which is how time logged on one task
+// landed on a different client's task with the same number. Match the
+// number AND the title; if several still match, prefer an open task
+// assigned to whoever is logged in.
 function resolveTaskFromSearch(value){
   const v = (value||"").trim();
-  const m = v.match(/^#(\d+)/);
+  if(!v) return null;
+  const m = v.match(/^#(\d+|\?)\s*(?:—|-)?\s*(.*)$/);
+  let candidates;
   if(m){
-    const t = state.tasks.find(t=>t.taskNumber===parseInt(m[1],10));
-    if(t) return t;
+    const num = m[1]==="?" ? null : parseInt(m[1],10);
+    const title = m[2].trim();
+    const byNum = state.tasks.filter(t=>(t.taskNumber||null)===num);
+    candidates = title ? byNum.filter(t=>(t.title||"").trim()===title) : byNum;
+    if(!candidates.length && title) candidates = state.tasks.filter(t=>(t.title||"").trim()===title);
+  } else {
+    candidates = state.tasks.filter(t=>(t.title||"").trim()===v);
   }
-  return state.tasks.find(t=>t.title===v) || null;
+  if(candidates.length<=1) return candidates[0] || null;
+  const me = state.currentAssistant && state.currentAssistant.id;
+  const score = t => (t.status!=="Done" ? 2 : 0) + (me && (t.assignees||[]).includes(me) ? 1 : 0);
+  return candidates.slice().sort((a,b)=>score(b)-score(a))[0];
 }
 function doClockIn(){
   const sel = document.getElementById("clockInTaskSelect");
@@ -10022,6 +10653,7 @@ function addGoalsYear(){
 // unset (could be either) until someone picks.
 function addOnBuildType(a){
   if(a.buildType) return a.buildType;
+  if(a.catalogKey==="website_build" || a.catalogKey==="website_refresh") return "website";
   if(a.category==="SOP") return "none";
   if(a.category==="Productized Software" || a.category==="AI Integration") return "software";
   return "";
@@ -10924,6 +11556,7 @@ const TEAM_POLICY_BOOK_HTML = `<h2 style="text-align:center;">MC<br>THE MODERN C
 <p>Errand-Based / Out-of-Office Tasks</p>
 <ul>
 <li>If you are leaving your home specifically to complete a client task — clock in when you leave your house. Your drive time is billable.</li>
+<li>When you're driving to a task, tap <strong>🚗 Start drive</strong> under your running clock as you pull out, and <strong>I've arrived</strong> when you get there. This logs your mileage — the client covers the first 10 miles of each trip and TMC covers anything over.</li>
 <li>If you are already out in the city and a client contacts you with a task while you're out — clock in when you begin the task itself, not from wherever you were.</li>
 </ul>
 <p><strong>EXAMPLE</strong><br/><em>SYou're already at Target doing personal shopping when a client texts you to pick something up nearby. Clock in when you leave to go get their item — not from home.A client asks you to pick up dry cleaning and you drive from home specifically for that task. Clock in when you pull out of your driveway.</em></p>
@@ -11372,6 +12005,7 @@ function renderTeamAdmin(){
       <div class="small" style="margin-top:6px;">Fully closed out and hidden everywhere — this section is just here in case one needs to come back.</div>
       ` : ""}
     </div>` : ""}
+    ${renderWeeklyRecapAdminCard()}
     <div class="card">
       <h3>Admin passcode</h3>
       <input id="admin_passcode" value="${state.settings.adminPasscode}" onchange="updateAdminPasscode(this.value)">
@@ -11400,6 +12034,187 @@ function updateMyNotifyPref(key, checked){
   state.currentAssistant = state.settings.assistants.find(a=>a.id===state.currentAssistant.id);
   upsert("settings","access", { assistants: state.settings.assistants });
   render();
+}
+// ---- Automatic Friday 4pm weekly recaps (functions/weeklyReports.js) ----
+// Each assistant connects their own Gmail (send-only) so their clients'
+// recaps come from them; anyone not connected falls back to support@ with
+// replies going to them. Admin turns the whole thing on, sets the CC (Kaylan + Tori) and support@ BCC,
+// sends test copies, and sees the last run's log.
+function fetchReportGmailStatus(force){
+  const r = state.reportGmail = state.reportGmail || { byId:{}, loadedAt:0, inFlight:false };
+  if(r.inFlight || (!force && Date.now()-r.loadedAt < 5*60*1000)) return;
+  if(PREVIEW_MODE){
+    r.byId = {}; (state.settings.assistants||[]).forEach(a=>{ r.byId[a.id] = a.id==="asst_2" ? { connected:true, email:"victoria@example.com" } : { connected:false }; });
+    r.loadedAt = Date.now(); return;
+  }
+  if(!fns) return;
+  r.inFlight = true;
+  const ids = state.role==='admin' ? undefined : (state.currentAssistant ? [state.currentAssistant.id] : []);
+  fns.httpsCallable("getReportGmailStatus")({ assistantIds: ids })
+    .then(({data})=>{ r.byId = { ...r.byId, ...(data||{}) }; r.unavailable = false; })
+    .catch(err=>{ console.warn("getReportGmailStatus failed:", err); r.unavailable = true; })
+    .finally(()=>{ r.inFlight = false; r.loadedAt = Date.now(); if(!state.modal) render(); });
+}
+async function connectReportGmail(){
+  if(PREVIEW_MODE){ alert("Connecting Gmail only works in the real app."); return; }
+  if(!fns || !state.currentAssistant){ alert("This isn't available right now — try reloading the page."); return; }
+  const authTab = window.open("", "_blank");
+  try{
+    const { data } = await fns.httpsCallable("getReportGmailAuthConfig")({ assistantId: state.currentAssistant.id });
+    const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
+      + "?client_id=" + encodeURIComponent(data.clientId)
+      + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
+      + "&response_type=code"
+      + "&scope=" + encodeURIComponent(data.scope)
+      + "&access_type=offline&prompt=consent"
+      + (state.currentAssistant.email ? "&login_hint=" + encodeURIComponent(state.currentAssistant.email) : "")
+      + "&state=" + encodeURIComponent(data.state);
+    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
+    window.addEventListener("focus", ()=>fetchReportGmailStatus(true), { once:true });
+  }catch(err){
+    console.error(err);
+    if(authTab) authTab.close();
+    alert("Couldn't start the Gmail connection — check the console for details.");
+  }
+}
+async function disconnectReportGmail(){
+  if(!confirm("Disconnect your Gmail? Your clients' Friday recaps will come from support@ instead.")) return;
+  if(PREVIEW_MODE){ state.reportGmail.byId[state.currentAssistant.id] = { connected:false }; render(); return; }
+  try{
+    await fns.httpsCallable("disconnectReportGmail")({ assistantId: state.currentAssistant.id });
+    state.reportGmail.byId[state.currentAssistant.id] = { connected:false };
+    render();
+  }catch(err){ console.error(err); alert("Couldn't disconnect — try again."); }
+}
+function renderMyReportGmailCard(){
+  fetchReportGmailStatus();
+  const me = state.currentAssistant;
+  const st = (state.reportGmail && state.reportGmail.byId[me.id]) || null;
+  const myClients = state.clients.filter(c=>(c.assistantIds||[])[0]===me.id && c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==='active'));
+  return `
+    <div class="card">
+      <h3>Friday client recaps</h3>
+      <div class="small" style="margin-bottom:10px;">${state.settings.weeklyReportAutoSend ? "Weekly recaps go out automatically every Friday at 4pm" : "Once turned on, weekly recaps will go out automatically every Friday at 4pm"} to the clients you're the main assistant for${myClients.length ? ` (${myClients.map(c=>escHtml(c.name)).join(", ")})` : ""}. Just make sure your tasks and time are in by 4pm. Anything you're still clocked in on shows as In progress.</div>
+      ${!st && state.reportGmail && state.reportGmail.unavailable ? `<div class="small">Not set up yet — Kaylan needs to finish turning this on.</div>`
+        : !st ? `<div class="small">Checking your Gmail connection…</div>`
+        : st.connected ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><span style="color:var(--ok);">✓ Sending from ${escHtml(st.email||'your Gmail')}</span><button class="secondary" style="padding:2px 8px;" onclick="disconnectReportGmail()">Disconnect</button></div>`
+        : `<div class="small" style="margin-bottom:8px;color:var(--warn);">Not connected. Your clients' recaps will come from support@ (replies still come to you) until you connect.</div><button onclick="connectReportGmail()">Connect my Gmail</button>`}
+    </div>`;
+}
+function setWeeklyRecapSetting(field, value){
+  state.settings[field] = value;
+  upsert("settings","access", { [field]: value });
+  render();
+}
+// KEEP IN SYNC with recapCcList / recapBccSupport in functions/weeklyReports.js.
+// CC = typed emails (Kaylan) + team members ticked by id (Tori, so her
+// current email is always used). Never set = the admin notify email.
+const WEEKLY_RECAP_SUPPORT_BCC = "support@themodernconcierge.co";
+function weeklyRecapTypedCc(){
+  const s = state.settings;
+  if(Array.isArray(s.weeklyReportCc)) return s.weeklyReportCc;
+  return s.weeklyReportCc===undefined && s.adminNotifyEmail ? [s.adminNotifyEmail] : [];
+}
+function weeklyRecapCcList(){
+  const ids = state.settings.weeklyReportCcAssistantIds || [];
+  const team = (state.settings.assistants||[]).filter(a=>ids.includes(a.id) && a.active!==false).map(a=>a.email);
+  const seen = new Set(), out = [];
+  [...weeklyRecapTypedCc(), ...team].forEach(e=>{ const t=String(e||"").trim(); if(/^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(t) && !seen.has(t.toLowerCase())){ seen.add(t.toLowerCase()); out.push(t); } });
+  return out;
+}
+function weeklyRecapBccSupport(){
+  const v = state.settings.weeklyReportBccSupport;
+  return v===undefined ? WEEKLY_RECAP_SUPPORT_BCC : String(v||"").trim();
+}
+function setWeeklyRecapCcEmails(text){
+  const list = String(text||"").split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean);
+  const bad = list.filter(e=>!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+  if(bad.length){ alert("These don't look like email addresses: " + bad.join(", ")); render(); return; }
+  setWeeklyRecapSetting("weeklyReportCc", list);
+}
+function toggleWeeklyRecapCcAssistant(id, on){
+  const ids = new Set(state.settings.weeklyReportCcAssistantIds||[]);
+  on ? ids.add(id) : ids.delete(id);
+  setWeeklyRecapSetting("weeklyReportCcAssistantIds", [...ids]);
+}
+function fetchLastWeeklyRun(force){
+  const w = state.weeklyRun = state.weeklyRun || { doc:null, loadedAt:0, inFlight:false };
+  if(w.inFlight || (!force && Date.now()-w.loadedAt < 5*60*1000)) return;
+  if(PREVIEW_MODE){
+    w.doc = { id:"preview", ranAt: new Date(Date.now()-3*86400000).toISOString(), results:[
+      { clientName:"Jordan Sample", status:"sent", to:"jordan@example.com", sentFrom:"victoria@example.com", receiptsAttached:1 },
+      { clientName:"Sample Business LLC", status:"sent", to:"ops@example.com", sentFrom:"support@", via:"support", receiptsAttached:0 },
+      { clientName:"Test Client (Demo)", status:"skipped", reason:"No client email on file" } ] };
+    w.loadedAt = Date.now(); return;
+  }
+  if(!db) return;
+  w.inFlight = true;
+  db.collection("weeklyReportRuns").orderBy("ranAt","desc").limit(1).get()
+    .then(snap=>{ w.doc = snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() }; })
+    .catch(err=>console.warn("weeklyReportRuns read failed:", err))
+    .finally(()=>{ w.inFlight = false; w.loadedAt = Date.now(); if(!state.modal) render(); });
+}
+async function sendWeeklyRecapTest(){
+  const clientId = document.getElementById("wr_test_client").value;
+  const to = document.getElementById("wr_test_to").value.trim();
+  if(!clientId){ alert("Pick a client."); return; }
+  if(!to){ alert("Enter the email to send the test to."); return; }
+  if(PREVIEW_MODE){ alert("Preview: a test of this week's recap would go to " + to + " only."); return; }
+  if(!fns){ alert("This isn't available right now — try reloading the page."); return; }
+  state.weeklyTestBusy = true; render();
+  try{
+    const { data } = await fns.httpsCallable("sendWeeklyReportTest")({ clientId, to });
+    alert("Test sent to " + to + " (from " + data.sentFrom + (data.receiptsAttached ? ", " + data.receiptsAttached + " receipt(s) attached" : "") + "). The client did NOT get it.");
+  }catch(err){
+    console.error(err);
+    alert("Test didn't send — " + (err.message||err));
+  }finally{ state.weeklyTestBusy = false; render(); }
+}
+function renderWeeklyRecapAdminCard(){
+  fetchReportGmailStatus(); fetchLastWeeklyRun();
+  const on = !!state.settings.weeklyReportAutoSend;
+  const statuses = (state.reportGmail && state.reportGmail.byId) || {};
+  const primaryIds = new Set(state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus||c.clientStatus==='active') && isMembershipClient(c)).map(c=>(c.assistantIds||[])[0]).filter(Boolean));
+  const people = (state.settings.assistants||[]).filter(a=>a.active!==false && primaryIds.has(a.id));
+  const run = state.weeklyRun && state.weeklyRun.doc;
+  const clientOpts = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus||c.clientStatus==='active') && isMembershipClient(c)).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const ccList = weeklyRecapCcList();
+  const bccSupport = weeklyRecapBccSupport();
+  const ccIds = state.settings.weeklyReportCcAssistantIds || [];
+  const team = (state.settings.assistants||[]).filter(a=>a.active!==false).sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const bccDefault = ccList[0] || state.settings.adminNotifyEmail || bccSupport || "";
+  return `
+    <div class="card">
+      <h3>Automatic Friday recaps</h3>
+      <div class="small" style="margin-bottom:10px;">Every Friday at 4pm Central, each active Membership client with an email gets their weekly recap from their main assistant's Gmail, CC'd to the people below and BCC'd to support@, with receipt photos from that week's card purchases attached. The secondary assistant is never copied. Skips clients already sent by hand that week, clients turned off on their Email Templates tab, and weeks with no time, completed tasks or purchases.</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-bottom:10px;">
+        <input type="checkbox" ${on?'checked':''} onchange="setWeeklyRecapSetting('weeklyReportAutoSend', this.checked)"> <strong>Auto-send weekly recaps</strong>
+      </label>
+      <div><label class="small">CC these emails (Kaylan) — separate with commas</label><input type="text" id="wr_cc" value="${escHtml(weeklyRecapTypedCc().join(", "))}" placeholder="kaylan@…" onchange="setWeeklyRecapCcEmails(this.value)"></div>
+      <div class="small" style="margin-top:8px;">Also CC these team members (Tori) — uses their current email from their Team card:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px;">
+        ${team.map(a=>`<label style="display:flex;align-items:center;gap:6px;font-size:13px;"><input type="checkbox" ${ccIds.includes(a.id)?'checked':''} onchange="toggleWeeklyRecapCcAssistant('${a.id}', this.checked)"> ${escHtml(a.name||'')}${a.email?'':' <span style="color:var(--warn);">(no email)</span>'}</label>`).join("") || `<span class="small">No team members yet.</span>`}
+      </div>
+      <div class="small" style="margin-top:6px;">${ccList.length ? `CC on every recap: <strong>${ccList.map(escHtml).join(", ")}</strong>` : `<span style="color:var(--warn);">No CC set — add Kaylan and tick Tori.</span>`}</div>
+      <div style="margin-top:10px;"><label class="small">BCC every recap to</label><input type="email" id="wr_bcc" value="${escHtml(bccSupport)}" placeholder="${WEEKLY_RECAP_SUPPORT_BCC}" onchange="setWeeklyRecapSetting('weeklyReportBccSupport', this.value.trim())"></div>
+      <div class="small" style="margin-top:4px;">${bccSupport ? `Left off when a recap is sent from support@ itself (assistant not connected), since support@'s Sent folder already has it.` : `<span style="color:var(--warn);">No BCC — support@ won't get a copy of recaps sent from assistants' Gmail.</span>`}</div>
+      <div class="section-label" style="margin-top:14px;font-size:11px;letter-spacing:1.5px;color:var(--rose-dark);font-weight:600;">Who's connected</div>
+      ${people.length ? people.map(a=>{ const st = statuses[a.id];
+        return `<div class="small" style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;"><span>${escHtml(a.name)}</span><span style="color:${st&&st.connected?'var(--ok)':'var(--warn)'};">${!st ? (state.reportGmail && state.reportGmail.unavailable ? 'not deployed yet' : 'checking…') : st.connected ? '✓ '+escHtml(st.email||'connected') : 'Not connected — sends from support@'}</span></div>`; }).join("")
+        : `<div class="small">No assistants are the main assistant on an active client yet.</div>`}
+      <div class="small" style="margin-top:4px;">Each assistant connects on their own Team tab (Connect my Gmail).</div>
+      <div class="section-label" style="margin-top:14px;font-size:11px;letter-spacing:1.5px;color:var(--rose-dark);font-weight:600;">Send a test</div>
+      <div class="row" style="align-items:flex-end;">
+        <div><label class="small">Client</label><select id="wr_test_client">${clientOpts.map(c=>`<option value="${c.id}">${escHtml(c.name)}</option>`).join("")}</select></div>
+        <div><label class="small">Send to (team emails only)</label><input type="email" id="wr_test_to" value="${escHtml(bccDefault)}"></div>
+        <div style="flex:0;"><button class="secondary" ${state.weeklyTestBusy?'disabled':''} onclick="sendWeeklyRecapTest()">${state.weeklyTestBusy?'Sending…':'Send test'}</button></div>
+      </div>
+      <div class="small" style="margin-top:4px;">Sends this week's recap exactly as the client would get it, but only to you. Doesn't count as sent.</div>
+      <div class="section-label" style="margin-top:14px;font-size:11px;letter-spacing:1.5px;color:var(--rose-dark);font-weight:600;">Last run</div>
+      ${!run ? `<div class="small">No automatic run yet.</div>` : run.disabled ? `<div class="small">${new Date(run.ranAt).toLocaleString()} — auto-send was off, nothing sent.</div>` : `
+        <div class="small" style="margin-bottom:4px;">${new Date(run.ranAt).toLocaleString()} · ${(run.results||[]).filter(r=>r.status==='sent').length} sent</div>
+        ${(run.results||[]).map(r=>`<div class="small" style="padding:2px 0;">${r.status==='sent' ? '✓' : r.status==='failed' ? '<span style="color:var(--danger);">✕</span>' : '–'} ${escHtml(r.clientName||'')} ${r.status==='sent' ? `<span style="color:#8a7a72;">from ${escHtml(r.sentFrom||'')}${(r.cc||[]).length?` · cc ${escHtml(r.cc.join(', '))}`:''}${r.bcc?` · bcc ${escHtml(r.bcc)}`:''}${r.receiptsAttached?` · ${r.receiptsAttached} receipt${r.receiptsAttached===1?'':'s'}`:''}${r.receiptsTooLarge?` · ${r.receiptsTooLarge} too large`:''}</span>` : `<span style="color:${r.status==='failed'?'var(--danger)':'#8a7a72'};">${escHtml(r.reason||'')}</span>`}</div>`).join("")}`}
+    </div>`;
 }
 // Team-member view of the Team tab: a contact list only. Deliberately reads
 // just name/email/phone off each assistant record — everything else on it
@@ -11436,6 +12251,7 @@ function renderTeamDirectory(){
         </label>
       </div>
     </div>` : ""}
+    ${state.currentAssistant ? renderMyReportGmailCard() : ""}
     <div class="small" style="margin-bottom:14px;">Contact info for everyone on the team.</div>
     <div class="card">
       ${people.length ? `
@@ -12431,10 +13247,10 @@ ${html}
 function appGuideHtml(){
   return `
     <p><strong>Dashboard</strong> — your homepage. Shows your open tasks, a live clock-in timer if you're currently working, and any overdue/upcoming reminders across your clients.</p>
-    <p><strong>Task Board</strong> — every task moves through 5 columns: To do → Researching → In progress → Pending approval → Done.</p>
+    <p><strong>Task Board</strong> — every task moves through these columns: To do → Researching → In progress → Paused → New client request → Needs Client Review → Done.</p>
     <ul>
       <li>Click any task card to open it — add subtasks, leave a comment for whoever else is assigned, or attach a file/photo.</li>
-      <li>"Pending approval" is used for tasks a client submitted themselves — accept or decline it from there.</li>
+      <li>"New client request" is for tasks a client submitted themselves — accept or decline it from there. "Needs Client Review" is the opposite: you finished something and the client needs to approve it.</li>
       <li>Completed tasks are hidden from the board by default now (there's a "Hide completed" checkbox at the top) so your board doesn't fill up forever — nothing is deleted, you can always click "Show them" to see history.</li>
       <li>Use "My tasks only" to filter to just what's assigned to you.</li>
     </ul>
@@ -12811,6 +13627,7 @@ function renderClientPortal(){
       </div>
       <div class="main">
         <h2>Welcome, ${client.name}</h2>
+        ${termEnd && isMembershipClient(client) ? `<div class="small" style="margin:-6px 0 12px;">Your current term ends <strong>${termEnd.toLocaleDateString()}</strong>${notice && noticeDays!==null && noticeDays>=0 ? ` · cancellation notice due by ${notice.toLocaleDateString()}` : ''}</div>` : ""}
         ${!client.orientationBookingDismissed ? `
         <div class="card" style="border-left:4px solid var(--rose-dark);">
           <div class="flex-between">
@@ -12875,10 +13692,10 @@ function renderClientPortal(){
           <h3>Service Agreement</h3>
           ${renderContractSectionBody(client)}
         </div>
-        ${isSigned && (client.assistantIds||[]).length ? `
+        ${isSigned && mainAssistantId(client) ? `
         <div class="card">
-          <h3>Your assistant${(client.assistantIds||[]).length>1?'s':''}</h3>
-          ${(client.assistantIds||[]).map(id=>{
+          <h3>Your assistant</h3>
+          ${[mainAssistantId(client)].map(id=>{
             const a = state.settings.assistants.find(x=>x.id===id);
             if(!a) return "";
             return `<div class="list-item">
@@ -12920,7 +13737,7 @@ function renderClientPortal(){
                   ${(t.subtasks||[]).length ? `<div class="small">${(t.subtasks||[]).length} subtasks</div>` : ""}
                 </div>
                 <div style="text-align:right;">
-                  <span class="small">${t.status}</span>
+                  <span class="small">${clientStatusLabel(t.status)}</span>
                   <div class="small">${hoursForTask(t.id).toFixed(1)} hrs logged</div>
                 </div>
               </div>
@@ -13068,7 +13885,11 @@ async function allocateTaskNumber(){
         // First run ever (counter doc doesn't exist yet): start from whatever
         // the highest existing task number already is, so it doesn't restart
         // at 1 and collide with real tasks already numbered well past that.
-        const current = snap.exists ? (snap.data().value || 0) : bestEffortTaskNumber() - 1;
+        // Never hand out a number at or below one this browser can already
+        // see — a past timeout fallback can have used numbers the shared
+        // counter never recorded, and re-issuing them is how duplicate
+        // task numbers happen.
+        const current = Math.max(snap.exists ? (snap.data().value || 0) : 0, bestEffortTaskNumber() - 1);
         const next = current + 1;
         tx.set(counterRef, { value: next }, { merge: true });
         return next;
@@ -13134,7 +13955,8 @@ function renderTaskClockControls(task){
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0;">
       ${clockBtn}
       <button class="secondary" onclick="openManualTimeEntry('${task.id}')">+ Log time manually</button>
-    </div>`;
+    </div>
+    ${myActive && myActive.taskId===task.id ? `<div style="margin-bottom:8px;">${renderDriveControls(myActive)}</div>` : ""}`;
 }
 function renderTaskTimeEntriesSection(task){
   if(!task.id || !state.tasks.find(t=>t.id===task.id)) return "";
@@ -13153,7 +13975,7 @@ function renderTaskTimeEntriesSection(task){
               <td>${assistantName(e.assistantId)}</td>
               <td>${new Date(e.clockIn).toLocaleString()}</td>
               <td>${e.clockOut ? new Date(e.clockOut).toLocaleString() : '<span class="small">still clocked in</span>'}</td>
-              <td>${entryDurationHours(e).toFixed(2)}${e.clockOutManual?' <span class="small">(manual)</span>':''}${e.flagged?' <span class="small" style="color:var(--danger);">⚑</span>':''}</td>
+              <td>${entryDurationHours(e).toFixed(2)}${e.clockOutManual?' <span class="small">(manual)</span>':''}${e.flagged?' <span class="small" style="color:var(--danger);">⚑</span>':''} ${driveBadge(e)}</td>
               <td style="white-space:nowrap;">${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" onclick="openTimeEntryEditor('${e.id}', true)">Edit</button>` : ""}</td>
             </tr>
             ${e.note ? `<tr><td colspan="5" class="small" style="padding-top:0;">&ldquo;${e.note}&rdquo;</td></tr>` : ""}
@@ -13197,7 +14019,7 @@ function renderTaskEditorModal(task){
         </div>
         <div><label class="small">Status</label>
           <select id="tf_status" onchange="state.modal.task.status=this.value;render();">
-            ${STATUSES.map(s=>`<option ${task.status===s?'selected':''}>${s}</option>`).join("")}
+            ${STATUSES.map(s=>`<option value="${s}" ${task.status===s?'selected':''}>${statusLabel(s)}</option>`).join("")}
           </select>
         </div>
         <div><label class="small">Due date (optional)</label><input type="date" id="tf_due" value="${task.dueDate||''}" onchange="state.modal.task.dueDate=this.value;if(state.modal.task.repeat)render();"></div>
@@ -13296,10 +14118,13 @@ function renderTaskEditorModal(task){
         </div>
       </div>
       ${renderTaskDiscussion(task, "tf_new_comment", `addTaskComment('${task.id}')`)}
-      <div style="margin-top:14px;display:flex;justify-content:space-between;">
+      <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
         <button class="danger" onclick="deleteTask('${task.id}')">Delete</button>
-        <div>
+        <div style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;">
           <button class="secondary" onclick="closeModal()">Cancel</button>
+          ${!state.tasks.find(t=>t.id===task.id) ? `
+          ${state.currentAssistant ? `<button class="secondary" onclick="saveTask('${task.id}','clockIn')">Save &amp; clock in</button>` : ""}
+          <button class="secondary" onclick="saveTask('${task.id}','logTime')">Save &amp; log time</button>` : ""}
           <button onclick="saveTask('${task.id}')">Save</button>
         </div>
       </div>
@@ -13632,7 +14457,9 @@ async function createNextRepeatTask(fromTask){
   });
   return { id, dueDate };
 }
-async function saveTask(taskId){
+// `then` is only passed from a brand-new task's "Save & clock in" / "Save &
+// log time" buttons, so time can be started the moment the task exists.
+async function saveTask(taskId, then){
   const task = state.modal.task;
   const assignees = task.assignees || [];
   const newStatus = task.status;
@@ -13762,6 +14589,14 @@ async function saveTask(taskId){
   }
   upsert("tasks", taskId, payload);
   closeModal();
+  // The new task may not be in state.tasks yet (Firestore snapshot lag), so
+  // pass its client along rather than letting clockIn() fall back to Internal.
+  if(then==="clockIn") clockIn(taskId, state.currentAssistant.id, "", payload.clientId);
+  else if(then==="logTime"){
+    openManualTimeEntry(taskId);
+    state.modal.justSavedTask = { id: taskId, title: payload.title, taskNumber: payload.taskNumber, clientId: payload.clientId };
+    render();
+  }
 }
 // A time entry should never be able to outlive the task it was clocked
 // into — that's exactly how orphaned entries happened before this: the
@@ -13801,12 +14636,7 @@ function renderClientEditorModal(client){
         </div>
       </div>
       <div style="margin-top:8px;">
-        <label class="small">Assigned assistants</label>
-        ${assignableAssistants(c.assistantIds).map(a=>`
-          <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;font-size:13px;">
-            <input type="checkbox" value="${a.id}" ${(c.assistantIds||[]).includes(a.id)?'checked':''} class="cf_assistant" onchange="toggleClientAssistantDraft('${a.id}',this.checked)"> ${a.name}${a.active===false?' (former)':''}
-          </label>
-        `).join("")}
+        ${assistantPickersHtml(c.assistantIds||[], "cf_asst", "setClientAssistantDraft()", "setClientAssistantDraft()")}
       </div>
       <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
         <button class="secondary" onclick="closeModal()">Cancel</button>
@@ -13880,7 +14710,7 @@ function updateManualEntryRow(rowId, field, value){
 }
 function renderManualTimeEntryModal(){
   const rows = state.modal.rows;
-  const fixedTask = state.modal.fixedTaskId ? state.tasks.find(t=>t.id===state.modal.fixedTaskId) : null;
+  const fixedTask = state.modal.fixedTaskId ? (state.tasks.find(t=>t.id===state.modal.fixedTaskId) || state.modal.justSavedTask) : null;
   return `
     <div class="modal">
       <h3>Log time manually</h3>
@@ -13921,7 +14751,7 @@ function renderManualTimeEntryModal(){
 }
 function saveManualTimeEntry(){
   const task = state.modal.fixedTaskId
-    ? state.tasks.find(t=>t.id===state.modal.fixedTaskId)
+    ? (state.tasks.find(t=>t.id===state.modal.fixedTaskId) || state.modal.justSavedTask)
     : resolveTaskFromSearch(document.getElementById("mte_task").value);
   const assistantId = state.role==='admin' ? state.modal.assistantId : state.currentAssistant.id;
   if(!task){ alert("Pick a task from the list first — search by its # or title."); return; }
@@ -13979,7 +14809,13 @@ function renderTimeEntryEditorModal(entry){
       <div style="margin-top:8px;">
         <label class="small">Flag reason (optional)</label>
         <input id="tef_flagnote" value="${(entry.flagNote||'').replace(/"/g,'&quot;')}">
-      </div>` : ""}
+      </div>
+      ${(()=>{ const cur = state.timeEntries.find(x=>x.id===entry.id) || entry;
+        const logged = cur.driveMiles!=null || (cur.driveStart && cur.driveEnd);
+        return `<div style="margin-top:10px;display:flex;align-items:center;gap:8px;">
+          <button class="secondary" style="padding:2px 8px;" onclick="openDriveMap('${entry.id}')">🚗 ${logged ? 'View / edit drive miles' : 'Add drive miles'}</button>
+          <span class="small">${cur.driveMiles!=null ? cur.driveMiles+' mi'+(cur.driveMilesManual?' (entered by admin)':'') : logged ? 'miles need review' : 'No drive logged'}</span>
+        </div>`; })()}` : ""}
       <div style="margin-top:14px;display:flex;justify-content:space-between;">
         <button class="danger" onclick="deleteTimeEntry('${entry.id}'); closeTimeModal();">Delete</button>
         <div>
@@ -14023,6 +14859,7 @@ function renderModal(){
     : state.modal.type==="idUploadGate" ? renderIdUploadGateModal(state.modal.assistant)
     : state.modal.type==="reassignClient" ? renderReassignModal(state.modal.client)
     : state.modal.type==="timeEntryEditor" ? renderTimeEntryEditorModal(state.modal.entry)
+    : state.modal.type==="driveMap" ? renderDriveMapModal()
     : state.modal.type==="appGuide" ? renderAppGuideModal(state.modal.assistant)
     : state.modal.type==="appGuideReadOnly" ? renderAppGuideReadOnlyModal()
     : state.modal.type==="policyBook" ? renderPolicyBookModal()

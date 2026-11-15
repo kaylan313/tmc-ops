@@ -21,7 +21,16 @@
 -->
 <div id="status"></div>
 <script>
-const ok = new URLSearchParams(location.search).get("ok") === "1";
+const params = new URLSearchParams(location.search);
+const ok = params.get("ok") === "1";
+if(params.get("for") === "reports"){
+  document.title = "Weekly Recaps";
+  document.getElementById("status").innerHTML = ok
+    ? '<span class="ok">✓ Gmail connected!</span><br>Your clients\' Friday recaps will now come from your email. You can close this tab and go back to the app.'
+    : params.get("reason") === "scopes"
+    ? '<span class="err">Gmail wasn\'t connected.</span><br>The "send email on your behalf" permission needs to stay checked on Google\'s screen — close this tab and click Connect again from the Team tab.'
+    : '<span class="err">Something went wrong connecting Gmail.</span><br>Close this tab and try again from the Team tab.';
+} else
 document.getElementById("status").innerHTML = ok
   ? '<span class="ok">✓ Email notifications connected!</span><br>You can close this tab and go back to the Scorecard.'
   : '<span class="err">Something went wrong connecting email notifications.</span><br>Close this tab and try again from the Scorecard tab.';
