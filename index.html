@@ -2632,6 +2632,23 @@ function markPeriodRecapSent(clientId, reportWindow){
 }
 
 // ---- 8f. Payroll report (per assistant, same branded format) ----
+// One-off amounts (Christmas bonus, etc.) Heidi can add per assistant per
+// pay period — blank unless she sets one, keyed by the period's start date
+// so switching the report period in renderPayrollTool naturally switches
+// which period's bonus is being edited/shown.
+function assistantBonusAmount(assistant, period){
+  const key = ymd(period.start);
+  const b = (assistant.bonuses||[]).find(x=>x.periodStart===key);
+  return b ? b.amount : 0;
+}
+function setAssistantBonus(assistantId, period, amount){
+  const assistant = state.settings.assistants.find(a=>a.id===assistantId);
+  if(!assistant) return;
+  const key = ymd(period.start);
+  const bonuses = (assistant.bonuses||[]).filter(b=>b.periodStart!==key);
+  if(amount>0) bonuses.push({ id:newId("bonus"), periodStart:key, amount });
+  updateAssistantField(assistantId, "bonuses", bonuses);
+}
 function buildPayrollReport(assistant, period){
   const entries = state.timeEntries.filter(e=>e.assistantId===assistant.id);
   const inPeriod = entries.filter(e => new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end);
@@ -2643,7 +2660,8 @@ function buildPayrollReport(assistant, period){
   });
   const byClient = Object.entries(byClientMap).map(([name,hours])=>({name,hours})).sort((a,b)=>b.hours-a.hours);
   const rate = assistant.hourlyRate || 0;
-  return { assistant, period, totalHours, byClient, rate, amountOwed: payrollAmountForAssistant(assistant, totalHours) };
+  const bonus = assistantBonusAmount(assistant, period);
+  return { assistant, period, totalHours, byClient, rate, bonus, amountOwed: payrollAmountForAssistant(assistant, totalHours) + bonus };
 }
 function payrollReportHtml(report){
   const { assistant, period, byClient } = report;
@@ -2715,6 +2733,11 @@ function payrollReportHtml(report){
 
       <div class="section-label">Hours By Client</div>
       ${byClient.length ? byClient.map(item).join("") : `<div class="item-body" style="margin-bottom:16px;">No hours logged this period.</div>`}
+      ${report.bonus>0 ? `
+      <div class="item" style="border-left-color:var(--rose-dark);">
+        <div class="item-label" style="color:var(--rose-dark);">🎁 BONUS</div>
+        <div class="item-body">$${report.bonus.toFixed(2)}</div>
+      </div>` : ""}
 
       <hr>
 
@@ -2724,7 +2747,7 @@ function payrollReportHtml(report){
         <div class="hours-row">
           <div class="hours-stat"><div class="num">${formatHoursMinutes(report.totalHours)}</div><div class="label">HOURS WORKED</div></div>
           <div class="hours-stat"><div class="num">$${(report.assistant.payType==="flat"?(report.assistant.flatRatePerPeriod||0):report.rate).toFixed(2)}</div><div class="label">${report.assistant.payType==="flat"?"FLAT RATE / PERIOD":"HOURLY RATE"}</div></div>
-          <div class="hours-stat"><div class="num">$${report.amountOwed.toFixed(2)}</div><div class="label">TOTAL PAY</div></div>
+          <div class="hours-stat"><div class="num">$${report.amountOwed.toFixed(2)}</div><div class="label">TOTAL PAY${report.bonus>0?' (INCL. BONUS)':''}</div></div>
         </div>
       </div>
     </div>
@@ -2753,7 +2776,8 @@ function payrollReportPlainText(report){
   lines.push("");
   lines.push("HOURS WORKED: " + formatHoursMinutes(report.totalHours));
   lines.push("HOURLY RATE: $" + report.rate.toFixed(2));
-  lines.push("TOTAL PAY: $" + report.amountOwed.toFixed(2));
+  if(report.bonus>0) lines.push("BONUS: $" + report.bonus.toFixed(2));
+  lines.push("TOTAL PAY: $" + report.amountOwed.toFixed(2) + (report.bonus>0?" (incl. bonus)":""));
   lines.push("");
   lines.push("Questions about your hours or pay this period, just ask.");
   lines.push("");
@@ -10501,12 +10525,15 @@ function renderPayrollTool(){
       </div>
       <div class="small" style="margin-bottom:12px;">Same branded format as the client weekly reports — download or email each assistant their hours/pay for the period selected above. Independent of the "Date range" filter in the table above, since reports only ever make sense for one pay period at a time. Add an email on the Team tab for anyone missing one below.</div>
       ${state.settings.assistants.filter(a=>a.active!==false).map(a=>{
-        const hrs = hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), resolvedPayrollReportPeriod());
+        const reportPeriod = resolvedPayrollReportPeriod();
+        const hrs = hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), reportPeriod);
+        const bonus = assistantBonusAmount(a, reportPeriod);
         return `
         <div class="list-item">
           <div>${a.name}${a.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span class="small">${hrs.toFixed(1)} hrs · $${payrollAmountForAssistant(a,hrs).toFixed(2)}</span>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <span class="small">${hrs.toFixed(1)} hrs · $${(payrollAmountForAssistant(a,hrs)+bonus).toFixed(2)}${bonus>0?' (incl. $'+bonus.toFixed(2)+' bonus)':''}</span>
+            <div><label class="small">Bonus $</label><input id="bonus_${a.id}" type="number" step="1" min="0" placeholder="0" value="${bonus||''}" onchange="setAssistantBonus('${a.id}', resolvedPayrollReportPeriod(), parseFloat(this.value)||0)" style="width:90px;"></div>
             <button class="secondary" onclick="downloadPayrollReport('${a.id}')">View</button>
             <button class="secondary" onclick="downloadPayrollReportFile('${a.id}')">Download</button>
             <button onclick="emailPayrollReport('${a.id}')">Email</button>
