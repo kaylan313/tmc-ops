@@ -11410,7 +11410,8 @@ function renderReportsTab(){
   // their own active-only derivation downstream), a cancelled client has no
   // business showing up in a list of reports to send out. Paused clients
   // still count as "active" here, same as the Clients tab's own grouping.
-  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.clientStatus!=="cancelled");
+  const search = (state.reportsSearch||"").trim().toLowerCase();
+  const realClients = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.clientStatus!=="cancelled" && (!search || (c.name||"").toLowerCase().includes(search)));
   const rows = realClients.map(client=>{
     const weekReport = buildClientReport(client, week, "week");
     const periodWindow = currentBillingPeriod(client);
@@ -11420,7 +11421,7 @@ function renderReportsTab(){
     return { client, weekReport, periodReport, lastPeriodReport };
   });
   return `
-    <div class="flex-between">
+    <div class="flex-between" style="flex-wrap:wrap;gap:8px;">
       <h2>Reports</h2>
       <span class="small">Week of ${formatPeriodRange(week)}</span>
     </div>
@@ -11433,8 +11434,9 @@ function renderReportsTab(){
       the pasted message already includes a working link to the formatted report (receipts included automatically, if this
       client has that turned on below). "View" just lets you preview it first — nothing to download or attach, ever.
     </div>
+    <input id="reportsSearch" type="text" placeholder="Search clients..." value="${escHtml(state.reportsSearch||'')}" oninput="state.reportsSearch=this.value;render();" style="margin-bottom:12px;max-width:320px;">
     <div class="card">
-      ${rows.length===0 ? `<div class="small">No clients yet.</div>` : rows.map(({client, weekReport, periodReport, lastPeriodReport})=>`
+      ${rows.length===0 ? `<div class="small">${search ? `No clients matching "${escHtml(state.reportsSearch)}".` : "No clients yet."}</div>` : rows.map(({client, weekReport, periodReport, lastPeriodReport})=>`
         <div class="list-item" style="flex-direction:column;align-items:stretch;gap:10px;">
           <div class="flex-between">
             <strong>${client.name}</strong>
