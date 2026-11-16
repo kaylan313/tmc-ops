@@ -3767,6 +3767,19 @@ function toggleTheme(){
   try { localStorage.setItem("tmcTheme", dark ? "dark" : "light"); } catch(e){}
   render();
 }
+// Groups default to open/closed based on whether the active tab lives in
+// them (so navigating there from elsewhere — a dashboard stat tile, a link
+// — never lands you looking at a collapsed group), until explicitly
+// toggled, which then sticks regardless of what's active.
+function isNavGroupOpen(group){
+  const explicit = state.navGroupsOpen && state.navGroupsOpen[group.label];
+  if(explicit!==undefined) return explicit;
+  return group.tabs.some(([key])=>key===state.activeTab);
+}
+function toggleNavGroup(label, currentlyOpen){
+  state.navGroupsOpen = { ...(state.navGroupsOpen||{}), [label]: !currentlyOpen };
+  render();
+}
 function renderAppShell(){
   const isContentCreator = state.role==="team" && state.currentAssistant && state.currentAssistant.isContentCreator;
   // Admin's own list grouped into sections — 17 same-level items in one flat
@@ -3799,10 +3812,16 @@ function renderAppShell(){
           <button class="theme-toggle" onclick="toggleTheme()">${isDarkTheme() ? '☀ Light mode' : '☾ Dark mode'}</button>
         </div>
         <div class="nav-links">
-          ${tabGroups.map(g=>`
-            ${g.label ? `<div class="nav-group-label">${g.label}</div>` : ""}
-            ${g.tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("")}
-          `).join("")}
+          ${tabGroups.map(g=>{
+            if(!g.label) return g.tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("");
+            const open = isNavGroupOpen(g);
+            return `
+              <div class="nav-group-label" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onclick="toggleNavGroup('${g.label}',${open})">
+                <span>${g.label}</span><span style="font-size:11px;">${open?'▾':'▸'}</span>
+              </div>
+              ${open ? g.tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("") : ""}
+            `;
+          }).join("")}
         </div>
       </div>
       <div class="main" id="main">
@@ -5839,7 +5858,7 @@ function renderVendorsTab(){
     <div class="card">
       <div class="flex-between">
         <h3 style="margin:0;">Vendor Directory</h3>
-        ${isAdmin ? `<button onclick="addVendorDirectoryEntry()">+ Add vendor</button>` : ""}
+        ${isAdmin ? `<button onclick="addVendorDirectoryEntry()">+ Add vendor</button>` : `<button onclick="openSuggestVendorModal()">+ Suggest a vendor</button>`}
       </div>
       ${vendors.length ? vendors.map(v=>renderVendorRow(v,isAdmin)).join("") : `<div class="small">No vendors added yet.</div>`}
     </div>
@@ -5848,8 +5867,14 @@ function renderVendorsTab(){
 function renderVendorRow(v, isAdmin){
   const earnings = v.earnings || [];
   const vendorTotal = earnings.reduce((s,e)=>s+(e.commissionAmount||0),0);
+  const pending = v.approved===false;
   return `
-    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;${pending?'border-left:3px solid var(--warn);padding-left:8px;':''}">
+      ${pending ? `
+      <div class="flex-between" style="align-items:center;">
+        <span class="alert warn" style="margin:0;">⏳ Suggested by ${escHtml(v.suggestedByName||'a team member')}${v.createdDate?' · '+parseYMD(v.createdDate).toLocaleDateString():''} — awaiting admin approval</span>
+        ${isAdmin ? `<div style="display:flex;gap:6px;"><button onclick="approveVendorSuggestion('${v.id}')">Approve</button><button class="danger" onclick="rejectVendorSuggestion('${v.id}')">Reject</button></div>` : ""}
+      </div>` : ""}
       <div class="row">
         <div><label class="small">Name</label>${isAdmin ? `<input id="vd_name_${v.id}" value="${escHtml(v.name||'')}" onchange="updateVendorDirectoryField('${v.id}','name',this.value)">` : `<div>${escHtml(v.name||'')}</div>`}</div>
         <div><label class="small">Profession</label>${isAdmin ? `<input id="vd_profession_${v.id}" value="${escHtml(v.profession||'')}" onchange="updateVendorDirectoryField('${v.id}','profession',this.value)" placeholder="Electrician, photographer, caterer, etc.">` : `<div>${escHtml(v.profession||'')}</div>`}</div>
@@ -5914,6 +5939,65 @@ function addVendorDirectoryEntry(){
 function updateVendorDirectoryField(id, field, value){ upsert("vendors", id, { [field]: value }); }
 function removeVendorDirectoryEntry(id){
   if(!confirm("Remove this vendor from the directory? This also deletes its commission/earnings history.")) return;
+  remove("vendors", id);
+}
+// A team-submitted vendor isn't usable anywhere client-facing until admin
+// approves it — the new vendor request modal already only offers vendors
+// with a portal code, which admin is the only one who can set, so this
+// mainly keeps an unvetted suggestion out of the directory's normal list
+// feel until someone's looked at it. Missing `approved` (every vendor
+// before this existed) reads as approved, same as other flags in this file.
+function openSuggestVendorModal(){
+  state.modal = { type:"suggestVendor", draft:{ name:"", profession:"", market:"", phone:"", email:"", notes:"" } };
+  render();
+}
+function renderSuggestVendorModal(){
+  const d = state.modal.draft;
+  return `
+    <div class="modal">
+      <h3>Suggest a vendor</h3>
+      <div class="small" style="margin-bottom:10px;">Goes to admin to review before it's usable for client requests.</div>
+      <div class="row">
+        <div><label class="small">Name</label><input id="sv_name" value="${escHtml(d.name)}" oninput="state.modal.draft.name=this.value"></div>
+        <div><label class="small">Profession</label><input id="sv_profession" value="${escHtml(d.profession)}" oninput="state.modal.draft.profession=this.value" placeholder="Electrician, photographer, caterer, etc."></div>
+      </div>
+      <div class="row">
+        <div><label class="small">Market</label>
+          <select onchange="state.modal.draft.market=this.value">
+            <option value="">Any</option>
+            ${MARKETS.map(m=>`<option value="${m}" ${d.market===m?'selected':''}>${m}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">Phone</label><input id="sv_phone" value="${escHtml(d.phone)}" oninput="state.modal.draft.phone=this.value"></div>
+        <div><label class="small">Email</label><input id="sv_email" type="email" value="${escHtml(d.email)}" oninput="state.modal.draft.email=this.value"></div>
+      </div>
+      <div style="margin-top:8px;"><label class="small">Notes</label><textarea id="sv_notes" oninput="state.modal.draft.notes=this.value" placeholder="Why you'd recommend them, how you found them, etc.">${escHtml(d.notes)}</textarea></div>
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="saveSuggestedVendor()">Submit for approval</button>
+      </div>
+    </div>
+  `;
+}
+function saveSuggestedVendor(){
+  const d = state.modal.draft;
+  if(!(d.name||"").trim()){ alert("Name is required."); return; }
+  const vendor = {
+    id: newId("vendor"),
+    name: d.name.trim(), profession: (d.profession||"").trim(), market: d.market||"",
+    phone: (d.phone||"").trim(), email: (d.email||"").trim(), rating: null, notes: (d.notes||"").trim(),
+    commissionPercent: null, earnings: [],
+    approved: false,
+    suggestedByAssistantId: state.currentAssistant ? state.currentAssistant.id : null,
+    suggestedByName: state.currentAssistant ? state.currentAssistant.name : "",
+    createdDate: new Date().toISOString().slice(0,10)
+  };
+  upsert("vendors", vendor.id, vendor);
+  closeModal();
+}
+function approveVendorSuggestion(id){ updateVendorDirectoryField(id, "approved", true); }
+function rejectVendorSuggestion(id){
+  if(!confirm("Reject this vendor suggestion? It'll be removed completely.")) return;
   remove("vendors", id);
 }
 // Commission is computed from the vendor's set % as a starting point but
@@ -14888,6 +14972,7 @@ function renderModal(){
     : state.modal.type==="supportTicketDetail" ? renderSupportTicketDetailModal(state.modal.ticketId)
     : state.modal.type==="weeklyRecapPrompt" ? renderWeeklyRecapPromptModal()
     : state.modal.type==="weeklyTaskReview" ? renderWeeklyTaskReviewModal()
+    : state.modal.type==="suggestVendor" ? renderSuggestVendorModal()
     : "";
   const NON_DISMISSABLE_MODALS = ["changeCodeGate","waitingOnRateGate","agreementGate","handbookGate","idUploadGate","appGuide","weeklyTaskReview"];
   const dismissable = !NON_DISMISSABLE_MODALS.includes(state.modal.type);
