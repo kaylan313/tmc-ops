@@ -3105,7 +3105,7 @@ function upcomingReminders(windowDays){
   windowDays = windowDays || 14;
   const now = new Date();
   const results = [];
-  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).forEach(client=>{
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.clientStatus!=="cancelled").forEach(client=>{
     (client.specialDates||[]).forEach(d=>{
       const next = nextYearlyOccurrence(d.date, now);
       if(!next) return;
