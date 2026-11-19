@@ -2669,6 +2669,44 @@ function setAssistantBonus(assistantId, period, amount){
   if(amount>0) bonuses.push({ id:newId("bonus"), periodStart:key, amount });
   updateAssistantField(assistantId, "bonuses", bonuses);
 }
+// Build pay and maintenance/stipend pay used to only ever show up in the
+// admin payroll table (buildPayForAssistantInPeriod/maintenancePayFor...
+// totals), never in the assistant's OWN emailed/viewed report — so Hannah
+// had no way to tell how much of her pay was hourly versus build work.
+// Itemized (not just a total) so each client/build shows as its own line,
+// same idea as Hours By Client.
+function buildPayItemsForAssistant(assistantId, period){
+  const items = [];
+  state.clients.forEach(client=>{
+    (client.addOns||[]).forEach(a=>{
+      if(a.buildAssistantId!==assistantId) return;
+      (a.payments||[]).forEach(p=>{
+        if(!p.paid || !p.paidDate) return;
+        const paidAt = new Date(p.paidDate);
+        if(paidAt < period.start || paidAt >= period.end) return;
+        const cut = buildAssistantCut(a, p);
+        if(cut>0) items.push({ client: client.name||"Client", label: (a.label||a.category||"Build") + " — " + (p.label||"payment"), amount: cut });
+      });
+    });
+  });
+  return items;
+}
+function maintenancePayItemsForAssistant(assistantId, period){
+  const items = [];
+  state.clients.forEach(client=>{
+    (client.addOns||[]).forEach(a=>{
+      if(a.maintenanceAssistantId!==assistantId) return;
+      (a.maintenancePayments||[]).forEach(p=>{
+        if(!p.paid || !p.paidDate) return;
+        const paidAt = new Date(p.paidDate);
+        if(paidAt < period.start || paidAt >= period.end) return;
+        const cut = maintenanceAssistantCut(a, p);
+        if(cut>0) items.push({ client: client.name||"Client", label: a.noChargeMaintenanceStipend ? "Stipend" : "Maintenance", amount: cut });
+      });
+    });
+  });
+  return items;
+}
 function buildPayrollReport(assistant, period){
   const entries = state.timeEntries.filter(e=>e.assistantId===assistant.id);
   const inPeriod = entries.filter(e => new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end);
@@ -2681,7 +2719,12 @@ function buildPayrollReport(assistant, period){
   const byClient = Object.entries(byClientMap).map(([name,hours])=>({name,hours})).sort((a,b)=>b.hours-a.hours);
   const rate = assistant.hourlyRate || 0;
   const bonus = assistantBonusAmount(assistant, period);
-  return { assistant, period, totalHours, byClient, rate, bonus, amountOwed: payrollAmountForAssistant(assistant, totalHours) + bonus };
+  const buildItems = buildPayItemsForAssistant(assistant.id, period);
+  const maintenanceItems = maintenancePayItemsForAssistant(assistant.id, period);
+  const buildPay = Math.round(buildItems.reduce((s,i)=>s+i.amount,0)*100)/100;
+  const maintenancePay = Math.round(maintenanceItems.reduce((s,i)=>s+i.amount,0)*100)/100;
+  return { assistant, period, totalHours, byClient, rate, bonus, buildItems, maintenanceItems, buildPay, maintenancePay,
+    amountOwed: payrollAmountForAssistant(assistant, totalHours) + bonus + buildPay + maintenancePay };
 }
 function payrollReportHtml(report){
   const { assistant, period, byClient } = report;
@@ -2753,6 +2796,21 @@ function payrollReportHtml(report){
 
       <div class="section-label">Hours By Client</div>
       ${byClient.length ? byClient.map(item).join("") : `<div class="item-body" style="margin-bottom:16px;">No hours logged this period.</div>`}
+
+      ${(report.buildItems.length || report.maintenanceItems.length) ? `
+      <div class="section-label">Build &amp; Maintenance Pay</div>
+      ${report.buildItems.map(i=>`
+      <div class="item">
+        <div class="item-label">${escHtml(i.client.toUpperCase())}</div>
+        <div class="item-body">${escHtml(i.label)} — $${i.amount.toFixed(2)}</div>
+      </div>`).join("")}
+      ${report.maintenanceItems.map(i=>`
+      <div class="item">
+        <div class="item-label">${escHtml(i.client.toUpperCase())}</div>
+        <div class="item-body">${escHtml(i.label)} — $${i.amount.toFixed(2)}</div>
+      </div>`).join("")}
+      ` : ""}
+
       ${report.bonus>0 ? `
       <div class="item" style="border-left-color:var(--rose-dark);">
         <div class="item-label" style="color:var(--rose-dark);">🎁 BONUS</div>
@@ -2767,9 +2825,10 @@ function payrollReportHtml(report){
         <div class="hours-row">
           <div class="hours-stat"><div class="num">${formatHoursMinutes(report.totalHours)}</div><div class="label">HOURS WORKED</div></div>
           <div class="hours-stat"><div class="num">$${(report.assistant.payType==="flat"?(report.assistant.flatRatePerPeriod||0):report.rate).toFixed(2)}</div><div class="label">${report.assistant.payType==="flat"?"FLAT RATE / PERIOD":"HOURLY RATE"}</div></div>
-          <div class="hours-stat"><div class="num">$${report.amountOwed.toFixed(2)}</div><div class="label">TOTAL PAY${report.bonus>0?' (INCL. BONUS)':''}</div></div>
+          <div class="hours-stat"><div class="num">$${report.amountOwed.toFixed(2)}</div><div class="label">TOTAL PAY</div></div>
         </div>
       </div>
+      ${(report.buildPay>0 || report.maintenancePay>0 || report.bonus>0) ? `<div class="item-hours" style="margin-top:10px;">Includes${report.buildPay>0?` $${report.buildPay.toFixed(2)} build pay`:''}${report.maintenancePay>0?`${report.buildPay>0?',':''} $${report.maintenancePay.toFixed(2)} maintenance/stipend pay`:''}${report.bonus>0?`${(report.buildPay>0||report.maintenancePay>0)?' and':''} $${report.bonus.toFixed(2)} bonus`:''}, on top of hourly pay.</div>` : ""}
     </div>
     <div class="closing">
       <p>Questions about your hours or pay this period, just ask.</p>
@@ -2794,10 +2853,18 @@ function payrollReportPlainText(report){
   lines.push("HOURS BY CLIENT:");
   lines.push(...(byClient.length ? byClient.map(c=>"- "+c.name+": "+formatHoursMinutes(c.hours)) : ["(no hours logged this period)"]));
   lines.push("");
+  if(report.buildItems.length || report.maintenanceItems.length){
+    lines.push("BUILD & MAINTENANCE PAY:");
+    lines.push(...report.buildItems.map(i=>"- "+i.client+" — "+i.label+": $"+i.amount.toFixed(2)));
+    lines.push(...report.maintenanceItems.map(i=>"- "+i.client+" — "+i.label+": $"+i.amount.toFixed(2)));
+    lines.push("");
+  }
   lines.push("HOURS WORKED: " + formatHoursMinutes(report.totalHours));
   lines.push("HOURLY RATE: $" + report.rate.toFixed(2));
+  if(report.buildPay>0) lines.push("BUILD PAY: $" + report.buildPay.toFixed(2));
+  if(report.maintenancePay>0) lines.push("MAINTENANCE/STIPEND PAY: $" + report.maintenancePay.toFixed(2));
   if(report.bonus>0) lines.push("BONUS: $" + report.bonus.toFixed(2));
-  lines.push("TOTAL PAY: $" + report.amountOwed.toFixed(2) + (report.bonus>0?" (incl. bonus)":""));
+  lines.push("TOTAL PAY: $" + report.amountOwed.toFixed(2));
   lines.push("");
   lines.push("Questions about your hours or pay this period, just ask.");
   lines.push("");
@@ -4650,7 +4717,7 @@ function maintenanceFeesDue(){
   const todayYM = today.slice(0,7);
   const rows = [];
   allClientAddOns().forEach(({client,addOn})=>{
-    if(addOn.status!=="Active" || !(addOn.monthlyMaintenance>0) || addOn.maintenanceActive===false) return;
+    if(addOn.status!=="Active" || !(addOn.monthlyMaintenance>0 || addOn.noChargeMaintenanceStipend) || addOn.maintenanceActive===false) return;
     const monthRows = (addOn.maintenancePayments||[]).filter(p=>p.month && !p.dueDate);
     if(addOn.maintenanceStartDate){
       // Old monthly rows left unpaid still need collecting.
@@ -9811,6 +9878,13 @@ function renderClientAddOnsSection(client){
   `;
 }
 function renderAddOnRow(clientId, a){
+  // Nathan's build (Nov 2026): no separate maintenance charge to the
+  // client at all — instead a fixed amount goes to the assistant each
+  // cycle, funded out of his existing membership fee. One-off by design
+  // (Kaylan: "this is the only time we will do this"), so it's a flag on
+  // top of the normal maintenance fields rather than a new system —
+  // maintActive covers both "normal $X/mo billed to client" and this.
+  const maintActive = a.monthlyMaintenance>0 || a.noChargeMaintenanceStipend;
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
       <div class="row">
@@ -9834,13 +9908,17 @@ function renderAddOnRow(clientId, a){
       <div class="row">
         <div><label class="small">Flat fee ($)</label><input id="addon_fee_${a.id}" type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
         <div><label class="small">Monthly maintenance ($)</label><input id="addon_maint_${a.id}" type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
-        ${a.monthlyMaintenance>0 ? `<div><label class="small">First maintenance fee due</label><input type="date" value="${a.maintenanceStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceStartDate',this.value)" title="Due on this date, then every 30 days after"></div>` : ""}
+        ${maintActive ? `<div><label class="small">First ${a.noChargeMaintenanceStipend?'stipend':'maintenance fee'} due</label><input type="date" value="${a.maintenanceStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceStartDate',this.value)" title="Due on this date, then every 30 days after"></div>` : ""}
         <div><label class="small">Date added</label><input type="date" value="${a.addedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','addedDate',this.value)"></div>
       </div>
-      ${a.monthlyMaintenance>0 ? `
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Rare — only for a build like Nathan's where maintenance is funded out of an existing membership fee instead of billed separately.">
+        <input type="checkbox" ${a.noChargeMaintenanceStipend?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','noChargeMaintenanceStipend',this.checked)">
+        No charge to the client — pay the assistant a fixed amount instead (funded from an existing fee)
+      </label>
+      ${maintActive ? `
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
         <input type="checkbox" ${a.maintenanceActive!==false?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','maintenanceActive',this.checked)">
-        Monthly maintenance currently active/billing
+        ${a.noChargeMaintenanceStipend?'Stipend':'Monthly maintenance'} currently active/billing
       </label>` : ""}
       <div><label class="small">Notes</label><textarea id="addon_notes_${a.id}" onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
@@ -9864,23 +9942,26 @@ function renderAddOnRow(clientId, a){
         ${(a.payments&&a.payments.length) ? renderAddOnPhases(clientId, a) : `
           <div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>
         `}
-        ${a.monthlyMaintenance>0 ? (()=>{
+        ${maintActive ? (()=>{
           const due = maintenanceFeesDue().find(r=>r.addOn.id===a.id);
+          const label = a.noChargeMaintenanceStipend ? `No charge to client — $${a.maintenanceAssistantFixedAmount||0} to ${assistantName(a.maintenanceAssistantId)||'(pick an assistant below)'}` : `$${a.monthlyMaintenance}`;
           return `<div class="list-item" style="margin-top:8px;">
-            <div><strong>Monthly fee</strong> — $${a.monthlyMaintenance} ${a.maintenanceStartDate?'every 30 days':'/mo'}${a.maintenanceActive===false?' (paused)':''}
+            <div><strong>${a.noChargeMaintenanceStipend?'Stipend':'Monthly fee'}</strong> — ${label} ${a.maintenanceStartDate?'every 30 days':'/mo'}${a.maintenanceActive===false?' (paused)':''}
               <div class="small" ${due&&due.overdue?'style="color:var(--danger);font-weight:600;"':''}>${due ? formatMaintenanceKey(due.key)+(due.overdue?' — overdue, still unpaid':' — unpaid') : 'Paid up ✓'}${!due && nextMaintenanceDueDate(a) ? ' · next due '+parseYMD(nextMaintenanceDueDate(a)).toLocaleDateString() : ''}</div>
-              ${!a.maintenanceStartDate ? `<div class="small" style="color:var(--rose-dark);">Set "First maintenance fee due" above to bill every 30 days from that date (until then it's due on the 1st of each month).</div>` : ""}
+              ${!a.maintenanceStartDate ? `<div class="small" style="color:var(--rose-dark);">Set "First ${a.noChargeMaintenanceStipend?'stipend':'maintenance fee'} due" above to bill every 30 days from that date (until then it's due on the 1st of each month).</div>` : ""}
             </div>
             ${due ? `<button class="secondary" onclick="markMaintenanceFeePaid('${clientId}','${a.id}','${due.key}')">Mark paid</button>` : ""}
           </div>`;
         })() : ""}
       </div>
       <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
-        <label class="small" style="font-weight:600;">Recurring Monthly Maintenance — Assistant Split</label>
-        <div class="small" style="margin-bottom:6px;">${a.monthlyMaintenance>0
-          ? `$${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}. The assigned assistant gets their % of each month's fee once that month is marked paid — it's added to their next regular paycheck automatically, listed separately from build pay.`
-          : `Set a monthly maintenance amount above to track recurring maintenance payments and the assistant's split.`}</div>
-        ${a.monthlyMaintenance>0 ? `
+        <label class="small" style="font-weight:600;">Recurring ${a.noChargeMaintenanceStipend?'Stipend':'Monthly Maintenance'} — Assistant Split</label>
+        <div class="small" style="margin-bottom:6px;">${maintActive
+          ? (a.noChargeMaintenanceStipend
+            ? `No charge to the client — the assigned assistant gets the fixed amount below once each cycle is marked paid, added to their next regular paycheck, listed separately from build pay.`
+            : `$${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}. The assigned assistant gets their % of each month's fee once that month is marked paid — it's added to their next regular paycheck automatically, listed separately from build pay.`)
+          : `Set a monthly maintenance amount above (or check "No charge to the client") to track recurring payments and the assistant's split.`}</div>
+        ${maintActive ? `
         <div class="row">
           <div><label class="small">Maintaining assistant</label>
             <select onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantId',this.value||null)">
@@ -9888,7 +9969,9 @@ function renderAddOnRow(clientId, a){
               ${state.settings.assistants.filter(x=>x.active!==false).map(x=>`<option value="${x.id}" ${a.maintenanceAssistantId===x.id?'selected':''}>${x.name}</option>`).join("")}
             </select>
           </div>
-          <div><label class="small">Their %</label><input id="addon_maintpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.maintenanceAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
+          ${a.noChargeMaintenanceStipend
+            ? `<div><label class="small">Fixed amount per cycle ($)</label><input id="addon_maintfixed_${a.id}" type="number" step="1" min="0" value="${a.maintenanceAssistantFixedAmount||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantFixedAmount',parseFloat(this.value)||0)" style="max-width:120px;"></div>`
+            : `<div><label class="small">Their %</label><input id="addon_maintpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.maintenanceAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>`}
         </div>
         ${(a.maintenancePayments||[]).slice().sort((x,y)=> (y.dueDate||y.month||'') < (x.dueDate||x.month||'') ? -1 : 1).map(p=>renderMaintenancePaymentRow(clientId,a,p)).join("")}
         <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add ${a.maintenanceStartDate?'payment':'month'}</button></div>` : ""}
@@ -10331,7 +10414,11 @@ function updateAddOnField(clientId, addOnId, field, value){
 // actually collected (same rule as build pay), in the payroll period it
 // was marked paid.
 function maintenanceAssistantCut(addOn, payment){
-  if(!addOn.maintenanceAssistantId || !addOn.maintenanceAssistantPercent) return 0;
+  if(!addOn.maintenanceAssistantId) return 0;
+  // No-charge stipend (Nathan's build): a fixed amount regardless of what's
+  // billed to the client (nothing), not a % of a payment amount.
+  if(addOn.noChargeMaintenanceStipend) return addOn.maintenanceAssistantFixedAmount||0;
+  if(!addOn.maintenanceAssistantPercent) return 0;
   return Math.round((payment.amount||0) * (addOn.maintenanceAssistantPercent/100) * 100) / 100;
 }
 function formatMaintenanceMonth(ym){
@@ -10368,12 +10455,13 @@ function addMaintenancePayment(clientId, addOnId){
   updateAddOnMaintenancePayments(clientId, addOnId, (list, a)=>{
     // 30-day builds: the next cycle due date after the latest one logged
     // (or the first unlogged cycle from the start date).
+    const defaultAmount = a.noChargeMaintenanceStipend ? (a.maintenanceAssistantFixedAmount||0) : (a.monthlyMaintenance||0);
     if(a.maintenanceStartDate){
       const logged = new Set(list.map(p=>p.dueDate).filter(Boolean));
       const latest = [...logged].sort().pop();
       let d = a.maintenanceStartDate;
       while((latest && d <= latest) || logged.has(d)) d = addDaysYMD(d, MAINT_CYCLE_DAYS);
-      return [...list, { id:newId("maintpay"), dueDate:d, amount:a.monthlyMaintenance||0, paid:false, paidDate:"" }];
+      return [...list, { id:newId("maintpay"), dueDate:d, amount:defaultAmount, paid:false, paidDate:"" }];
     }
     const latest = list.map(p=>p.month).filter(Boolean).sort().pop();
     let month = new Date().toISOString().slice(0,7);
@@ -10381,7 +10469,7 @@ function addMaintenancePayment(clientId, addOnId){
       const [y,m] = latest.split("-").map(Number);
       month = new Date(y, m, 1).getFullYear() + "-" + String(new Date(y, m, 1).getMonth()+1).padStart(2,"0");
     }
-    return [...list, { id:newId("maintpay"), month, amount:a.monthlyMaintenance||0, paid:false, paidDate:"" }];
+    return [...list, { id:newId("maintpay"), month, amount:defaultAmount, paid:false, paidDate:"" }];
   });
 }
 function updateMaintenancePaymentField(clientId, addOnId, paymentId, field, value){
@@ -11189,13 +11277,17 @@ function renderPayrollTool(){
       <div class="small" style="margin-bottom:12px;">Same branded format as the client weekly reports — download or email each assistant their hours/pay for the period selected above. Independent of the "Date range" filter in the table above, since reports only ever make sense for one pay period at a time. Add an email on the Team tab for anyone missing one below.</div>
       ${state.settings.assistants.filter(a=>a.active!==false).map(a=>{
         const reportPeriod = resolvedPayrollReportPeriod();
-        const hrs = hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), reportPeriod);
-        const bonus = assistantBonusAmount(a, reportPeriod);
+        const report = buildPayrollReport(a, reportPeriod);
+        const bonus = report.bonus;
+        const extras = [];
+        if(report.buildPay>0) extras.push('$'+report.buildPay.toFixed(2)+' build');
+        if(report.maintenancePay>0) extras.push('$'+report.maintenancePay.toFixed(2)+' maint.');
+        if(bonus>0) extras.push('$'+bonus.toFixed(2)+' bonus');
         return `
         <div class="list-item">
           <div>${a.name}${a.email ? "" : ' · <span style="color:var(--danger);">no email on file</span>'}</div>
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-            <span class="small">${hrs.toFixed(1)} hrs · $${(payrollAmountForAssistant(a,hrs)+bonus).toFixed(2)}${bonus>0?' (incl. $'+bonus.toFixed(2)+' bonus)':''}</span>
+            <span class="small">${report.totalHours.toFixed(1)} hrs · $${report.amountOwed.toFixed(2)}${extras.length?' (incl. '+extras.join(', ')+')':''}</span>
             <div><label class="small">Bonus $</label><input id="bonus_${a.id}" type="number" step="1" min="0" placeholder="0" value="${bonus||''}" onchange="setAssistantBonus('${a.id}', resolvedPayrollReportPeriod(), parseFloat(this.value)||0)" style="width:90px;"></div>
             <button class="secondary" onclick="downloadPayrollReport('${a.id}')">View</button>
             <button class="secondary" onclick="downloadPayrollReportFile('${a.id}')">Download</button>
