@@ -4172,7 +4172,12 @@ function renderAppShell(){
   `;
 }
 function toggleMobileNav(){ state.mobileNavOpen = !state.mobileNavOpen; render(); }
-function setTab(t){ state.activeTab = t; state.selectedClientId=null; state.mobileNavOpen=false; render(); }
+function setTab(t){
+  // Fresh visit to Scorecard re-captures once (see the bug note on
+  // ensureCurrentScorecardSnapshot) — not on every render while already there.
+  if(t==="scorecard" && state.activeTab!=="scorecard"){ scorecardSnapshotEnsuredThisVisit = false; scorecardPeriodSnapshotEnsuredThisVisit = false; }
+  state.activeTab = t; state.selectedClientId=null; state.mobileNavOpen=false; render();
+}
 
 function renderMain(){
   switch(state.activeTab){
@@ -5422,7 +5427,20 @@ const SCORECARD_METRIC_DEFS = [
 // Silent — no button, no confirmation. Called every time the Scorecard tab
 // renders; a no-op if this week's row is already the newest one, otherwise
 // creates or refreshes it with current live numbers.
+// BUG (found Nov 2026 — this was the real cause of "the whole Scorecard
+// page is frozen/laggy"): this used to write unconditionally on every
+// single render. Since the write stamps capturedAt with a fresh
+// timestamp every time, it's never identical to the last write, so the
+// settings listener firing from the writer's OWN change triggers a
+// re-render, which calls this again, which writes again — an infinite
+// write/render loop, as fast as Firestore can round-trip, the entire time
+// this tab is open. Now only writes once per actual visit (reset in
+// setTab when navigating TO the tab), not once per render while sitting
+// on it.
+let scorecardSnapshotEnsuredThisVisit = false;
 function ensureCurrentScorecardSnapshot(){
+  if(scorecardSnapshotEnsuredThisVisit) return;
+  scorecardSnapshotEnsuredThisVisit = true;
   const weekStart = scorecardWeekStart();
   const metrics = computeScorecardMetrics();
   const history = state.settings.scorecardHistory || [];
@@ -5445,7 +5463,10 @@ function ensureCurrentScorecardSnapshot(){
 // regardless of cadence); this just files a second copy of it under a
 // period key instead of a week key, so the two tables can each show their
 // own natural cadence from the same underlying numbers.
+let scorecardPeriodSnapshotEnsuredThisVisit = false;
 function ensureCurrentScorecardPeriodSnapshot(){
+  if(scorecardPeriodSnapshotEnsuredThisVisit) return;
+  scorecardPeriodSnapshotEnsuredThisVisit = true;
   const period = currentPayrollPeriod();
   const periodStart = period.start.toISOString().slice(0,10);
   const metrics = computeScorecardMetrics();
