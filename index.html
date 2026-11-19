@@ -902,7 +902,7 @@ function seedPreviewData(){
   const demoPipeline = [
     { id:"demo_preview_1", businessName:"Bayou Bakery Co.", contactName:"Riley Baker", email:"riley@example.com", phone:"555-200-1111", clientId:"", projectType:"Website Build", stage:"Demo scheduled", source:"Instagram", estimatedValue:3500, demoDate: daysFromNow(1), demoTime:"14:00", demoLink:"https://meet.example.com/abc", nextFollowUpDate: daysFromNow(0), nextStep:"Confirm demo time", notes:"Wants online ordering.", createdDate: daysFromNow(-6), activity:[{ id:"dact_p1", date: hoursAgo(140), type:"Stage", text:"Added as New lead", by:"Heidi Jo Peaden" },{ id:"dact_p2", date: hoursAgo(50), type:"Call", text:"Intro call, booked the demo.", by:"Heidi Jo Peaden" }] },
     { id:"demo_preview_2", businessName:"", contactName:"", clientId:base.clients[0].id, projectType:"Software Build", stage:"Proposal sent", source:"Existing client", estimatedValue:6000, demoDate: daysFromNow(-5), nextFollowUpDate: daysFromNow(-2), nextStep:"Check if they reviewed the proposal", notes:"Client portal for their rentals.", createdDate: daysFromNow(-20), activity:[{ id:"dact_p3", date: hoursAgo(120), type:"Demo", text:"Showed the booking dashboard demo. Loved it.", by:"Heidi Jo Peaden" }] },
-    { id:"demo_preview_3", businessName:"Cypress Dental", contactName:"Dr. Sam Molar", email:"sam@example.com", clientId:"", projectType:"Website Refresh", stage:"New lead", source:"Word of Mouth", estimatedValue:1800, nextFollowUpDate: daysFromNow(4), nextStep:"Send portfolio + book demo", createdDate: daysFromNow(-1), activity:[] },
+    { id:"demo_preview_3", relationship:"Referral", businessName:"Cypress Dental", contactName:"Dr. Sam Molar", email:"sam@example.com", clientId:"", projectType:"Website Refresh", stage:"New lead", source:"Word of Mouth", estimatedValue:1800, nextFollowUpDate: daysFromNow(4), nextStep:"Send portfolio + book demo", createdDate: daysFromNow(-1), activity:[] },
     { id:"demo_preview_4", businessName:"Gulf Coast Realty", contactName:"Jordan Lee", clientId:"", projectType:"Productized Software", stage:"Negotiating", source:"LinkedIn", estimatedValue:5500, demoDate: daysFromNow(-12), nextFollowUpDate: daysFromNow(2), nextStep:"Send revised quote", createdDate: daysFromNow(-25), activity:[] },
     { id:"demo_preview_5", businessName:"Magnolia Florals", contactName:"Avery Bloom", clientId:"", projectType:"Website Build", stage:"Won 🎉", estimatedValue:3000, closedDate: daysFromNow(-3), createdDate: daysFromNow(-40), activity:[] },
     { id:"demo_preview_6", businessName:"Pelican Fitness", contactName:"Morgan Fit", clientId:"", projectType:"Website Build", stage:"Not right now", lostReason:"Wants to revisit after tax season", nextFollowUpDate: daysFromNow(60), estimatedValue:2500, closedDate: daysFromNow(-15), createdDate: daysFromNow(-45), activity:[] }
@@ -5902,6 +5902,22 @@ function demoRemove(id){
   if(!db){ removeLocal("demoPipeline", id); if(!_rendering) render(); return Promise.resolve(); }
   return remove("leads", id);
 }
+// "Who" on a lead: New / Old (past client) / Existing (current client), or
+// any type the Dev Director types in. Custom types are remembered by
+// reading them back off saved leads, so there's no settings list to keep.
+const DEMO_RELATIONSHIPS = ["New","Old","Existing"];
+const DEMO_RELATIONSHIP_LABELS = { New:"New — never worked with us", Old:"Old — a past client", Existing:"Existing — a current client" };
+function demoRelationship(d){ return d.relationship || (d.clientId ? "Existing" : "New"); }
+function demoRelationshipOptions(){
+  const custom = [...new Set((state.demoPipeline||[]).map(x=>x.relationship).filter(r=>r && !DEMO_RELATIONSHIPS.includes(r)))].sort();
+  return [...DEMO_RELATIONSHIPS, ...custom];
+}
+function demoClientIsCurrent(c){ return !c.clientStatus || c.clientStatus==="active"; }
+function demoRelationshipBadge(d){
+  const r = demoRelationship(d);
+  const bg = r==="Existing" ? "var(--ok)" : r==="Old" ? "#8a7a72" : r==="New" ? "var(--rose-dark)" : "var(--brown)";
+  return `<span class="badge" style="background:${bg};">${escHtml(r)}</span>`;
+}
 function demoTodayYMD(){ return ymd(new Date()); }
 function demoAddDays(n){ const d = new Date(); d.setDate(d.getDate()+n); return ymd(d); }
 function demoDealTitle(d){
@@ -5963,8 +5979,7 @@ function renderDemoPipelineTab(){
   const search = (f.search||"").trim().toLowerCase();
   const matches = d=>{
     if(f.type!=="all" && (d.projectType||"Other")!==f.type) return false;
-    if(f.who==="client" && !d.clientId) return false;
-    if(f.who==="prospect" && d.clientId) return false;
+    if(f.who!=="all" && demoRelationship(d)!==f.who) return false;
     if(search){
       const hay = [demoDealTitle(d), d.contactName, d.email, d.phone, d.nextStep].join(" ").toLowerCase();
       if(!hay.includes(search)) return false;
@@ -6021,8 +6036,7 @@ function renderDemoPipelineTab(){
       <div><label class="small">Who</label>
         <select onchange="setDemoFilter('who',this.value)">
           <option value="all" ${f.who==='all'?'selected':''}>Everyone</option>
-          <option value="client" ${f.who==='client'?'selected':''}>Current TMC clients</option>
-          <option value="prospect" ${f.who==='prospect'?'selected':''}>Potential clients</option>
+          ${demoRelationshipOptions().map(r=>`<option value="${escHtml(r)}" ${f.who===r?'selected':''}>${escHtml(r)}</option>`).join("")}
         </select></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
         <input type="checkbox" ${f.showClosed?'checked':''} onchange="setDemoFilter('showClosed',this.checked)"> Show Won &amp; Not right now
@@ -6036,7 +6050,7 @@ function renderDemoPipelineTab(){
         <tbody>
         ${filtered.filter(d=>f.showClosed || demoIsOpen(d)).sort(byFollowUp).map(d=>`
           <tr style="cursor:pointer;border-top:1px solid var(--cream-dark);" onclick="openDemoDeal('${d.id}')">
-            <td style="padding:8px 6px;"><strong>${escHtml(demoDealTitle(d))}</strong>${d.clientId?' <span class="badge">Client</span>':''}<div class="small">${escHtml(d.contactName||'')}</div></td>
+            <td style="padding:8px 6px;"><strong>${escHtml(demoDealTitle(d))}</strong> ${demoRelationshipBadge(d)}<div class="small">${escHtml(d.contactName||'')}</div></td>
             <td>${escHtml(d.stage||'New lead')}</td><td>${escHtml(d.projectType||'')}</td>
             <td>${demoFormatDemoDate(d)||'—'}</td><td>${demoFollowUpMeta(d)||'—'}</td>
             <td>${escHtml(d.nextStep||'')}</td><td style="text-align:right;padding-right:6px;">${d.estimatedValue?demoMoney(d.estimatedValue):'—'}</td>
@@ -6062,7 +6076,7 @@ function renderDemoCard(d){
     <div class="task-card">
       <div onclick="openDemoDeal('${d.id}')">
         <span class="badge business">${escHtml(d.projectType||'Other')}</span>
-        ${d.clientId ? '<span class="badge">TMC client</span>' : ''}
+        ${demoRelationshipBadge(d)}
         <strong style="display:block;margin-top:4px;">${escHtml(demoDealTitle(d))}</strong>
         ${d.contactName && d.contactName!==demoDealTitle(d) ? `<div class="meta">${escHtml(d.contactName)}</div>` : ""}
         ${d.estimatedValue ? `<div class="meta">${demoMoney(d.estimatedValue)}</div>` : ""}
@@ -6113,16 +6127,27 @@ function snoozeDemoFollowUp(id, days){
 function openDemoDeal(id, focusLog){
   const existing = id ? (state.demoPipeline||[]).find(x=>x.id===id) : null;
   const deal = existing ? JSON.parse(JSON.stringify(existing)) : {
-    id:null, contactName:"", businessName:"", email:"", phone:"", clientId:"", projectType:"Website Build",
+    id:null, relationship:"New", contactName:"", businessName:"", email:"", phone:"", clientId:"", projectType:"Website Build",
     stage:"New lead", source:"", estimatedValue:"", demoDate:"", demoTime:"", demoLink:"",
     nextFollowUpDate: demoAddDays(2), nextStep:"", lostReason:"", notes:"", activity:[]
   };
-  state.modal = { type:"demoDeal", deal, originalStage: existing ? (existing.stage||"New lead") : null,
+  deal.relationship = demoRelationship(deal);
+  state.modal = { type:"demoDeal", deal, customRel:false, originalStage: existing ? (existing.stage||"New lead") : null,
     log:{ type: focusLog ? "Call" : "Note", text:"", followUp:"" }, focusLog: !!focusLog };
   render();
   if(focusLog) setTimeout(()=>{ const el = document.getElementById("demo_log_text"); if(el){ el.scrollIntoView({block:"center"}); el.focus(); } }, 50);
 }
 function demoDraftSet(field, value){ state.modal.deal[field] = value; }
+function demoPickRelationship(value){
+  const m = state.modal, d = m.deal;
+  if(value==="__custom"){ m.customRel = true; d.relationship = ""; render(); setTimeout(()=>{ const el=document.getElementById("demo_rel_custom"); if(el) el.focus(); },30); return; }
+  m.customRel = false;
+  d.relationship = value;
+  // A linked client only makes sense for Old/Existing, and only if it still matches.
+  const c = d.clientId && state.clients.find(x=>x.id===d.clientId);
+  if(!c || (value==="Existing" && !demoClientIsCurrent(c)) || (value==="Old" && demoClientIsCurrent(c)) || (value!=="Existing" && value!=="Old")) d.clientId = "";
+  render();
+}
 function demoPickClient(clientId){
   const d = state.modal.deal;
   d.clientId = clientId;
@@ -6138,7 +6163,12 @@ function demoPickClient(clientId){
 function renderDemoDealModal(){
   const m = state.modal, d = m.deal;
   const v = k => escHtml(d[k]==null ? "" : String(d[k]));
-  const clientOptions = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.clientStatus!=="cancelled").sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const rel = m.customRel ? "__custom" : demoRelationship(d);
+  const relOptions = demoRelationshipOptions();
+  const pickFrom = rel==="Existing" ? "current" : rel==="Old" ? "past" : null;
+  const clientOptions = !pickFrom ? [] : state.clients
+    .filter(c=>c.id!==INTERNAL_CLIENT_ID && (pickFrom==="current" ? demoClientIsCurrent(c) : !demoClientIsCurrent(c)))
+    .sort((a,b)=>(a.name||"").localeCompare(b.name||""));
   const log = (d.activity||[]).slice().sort((a,b)=>a.date<b.date?1:-1);
   return `
     <div class="modal" style="width:760px;">
@@ -6147,11 +6177,21 @@ function renderDemoDealModal(){
 
       <div class="modal-section-label">Who</div>
       <div class="row">
-        <div style="flex:1;"><label class="small">Current TMC client?</label>
+        <div style="flex:1;"><label class="small">Type of lead</label>
+          <select onchange="demoPickRelationship(this.value)">
+            ${relOptions.map(r=>`<option value="${escHtml(r)}" ${rel===r?'selected':''}>${escHtml(DEMO_RELATIONSHIP_LABELS[r]||r)}</option>`).join("")}
+            ${!relOptions.includes(rel) && rel!=="__custom" ? `<option value="${escHtml(rel)}" selected>${escHtml(rel)}</option>` : ""}
+            <option value="__custom" ${rel==="__custom"?'selected':''}>+ Create my own…</option>
+          </select>
+          ${rel==="__custom" ? `<input id="demo_rel_custom" style="margin-top:6px;width:100%;" placeholder="e.g. Referral, Partner, Friend of Kaylan" value="${v('relationship')}" oninput="demoDraftSet('relationship',this.value)">` : ""}
+        </div>
+        ${pickFrom ? `<div style="flex:1;"><label class="small">${pickFrom==="current"?"Which current client?":"Which past client? (optional)"}</label>
           <select onchange="demoPickClient(this.value)">
-            <option value="">No — potential client</option>
-            ${clientOptions.map(c=>`<option value="${c.id}" ${d.clientId===c.id?'selected':''}>${escHtml(c.name||'')}</option>`).join("")}
-          </select></div>
+            <option value="">${pickFrom==="current"?"Pick a client…":"Not in the app / skip"}</option>
+            ${clientOptions.map(c=>`<option value="${c.id}" ${d.clientId===c.id?'selected':''}>${escHtml(c.name||'')}${pickFrom==="past"&&c.clientStatus?' ('+escHtml(c.clientStatus)+')':''}</option>`).join("")}
+          </select></div>` : ""}
+      </div>
+      <div class="row" style="margin-top:8px;">
         <div style="flex:1;"><label class="small">Business name</label><input value="${v('businessName')}" oninput="demoDraftSet('businessName',this.value)"></div>
       </div>
       <div class="row" style="margin-top:8px;">
@@ -6221,7 +6261,8 @@ function renderDemoDealModal(){
 function demoDealFromDraft(){
   const m = state.modal, d = { ...m.deal };
   if(!(d.businessName||"").trim() && !(d.contactName||"").trim() && !d.clientId){ alert("Add a business or contact name first."); return null; }
-  ["businessName","contactName","email","phone","source","demoLink","nextStep","notes","lostReason"].forEach(k=>{ d[k] = (d[k]||"").trim(); });
+  ["businessName","contactName","email","phone","source","demoLink","nextStep","notes","lostReason","relationship"].forEach(k=>{ d[k] = (d[k]||"").trim(); });
+  if(!d.relationship) d.relationship = "New";
   d.estimatedValue = d.estimatedValue==="" || d.estimatedValue==null ? "" : Number(d.estimatedValue)||0;
   d.activity = d.activity || [];
   const stage = d.stage || "New lead";
