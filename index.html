@@ -1492,9 +1492,23 @@ function readDriveInputs(milesId, minutesId, required){
 }
 // Drive typed in by hand. Admin's own entries aren't flagged; an assistant's
 // are, so admin can double-check the miles.
+// Flags the app adds by itself for drives ("… — enter the miles", "… — check
+// the miles"), as opposed to a reason admin typed. Once miles are typed in,
+// an "enter the miles" flag is out of date, so it gets replaced rather than
+// kept (it used to stay, which looked like the fix hadn't worked).
+const DRIVE_HAND_FLAG = "Drive entered by hand — check the miles";
+function isAutoDriveFlag(note){
+  return /— (enter|check) the miles$/.test(note||"");
+}
 function manualDriveFields(entry, miles, minutes){
+  entry = entry || {};
   const f = { driveMiles: miles, driveMinutes: minutes, driveMilesManual: true };
-  if(state.role!=="admin") Object.assign(f, driveFlagFields(entry||{}, "Drive entered by hand — check the miles"));
+  const autoFlag = entry.flagged && isAutoDriveFlag(entry.flagNote);
+  if(state.role!=="admin"){
+    if(!entry.flagged || autoFlag) Object.assign(f, { flagged:true, flagNote: DRIVE_HAND_FLAG });
+  } else if(autoFlag){
+    Object.assign(f, { flagged:false, flagNote:"" });
+  }
   return f;
 }
 function driveSaveAndClockOut(){
@@ -1594,6 +1608,7 @@ function renderDriveMapModal(){
       <div class="small" style="margin-bottom:8px;">${task ? task.title : '(deleted task)'} · ${assistantName(e.assistantId)}</div>
       ${hasPoints ? `<div id="driveMap" style="height:260px;border-radius:8px;margin-bottom:6px;background:var(--cream);"></div>
         <a class="small" href="https://www.google.com/maps/dir/?api=1&origin=${s.lat},${s.lng}&destination=${d.lat},${d.lng}&travelmode=driving" target="_blank" rel="noopener">Open route in Google Maps ↗</a>`
+        : e.driveMiles!=null ? `<div class="small" style="margin-bottom:6px;">No map for this drive — the miles were entered by hand.</div>`
         : `<div class="alert warn">No map — ${s.error || d.error || (!e.driveStart ? "this drive wasn't logged with Start drive / I've arrived" : e.driveEnd ? "location missing" : "drive still in progress")}.</div>`}
       <div class="stat-row" style="margin:10px 0;">
         <div class="stat-tile"><div class="stat-label">TMC miles</div><div class="stat-value">${split ? split.tmc : "—"}</div><div class="stat-sub">over the first ${DRIVE_CLIENT_MILES}</div></div>
@@ -1620,6 +1635,7 @@ function saveDriveMiles(entryId){
   if(v.miles==null && v.minutes==null){ alert("Enter the miles or the drive time."); return; }
   const payload = { driveMinutes: v.minutes };
   if(v.miles!==e.driveMiles){ payload.driveMiles = v.miles; payload.driveMilesManual = v.miles!=null; }
+  if(v.miles!=null && e.flagged && isAutoDriveFlag(e.flagNote)) Object.assign(payload, { flagged:false, flagNote:"" });
   upsert("timeEntries", entryId, payload).then(()=>render());
 }
 // Undoes a manual override: re-asks the router for the road distance
@@ -11192,7 +11208,7 @@ function renderTimeTracking(){
         const isAdminWork = e.clientId===INTERNAL_CLIENT_ID;
         const clientLabel = isAdminWork ? "Internal / Modern Co." : (state.clients.find(c=>c.id===e.clientId)?.name || (e.clientId ? "Unknown client" : ""));
         return `<div class="list-item">
-          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${driveBadge(e)}${task?task.title:'(deleted task)'}${clientLabel ? ` <span class="small">· ${clientLabel}</span>` : ''}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>` : ""}</div>
+          <div>${isAdminWork ? '<span class="badge">Admin</span>' : ''}${e.clockOutManual ? '<span class="badge" style="background:var(--warn);">Manual</span>' : ''}${e.flagged && !(state.role!=='admin' && isAutoDriveFlag(e.flagNote) && e.driveMiles!=null) ? '<span class="badge" style="background:var(--danger);">Flagged</span>' : ''}${driveBadge(e)}${task?task.title:'(deleted task)'}${clientLabel ? ` <span class="small">· ${clientLabel}</span>` : ''}${state.role==='admin'?` <span class="small">· ${assistantName(e.assistantId)}</span>`:''} <span class="small">${new Date(e.clockIn).toLocaleString()}</span>${e.note ? `<div class="small">"${e.note}"</div>` : ""}${e.flagNote ? (state.role!=='admin' && isAutoDriveFlag(e.flagNote) && e.driveMiles!=null ? `<div class="small">🚗 Miles saved. Kaylan will double-check them.</div>` : `<div class="small" style="color:var(--danger);">Flagged: "${e.flagNote}"</div>`) : ""}</div>
           <div style="display:flex;align-items:center;gap:8px;">${e.clockOut ? entryDurationHours(e).toFixed(2)+" hrs" : `<button onclick="doClockOut('${e.id}')">Clock out</button>`}${(state.role==='admin' || e.assistantId===state.currentAssistant?.id) ? `<button class="secondary" style="padding:2px 8px;" title="Edit this time entry" onclick="openTimeEntryEditor('${e.id}')">Edit</button>` : ""}${state.role==='admin' ? `<button class="secondary" style="padding:2px 8px;${e.flagged?'color:var(--danger);':''}" title="${e.flagged ? 'Unflag' : 'Flag for review'}" onclick="toggleFlagTimeEntry('${e.id}')">${e.flagged ? '⚑' : '⚐'}</button>` : ""}<button class="secondary" style="padding:2px 8px;" title="Delete this time entry" onclick="deleteTimeEntry('${e.id}')">✕</button></div>
         </div>`;
       }).join("") || `<div class="small">No entries in this range.</div>`}
@@ -15918,16 +15934,20 @@ function saveTimeEntryEdit(entryId){
   const cur = state.timeEntries.find(x=>x.id===entryId) || {};
   const v = readDriveInputs("tef_drive_miles", "tef_drive_minutes", false);
   if(!v) return;
-  const oldMiles = cur.driveMiles!=null ? cur.driveMiles : null, oldMins = driveMinutesOf(cur);
-  if(v.miles!==oldMiles || v.minutes!==oldMins){
-    if(v.miles==null && v.minutes==null) Object.assign(payload, { driveMiles: null, driveMinutes: null, driveMilesManual: false });
-    else Object.assign(payload, manualDriveFields(cur, v.miles, v.minutes));
-    if(cur.driveStart && !cur.driveEnd && v.miles!=null) payload.driveEnd = { at: new Date().toISOString(), manual: true };
-  }
   if(state.role==='admin'){
     payload.assistantId = state.modal.assistantId;
     payload.flagged = state.modal.flagged;
     payload.flagNote = document.getElementById("tef_flagnote").value.trim();
+  }
+  const oldMiles = cur.driveMiles!=null ? cur.driveMiles : null, oldMins = driveMinutesOf(cur);
+  if(v.miles!==oldMiles || v.minutes!==oldMins){
+    const flagNow = { ...cur, ...(state.role==='admin' ? { flagged: payload.flagged, flagNote: payload.flagNote } : {}) };
+    if(v.miles==null && v.minutes==null){
+      Object.assign(payload, { driveMiles: null, driveMinutes: null, driveMilesManual: false });
+      if(flagNow.flagged && isAutoDriveFlag(flagNow.flagNote)) Object.assign(payload, { flagged:false, flagNote:"" });
+    }
+    else Object.assign(payload, manualDriveFields(flagNow, v.miles, v.minutes));
+    if(cur.driveStart && !cur.driveEnd && v.miles!=null) payload.driveEnd = { at: new Date().toISOString(), manual: true };
   }
   upsert("timeEntries", entryId, payload);
   closeTimeModal();
