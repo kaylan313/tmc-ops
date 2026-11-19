@@ -5463,10 +5463,37 @@ function ensureCurrentScorecardSnapshot(){
 // regardless of cadence); this just files a second copy of it under a
 // period key instead of a week key, so the two tables can each show their
 // own natural cadence from the same underlying numbers.
+// BUG (found Nov 2026): a period's snapshot only ever updates when someone
+// has the Scorecard tab open — if nobody visits again before the period
+// ends, it stays frozen at whatever partial numbers existed on the last
+// visit (the Nov 1-15 period was captured Nov 2nd, one day in, and showed
+// $4,300 payroll / 0 team hours forever instead of the real ~$11.5k once
+// the period actually finished). Once a period's end date has passed,
+// its numbers can never change again, so it's always safe to recompute
+// it fresh exactly once and lock in the real final total — this runs
+// every time anyone visits the tab and silently heals any past period
+// that got frozen early, not just the most recent one.
+function finalizeStalePastPeriodSnapshots(){
+  const today = new Date();
+  const history = state.settings.scorecardPeriodHistory || [];
+  let changed = false;
+  const updated = history.map(h=>{
+    const periodEnd = new Date(h.periodEnd);
+    if(periodEnd > today) return h; // still in progress — leave the live "current" one alone
+    if(new Date(h.capturedAt) >= periodEnd) return h; // already captured after it ended — already final
+    const period = { start: new Date(h.periodStart), end: periodEnd };
+    const teamHours = hoursInPeriod(state.timeEntries, period);
+    const payrollCost = state.settings.assistants.reduce((s,a)=>s+payrollAmountForAssistant(a, hoursInPeriod(state.timeEntries.filter(e=>e.assistantId===a.id), period)),0);
+    changed = true;
+    return { ...h, capturedAt: new Date().toISOString(), metrics: { ...h.metrics, teamHoursThisPeriod: Math.round(teamHours*10)/10, payrollCostThisPeriod: Math.round(payrollCost) } };
+  });
+  if(changed){ state.settings.scorecardPeriodHistory = updated; upsert("settings","access", { scorecardPeriodHistory: updated }); }
+}
 let scorecardPeriodSnapshotEnsuredThisVisit = false;
 function ensureCurrentScorecardPeriodSnapshot(){
   if(scorecardPeriodSnapshotEnsuredThisVisit) return;
   scorecardPeriodSnapshotEnsuredThisVisit = true;
+  finalizeStalePastPeriodSnapshots();
   const period = currentPayrollPeriod();
   const periodStart = period.start.toISOString().slice(0,10);
   const metrics = computeScorecardMetrics();
