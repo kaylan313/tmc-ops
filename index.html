@@ -1095,8 +1095,18 @@ function subscribeAppData(){
   // vendors is subscribed unconditionally in boot() now (see the comment
   // there) — a vendor portal login needs to check it before anyone's
   // necessarily logged in yet, same reason clients/settings already did.
-  subscribe("cardPurchases", items=>{ state.cardPurchases = items; if(!state.modal) render(); });
+  // cardPurchases is NOT subscribed here (see ensureCardPurchasesSubscribed
+  // below) — it's full of receipt photos (measured ~31MB) and only the
+  // admin Card Purchases tab ever reads it; assistants only ever submit a
+  // new entry, never browse past ones, so eagerly loading it for every
+  // single login was pure dead weight on every session.
   subscribe("supportTickets", items=>{ state.supportTickets = items; if(!state.modal) render(); });
+}
+let cardPurchasesSubscribed = false;
+function ensureCardPurchasesSubscribed(){
+  if(cardPurchasesSubscribed || !FIREBASE_AVAILABLE) return;
+  cardPurchasesSubscribed = true;
+  subscribe("cardPurchases", items=>{ state.cardPurchases = items; if(!state.modal) render(); });
 }
 
 // ---- 6. Orientation sync (existing integration, preserved) ----
@@ -7627,6 +7637,7 @@ async function saveCardPurchase(){
   alert("Logged — thanks!");
 }
 function renderCardPurchasesTab(){
+  ensureCardPurchasesSubscribed();
   const filter = state.cardPurchasesFilter || "unreviewed";
   const all = (state.cardPurchases||[]).slice().sort((a,b)=> b.submittedAt < a.submittedAt ? -1 : 1);
   const filtered = filter==="all" ? all : all.filter(p=>!p.reviewed);
