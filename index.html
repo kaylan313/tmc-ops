@@ -6046,6 +6046,11 @@ function renderScorecardTab(){
           <div class="stat-label">Estimated labor cost (hours &times; rate)</div>
           <div class="stat-value">$${Math.round(appPayroll).toLocaleString()}</div>
         </div>
+        <div class="stat-tile ${(appRevenue-appPayroll)<0?'status-danger':''}">
+          <div class="stat-label">Estimated margin</div>
+          <div class="stat-value">$${Math.round(appRevenue-appPayroll).toLocaleString()}</div>
+          <div class="stat-sub">sales &minus; labor cost (doesn't include vendor/add-on/other costs below)</div>
+        </div>
       </div>
     </div>
     ${(()=>{
