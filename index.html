@@ -158,6 +158,11 @@
   .stat-tile .stat-value{font-weight:600;font-size:28px;color:var(--brown-dark);}
   .stat-tile.status-warn .stat-value{color:var(--warn);}
   .stat-tile.status-danger .stat-value{color:var(--danger);}
+  table.rpt{width:100%;border-collapse:collapse;font-size:13px;}
+  table.rpt th{text-align:left;font-size:12px;color:#8a7a72;font-weight:600;}
+  table.rpt td,table.rpt th{padding:7px 8px;border-bottom:1px solid var(--cream-dark);}
+  table.rpt tr:last-child td{border-bottom:none;}
+  table.rpt .num{text-align:right;}
   .stat-tile .stat-sub{font-size:12px;color:#8a7a72;margin-top:4px;}
   .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
   table.data-table{width:100%;border-collapse:collapse;font-size:13px;}
@@ -904,7 +909,7 @@ function seedPreviewData(){
     { id:"demo_preview_2", businessName:"", contactName:"", clientId:base.clients[0].id, projectType:"Software Build", stage:"Proposal sent", source:"Existing client", estimatedValue:6000, demoDate: daysFromNow(-5), nextFollowUpDate: daysFromNow(-2), nextStep:"Check if they reviewed the proposal", notes:"Client portal for their rentals.", createdDate: daysFromNow(-20), activity:[{ id:"dact_p3", date: hoursAgo(120), type:"Demo", text:"Showed the booking dashboard demo. Loved it.", by:"Heidi Jo Peaden" }] },
     { id:"demo_preview_3", relationship:"Referral", businessName:"Cypress Dental", contactName:"Dr. Sam Molar", email:"sam@example.com", clientId:"", projectType:"Website Refresh", stage:"New lead", source:"Word of Mouth", estimatedValue:1800, nextFollowUpDate: daysFromNow(4), nextStep:"Send portfolio + book demo", createdDate: daysFromNow(-1), activity:[] },
     { id:"demo_preview_4", businessName:"Gulf Coast Realty", contactName:"Jordan Lee", clientId:"", projectType:"Productized Software", stage:"Negotiating", source:"LinkedIn", estimatedValue:5500, demoDate: daysFromNow(-12), nextFollowUpDate: daysFromNow(2), nextStep:"Send revised quote", createdDate: daysFromNow(-25), activity:[] },
-    { id:"demo_preview_5", businessName:"Magnolia Florals", contactName:"Avery Bloom", clientId:"", projectType:"Website Build", stage:"Won 🎉", estimatedValue:3000, closedDate: daysFromNow(-3), createdDate: daysFromNow(-40), activity:[] },
+    { id:"demo_preview_5", businessName:"Magnolia Florals", contactName:"Avery Bloom", clientId:"", projectType:"Website Build", stage:"Won 🎉", source:"Instagram", estimatedValue:3000, demoDate: daysFromNow(-12), closedDate: daysFromNow(-3), createdDate: daysFromNow(-40), activity:[{ id:"dact_p5", date: hoursAgo(24*10), type:"Stage", text:"Demo done → Proposal sent", by:"Heidi Jo Peaden" },{ id:"dact_p6", date: hoursAgo(24*6), type:"Email", text:"Sent the contract.", by:"Heidi Jo Peaden" }] },
     { id:"demo_preview_6", businessName:"Pelican Fitness", contactName:"Morgan Fit", clientId:"", projectType:"Website Build", stage:"Not right now", lostReason:"Wants to revisit after tax season", nextFollowUpDate: daysFromNow(60), estimatedValue:2500, closedDate: daysFromNow(-15), createdDate: daysFromNow(-45), activity:[] }
   ];
   const cardPurchases = [
@@ -6026,8 +6031,9 @@ function renderDemoPipelineTab(){
       <div class="tabs" style="margin:0;border:0;">
         <button class="${f.view==='board'?'active':''}" onclick="setDemoFilter('view','board')">Board</button>
         <button class="${f.view==='list'?'active':''}" onclick="setDemoFilter('view','list')">List</button>
+        <button class="${f.view==='reports'?'active':''}" onclick="setDemoFilter('view','reports')">Reports</button>
       </div>
-      <div><label class="small">Search</label><input id="demoSearch" style="width:190px;" placeholder="Name, business, email..." value="${escHtml(f.search||'')}" oninput="setDemoSearchDebounced(this.value)"></div>
+      ${f.view==='reports' ? '' : `<div><label class="small">Search</label><input id="demoSearch" style="width:190px;" placeholder="Name, business, email..." value="${escHtml(f.search||'')}" oninput="setDemoSearchDebounced(this.value)"></div>`}
       <div><label class="small">Project type</label>
         <select onchange="setDemoFilter('type',this.value)">
           <option value="all">All types</option>
@@ -6038,12 +6044,12 @@ function renderDemoPipelineTab(){
           <option value="all" ${f.who==='all'?'selected':''}>Everyone</option>
           ${demoRelationshipOptions().map(r=>`<option value="${escHtml(r)}" ${f.who===r?'selected':''}>${escHtml(r)}</option>`).join("")}
         </select></div>
-      <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
+      ${f.view==='reports' ? '' : `<label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
         <input type="checkbox" ${f.showClosed?'checked':''} onchange="setDemoFilter('showClosed',this.checked)"> Show Won &amp; Not right now
-      </label>
+      </label>`}
     </div>
 
-    ${f.view==="list" ? `
+    ${f.view==="reports" ? renderDemoReports() : f.view==="list" ? `
     <div class="card" style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead><tr style="text-align:left;"><th style="padding:6px;">Lead</th><th>Stage</th><th>Type</th><th>Demo</th><th>Next follow-up</th><th>Next step</th><th style="text-align:right;padding-right:6px;">Value</th></tr></thead>
@@ -6069,6 +6075,186 @@ function renderDemoPipelineTab(){
       }).join("")}
     </div>`}
   `;
+}
+// ---- Demo Pipeline reports (monthly / quarterly) ----
+// Everything is computed from the leads themselves: createdDate, demoDate,
+// closedDate, and the activity log (stage moves + check-ins), so there's
+// nothing extra to save. Ranges are YYYY-MM-DD, end exclusive.
+function demoPeriodRange(kind, offset){
+  const now = new Date();
+  if(kind==="quarter"){
+    const q = Math.floor(now.getMonth()/3) + offset;
+    const start = new Date(now.getFullYear(), q*3, 1), end = new Date(now.getFullYear(), q*3+3, 1);
+    const last = new Date(end.getFullYear(), end.getMonth(), 0);
+    const label = `Q${Math.floor(start.getMonth()/3)+1} ${start.getFullYear()} (${start.toLocaleDateString([], {month:"short"})}–${last.toLocaleDateString([], {month:"short"})})`;
+    return { start:ymd(start), end:ymd(end), label, short:`Q${Math.floor(start.getMonth()/3)+1} ${start.getFullYear()}`, prevWord:"last quarter" };
+  }
+  const start = new Date(now.getFullYear(), now.getMonth()+offset, 1), end = new Date(now.getFullYear(), now.getMonth()+offset+1, 1);
+  const label = start.toLocaleDateString([], {month:"long", year:"numeric"});
+  return { start:ymd(start), end:ymd(end), label, short:label, prevWord:"last month" };
+}
+function demoStageTarget(a){
+  if(a.type!=="Stage" || !a.text) return null;
+  const t = a.text.includes("→") ? a.text.split("→").pop().trim() : a.text.replace(/^Added as /,"").trim();
+  return DEMO_STAGE_RENAMES[t] || t;
+}
+function demoReportStats(deals, start, end){
+  const inR = v => !!v && v.slice(0,10)>=start && v.slice(0,10)<end;
+  const today = demoTodayYMD();
+  const actDate = a => a.date ? ymd(new Date(a.date)) : "";
+  const added = deals.filter(d=>inR(d.createdDate));
+  const demosHeld = deals.filter(d=>inR(d.demoDate) && d.demoDate<=today);
+  const demosComing = deals.filter(d=>inR(d.demoDate) && d.demoDate>today);
+  const proposals = deals.filter(d=>(d.activity||[]).some(a=>demoStageTarget(a)==="Proposal sent" && inR(actDate(a))));
+  const won = deals.filter(d=>d.stage===DEMO_SIGNED && inR(d.closedDate));
+  const later = deals.filter(d=>d.stage===DEMO_LATER && inR(d.closedDate));
+  const checkIns = {};
+  let checkInTotal = 0;
+  deals.forEach(d=>(d.activity||[]).forEach(a=>{
+    if(a.type==="Stage" || !inR(actDate(a))) return;
+    checkIns[a.type] = (checkIns[a.type]||0)+1; checkInTotal++;
+  }));
+  const touched = deals.filter(d=>inR(d.createdDate) || inR(d.demoDate) || inR(d.closedDate) || (d.activity||[]).some(a=>inR(actDate(a))));
+  const value = list => list.reduce((s,d)=>s+(Number(d.estimatedValue)||0),0);
+  return { added, demosHeld, demosComing, proposals, won, later, checkIns, checkInTotal, touched,
+    wonValue:value(won), addedValue:value(added),
+    winRate: (won.length+later.length) ? Math.round(100*won.length/(won.length+later.length)) : null };
+}
+function demoReportFilteredDeals(){
+  const f = state.demoFilter || {};
+  return (state.demoPipeline||[]).filter(d=>
+    (!f.type || f.type==="all" || (d.projectType||"Other")===f.type) &&
+    (!f.who || f.who==="all" || demoRelationship(d)===f.who));
+}
+function demoReportCtx(){
+  const r = state.demoReport || (state.demoReport = { kind:"month", offset:0 });
+  const range = demoPeriodRange(r.kind, r.offset);
+  const prev = demoPeriodRange(r.kind, r.offset-1);
+  const deals = demoReportFilteredDeals();
+  const f = state.demoFilter || {};
+  const filters = [f.type && f.type!=="all" ? f.type : "", f.who && f.who!=="all" ? f.who+" leads" : ""].filter(Boolean).join(" · ");
+  return { r, range, prev, deals, filters, s:demoReportStats(deals, range.start, range.end), p:demoReportStats(deals, prev.start, prev.end) };
+}
+function setDemoReport(field, value){
+  const r = state.demoReport || (state.demoReport = { kind:"month", offset:0 });
+  if(field==="kind"){ r.kind = value; r.offset = 0; } else r.offset = value;
+  render();
+}
+// Report body markup, shared by the on-screen view and the printable copy.
+function demoReportBody(ctx){
+  const { range, s, p } = ctx;
+  const cmp = (now, before, money) => {
+    const diff = now - before;
+    if(!before && !now) return "";
+    const fmt = v => money ? demoMoney(v) : v;
+    return `<div class="small">${diff>0?'▲ up from':diff<0?'compared to':'same as'} ${fmt(before)} ${range.prevWord}</div>`;
+  };
+  const tile = (label, value, sub) => `<div class="stat-tile"><div class="stat-label">${label}</div><div class="stat-value">${value}</div>${sub||""}</div>`;
+  const group = (keyFn) => {
+    const keys = [...new Set(s.touched.map(keyFn))].sort();
+    if(!keys.length) return `<div class="small">Nothing this period yet.</div>`;
+    return `<table class="rpt"><thead><tr><th></th><th>New leads</th><th>Demos held</th><th>Won 🎉</th><th class="num">Won value</th></tr></thead><tbody>
+      ${keys.map(k=>{
+        const only = list => list.filter(d=>keyFn(d)===k);
+        const w = only(s.won);
+        return `<tr><td>${escHtml(k)}</td><td>${only(s.added).length}</td><td>${only(s.demosHeld).length}</td><td>${w.length}</td><td class="num">${w.length?demoMoney(w.reduce((t,d)=>t+(Number(d.estimatedValue)||0),0)):'—'}</td></tr>`;
+      }).join("")}
+    </tbody></table>`;
+  };
+  const dealRows = (list, extra) => list.length ? `<table class="rpt"><tbody>${list.map(d=>`<tr><td><strong>${escHtml(demoDealTitle(d))}</strong>${d.contactName&&d.contactName!==demoDealTitle(d)?' · '+escHtml(d.contactName):''}</td><td>${escHtml(d.projectType||'')}</td><td>${escHtml(demoRelationship(d))}</td>${extra(d)}</tr>`).join("")}</tbody></table>` : `<div class="small">None this period.</div>`;
+  const checkInText = Object.keys(s.checkIns).length ? Object.entries(s.checkIns).sort((a,b)=>b[1]-a[1]).map(([t,n])=>`${n} ${escHtml(t.toLowerCase())}${n===1?'':'s'}`).join(" · ") : "No check-ins logged yet.";
+  return `
+    <div class="stat-row">
+      ${tile("New leads", s.added.length, cmp(s.added.length, p.added.length))}
+      ${tile("Demos held", s.demosHeld.length, (s.demosComing.length?`<div class="small">+ ${s.demosComing.length} still coming up</div>`:"") + cmp(s.demosHeld.length, p.demosHeld.length))}
+      ${tile("Proposals sent", s.proposals.length, cmp(s.proposals.length, p.proposals.length))}
+      ${tile("Won 🎉", s.won.length + (s.won.length?' · '+demoMoney(s.wonValue):''), cmp(s.wonValue, p.wonValue, true))}
+      ${tile("Win rate", s.winRate===null?'—':s.winRate+'%', `<div class="small">${s.won.length} won · ${s.later.length} not right now</div>`)}
+      ${tile("Check-ins logged", s.checkInTotal, cmp(s.checkInTotal, p.checkInTotal))}
+    </div>
+    <div class="card"><h3>Wins 🎉</h3>${dealRows(s.won, d=>`<td>${d.closedDate?parseYMD(d.closedDate).toLocaleDateString():''}</td><td class="num">${d.estimatedValue?demoMoney(d.estimatedValue):'—'}</td>`)}</div>
+    <div class="card"><h3>Demos held</h3>${dealRows(s.demosHeld, d=>`<td>${demoFormatDemoDate(d)}</td><td>${escHtml(d.stage||'')}</td>`)}</div>
+    <div class="card"><h3>By project type</h3>${group(d=>d.projectType||"Other")}</div>
+    <div class="card"><h3>By type of lead</h3>${group(demoRelationship)}</div>
+    <div class="card"><h3>How they found us</h3>${group(d=>(d.source||"").trim()||"Not set")}</div>
+    <div class="card"><h3>Check-ins</h3><div>${checkInText}</div></div>
+    <div class="card"><h3>Not right now, check back in 🌱</h3>${dealRows(s.later, d=>`<td>${escHtml(d.lostReason||'')}</td><td>${d.nextFollowUpDate?'Check back '+parseYMD(d.nextFollowUpDate).toLocaleDateString():''}</td>`)}</div>
+  `;
+}
+function renderDemoReports(){
+  const ctx = demoReportCtx();
+  const { r, range, filters } = ctx;
+  return `
+    <div class="card">
+      <div class="flex-between" style="flex-wrap:wrap;gap:10px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div class="tabs" style="margin:0;border:0;">
+            <button class="${r.kind==='month'?'active':''}" onclick="setDemoReport('kind','month')">Monthly</button>
+            <button class="${r.kind==='quarter'?'active':''}" onclick="setDemoReport('kind','quarter')">Quarterly</button>
+          </div>
+          <button class="secondary" onclick="setDemoReport('offset',${r.offset-1})">◀</button>
+          <strong style="min-width:170px;text-align:center;">${range.label}</strong>
+          <button class="secondary" ${r.offset>=0?'disabled style="opacity:.4;"':''} onclick="setDemoReport('offset',${r.offset+1})">▶</button>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button onclick="printDemoReport()">Print / Save PDF</button>
+          <button class="secondary" onclick="downloadDemoReportCsv()">Download spreadsheet</button>
+        </div>
+      </div>
+      ${filters ? `<div class="small" style="margin-top:8px;">Showing only: ${escHtml(filters)}. Change the filters above to see everything.</div>` : ""}
+    </div>
+    ${demoReportBody(ctx)}
+  `;
+}
+function printDemoReport(){
+  const ctx = demoReportCtx();
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Demo Pipeline Report · ${escHtml(ctx.range.short)}</title>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;600&family=Playfair+Display:wght@600&display=swap" rel="stylesheet">
+<style>
+  body{font-family:'Jost',Arial,sans-serif;color:#2c211d;margin:32px;background:#fff;}
+  h1,h3{font-family:'Playfair Display',Georgia,serif;color:#241a17;margin:0 0 6px;}
+  h1{font-size:26px;} h3{font-size:16px;margin-top:4px;}
+  .sub{color:#8a7a72;font-size:13px;margin-bottom:18px;}
+  .stat-row{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;}
+  .stat-tile{border:1px solid #ece2d3;border-radius:10px;padding:10px 12px;flex:1;min-width:140px;}
+  .stat-label{font-size:11px;color:#8a7a72;} .stat-value{font-size:22px;font-weight:600;color:#241a17;}
+  .small{font-size:11px;color:#8a7a72;}
+  .card{border-top:2px solid #c9a3a0;padding:10px 0 14px;page-break-inside:avoid;}
+  table.rpt{width:100%;border-collapse:collapse;font-size:12px;} .rpt th{text-align:left;color:#8a7a72;font-weight:600;}
+  .rpt td,.rpt th{padding:5px 6px;border-bottom:1px solid #ece2d3;} .num{text-align:right;}
+  @media print{body{margin:12mm;}}
+</style></head><body>
+<h1>Demo Pipeline Report</h1>
+<div class="sub">${escHtml(ctx.range.label)}${ctx.filters?' · '+escHtml(ctx.filters):''} · The Modern Concierge · prepared ${new Date().toLocaleDateString()}</div>
+${demoReportBody(ctx)}
+<script>window.onload=()=>setTimeout(()=>window.print(),400);<\/script>
+</body></html>`;
+  const w = window.open("", "_blank");
+  if(w){ w.document.open(); w.document.write(html); w.document.close(); return; }
+  // Pop-up blocked: download it instead, open it and print from there.
+  const blob = new Blob([html], { type:"text/html" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `Demo Pipeline Report - ${ctx.range.short}.html`;
+  document.body.appendChild(a); a.click(); a.remove();
+}
+function downloadDemoReportCsv(){
+  const { range, s, filters } = demoReportCtx();
+  const inR = v => !!v && v.slice(0,10)>=range.start && v.slice(0,10)<range.end;
+  const rows = [
+    ["Demo Pipeline Report", range.label + (filters?" ("+filters+")":"")],
+    ["New leads", s.added.length], ["Demos held", s.demosHeld.length], ["Proposals sent", s.proposals.length],
+    ["Won", s.won.length], ["Won value", s.wonValue], ["Not right now", s.later.length],
+    ["Win rate", s.winRate===null?"":s.winRate+"%"], ["Check-ins logged", s.checkInTotal],
+    [],
+    ["Lead","Contact","Email","Phone","Type of lead","Project type","Stage","How they found us","Added","Demo date","Closed","Estimated value","Check-ins this period","Next step","Next follow-up"]
+  ];
+  s.touched.slice().sort((a,b)=>demoDealTitle(a).localeCompare(demoDealTitle(b))).forEach(d=>{
+    rows.push([demoDealTitle(d), d.contactName||"", d.email||"", d.phone||"", demoRelationship(d), d.projectType||"", d.stage||"New lead", d.source||"",
+      d.createdDate||"", d.demoDate||"", d.closedDate||"", d.estimatedValue||"",
+      (d.activity||[]).filter(a=>a.type!=="Stage" && a.date && inR(ymd(new Date(a.date)))).length, d.nextStep||"", d.nextFollowUpDate||""]);
+  });
+  downloadCsv(`Demo Pipeline Report - ${range.short}.csv`, rows);
 }
 function renderDemoCard(d){
   const idx = DEMO_STAGES.indexOf(d.stage||"New lead");
