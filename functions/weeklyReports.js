@@ -151,7 +151,9 @@ function buildWeeklyReport(client, data, window) {
     overHours, overageAmount: overHours * OVERAGE_RATE,
     billingPeriod: period,
     signerName: "The Modern Concierge Team",
-    receipts: client.includeReceiptsInReport ? receiptsInWindow(tasks, window) : [],
+    // Every client, no per-client toggle (Nov 2026) — KEEP IN SYNC with
+    // buildClientReport in index.html.
+    receipts: receiptsInWindow(tasks, window),
   };
 }
 function renderReportReceipts(receipts) {
@@ -557,7 +559,7 @@ module.exports = function createWeeklyReports(deps) {
   async function afterSend(client, ctx, window, report) {
     const update = { weeklyRecapSentForWeek: ymdLocal(window.friday) };
     await db().collection("clients").doc(client.id).set(update, { merge: true });
-    if (client.includeReceiptsInReport && report.receipts.length) {
+    if (report.receipts.length) {
       const idsByTask = {};
       report.receipts.forEach((r) => { (idsByTask[r.taskId] = idsByTask[r.taskId] || []).push(r.id); });
       for (const [taskId, ids] of Object.entries(idsByTask)) {

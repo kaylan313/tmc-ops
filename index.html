@@ -2140,7 +2140,10 @@ function buildClientReport(client, window, kind){
     overHours, overageAmount: overHours * OVERAGE_RATE,
     billingPeriod: isPeriodKind ? window : currentBillingPeriod(client),
     signerName: "The Modern Concierge Team",
-    receipts: client.includeReceiptsInReport ? receiptsInWindow(client, window) : []
+    // Every client, no per-client toggle (Nov 2026, Kaylan) — same rule
+    // for everyone, and it's what lets receipts get auto-cleared off the
+    // task right after sending instead of accumulating indefinitely.
+    receipts: receiptsInWindow(client, window)
   };
 }
 // Firestore caps a single document field at ~1,048,487 bytes. Receipts are
@@ -2392,7 +2395,7 @@ async function copyReportCoverNote(clientId, kind, btnEl){
     // report don't need to keep sitting on the task too, and this way it
     // actually happens every time instead of depending on an assistant
     // remembering to come back and clear them.
-    if(client.includeReceiptsInReport) deleteReceiptsInWindow(clientId, reportWindow);
+    deleteReceiptsInWindow(clientId, reportWindow);
     if(!btnEl) return;
     const orig = btnEl.textContent;
     btnEl.textContent = "Copied ✓";
@@ -9694,9 +9697,9 @@ function renderClientEmailTemplates(client){
   const noEmail = !client.email;
   const addOnPaymentRows = clientAddOnPaymentRows(client);
   const todayStr = new Date().toISOString().slice(0,10);
-  const weekReceiptCount = client.includeReceiptsInReport ? receiptsInWindow(client, week).length : 0;
-  const periodReceiptCount = client.includeReceiptsInReport && periodWindow ? receiptsInWindow(client, periodWindow).length : 0;
-  const lastPeriodReceiptCount = client.includeReceiptsInReport && lastPeriodWindow ? receiptsInWindow(client, lastPeriodWindow).length : 0;
+  const weekReceiptCount = receiptsInWindow(client, week).length;
+  const periodReceiptCount = periodWindow ? receiptsInWindow(client, periodWindow).length : 0;
+  const lastPeriodReceiptCount = lastPeriodWindow ? receiptsInWindow(client, lastPeriodWindow).length : 0;
   return `
     ${noEmail ? `<div class="alert warn">No client email on file — add one on the Membership tab before sending anything below.</div>` : ""}
     ${addOnPaymentRows.length ? `
@@ -9723,14 +9726,6 @@ function renderClientEmailTemplates(client){
       }).join("")}
     </div>` : ""}
     <div class="card">
-      <h3>Receipts</h3>
-      <label style="display:flex;align-items:center;gap:8px;">
-        <input type="checkbox" ${client.includeReceiptsInReport?'checked':''} onchange="updateClientField('${client.id}','includeReceiptsInReport',this.checked)">
-        Include receipts in this client's reports
-      </label>
-      <div class="small" style="margin-top:6px;">When on, any receipt uploaded as a task attachment during a report's date range gets pulled into that report automatically (Weekly, Period, and Last Period below) — nothing extra to attach by hand. Most clients don't need this; Rachel's normal per-task attachments are unaffected either way.</div>
-    </div>
-    <div class="card">
       <h3>Weekly Recap</h3>
       <div class="small" style="margin-bottom:8px;">Sat–Fri, week of ${formatPeriodRange(week)}</div>
       ${(()=>{
@@ -9749,7 +9744,7 @@ function renderClientEmailTemplates(client){
       <div class="small" style="margin-bottom:8px;">To send by hand: click "Copy message," then paste into whatever email or text you use with this client — works the same for everyone, nothing to attach or download.</div>
       <button class="secondary" onclick="downloadClientReport('${client.id}','week')">View</button>
       <button onclick="copyReportCoverNote('${client.id}','week',this)">Copy message</button>
-      ${client.includeReceiptsInReport && weekReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','week')">Clear sent receipts (${weekReceiptCount})</button>` : ""}
+      ${weekReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','week')">Clear sent receipts (${weekReceiptCount})</button>` : ""}
     </div>
     <div class="card">
       <div class="flex-between">
@@ -9760,7 +9755,7 @@ function renderClientEmailTemplates(client){
       ${periodWindow ? `
         <button class="secondary" onclick="downloadClientReport('${client.id}','period')">View</button>
         <button onclick="copyReportCoverNote('${client.id}','period',this)">Copy message</button>
-        ${client.includeReceiptsInReport && periodReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','period')">Clear sent receipts (${periodReceiptCount})</button>` : ""}
+        ${periodReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','period')">Clear sent receipts (${periodReceiptCount})</button>` : ""}
       ` : ""}
     </div>
     <div class="card">
@@ -9769,7 +9764,7 @@ function renderClientEmailTemplates(client){
       ${lastPeriodWindow ? `
         <button class="secondary" onclick="downloadClientReport('${client.id}','lastPeriod')">View</button>
         <button onclick="copyReportCoverNote('${client.id}','lastPeriod',this)">Copy message</button>
-        ${client.includeReceiptsInReport && lastPeriodReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','lastPeriod')">Clear sent receipts (${lastPeriodReceiptCount})</button>` : ""}
+        ${lastPeriodReceiptCount ? `<button class="danger" style="margin-left:6px;" onclick="clearReceiptsInWindow('${client.id}','lastPeriod')">Clear sent receipts (${lastPeriodReceiptCount})</button>` : ""}
       ` : ""}
     </div>
     ${isPilot ? `
