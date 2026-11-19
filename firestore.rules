@@ -33,6 +33,9 @@ service cloud.firestore {
     match /tasks/{document=**} { allow read, write: if request.auth != null; }
     match /timeEntries/{document=**} { allow read, write: if request.auth != null; }
     match /leads/{document=**} { allow read, write: if request.auth != null; }
+    // Demo Pipeline (Director of Development + admin): website/software demo
+    // leads. Own collection so it can be scoped by role once per-role auth lands.
+    match /demoPipeline/{document=**} { allow read, write: if request.auth != null; }
     // Vendor directory — commission/earnings fields inside each vendor doc
     // are hidden from assistants in the UI only, same as every other
     // admin-only field in this app; Firestore rules can't restrict by

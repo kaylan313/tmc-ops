@@ -532,6 +532,7 @@ let state = {
   tasks: [],
   timeEntries: [],
   leads: [],
+  demoPipeline: [],
   vendors: [],
   cardPurchases: [],
   supportTickets: [],
@@ -898,6 +899,14 @@ function seedPreviewData(){
     { id:"lead_preview_1", name:"Pat Prospect", email:"pat@example.com", phone:"555-123-0000", source:"Instagram", status:"New", nextFollowUpDate: daysFromNow(1), notes:"Interested in 10hr package.", createdDate: daysFromNow(-3) },
     { id:"lead_preview_2", name:"Casey Curious", email:"casey@example.com", phone:"555-123-1111", source:"Word of Mouth", status:"Follow-up Needed", nextFollowUpDate: daysFromNow(-1), notes:"", createdDate: daysFromNow(-10) }
   ];
+  const demoPipeline = [
+    { id:"demo_preview_1", businessName:"Bayou Bakery Co.", contactName:"Riley Baker", email:"riley@example.com", phone:"555-200-1111", clientId:"", projectType:"Website Build", stage:"Demo scheduled", source:"Instagram", estimatedValue:3500, demoDate: daysFromNow(1), demoTime:"14:00", demoLink:"https://meet.example.com/abc", nextFollowUpDate: daysFromNow(0), nextStep:"Confirm demo time", notes:"Wants online ordering.", createdDate: daysFromNow(-6), activity:[{ id:"dact_p1", date: hoursAgo(140), type:"Stage", text:"Added as New lead", by:"Heidi Jo Peaden" },{ id:"dact_p2", date: hoursAgo(50), type:"Call", text:"Intro call, booked the demo.", by:"Heidi Jo Peaden" }] },
+    { id:"demo_preview_2", businessName:"", contactName:"", clientId:base.clients[0].id, projectType:"Software Build", stage:"Proposal sent", source:"Existing client", estimatedValue:6000, demoDate: daysFromNow(-5), nextFollowUpDate: daysFromNow(-2), nextStep:"Check if they reviewed the proposal", notes:"Client portal for their rentals.", createdDate: daysFromNow(-20), activity:[{ id:"dact_p3", date: hoursAgo(120), type:"Demo", text:"Showed the booking dashboard demo. Loved it.", by:"Heidi Jo Peaden" }] },
+    { id:"demo_preview_3", businessName:"Cypress Dental", contactName:"Dr. Sam Molar", email:"sam@example.com", clientId:"", projectType:"Website Refresh", stage:"New lead", source:"Word of Mouth", estimatedValue:1800, nextFollowUpDate: daysFromNow(4), nextStep:"Send portfolio + book demo", createdDate: daysFromNow(-1), activity:[] },
+    { id:"demo_preview_4", businessName:"Gulf Coast Realty", contactName:"Jordan Lee", clientId:"", projectType:"Productized Software", stage:"Negotiating", source:"LinkedIn", estimatedValue:5500, demoDate: daysFromNow(-12), nextFollowUpDate: daysFromNow(2), nextStep:"Send revised quote", createdDate: daysFromNow(-25), activity:[] },
+    { id:"demo_preview_5", businessName:"Magnolia Florals", contactName:"Avery Bloom", clientId:"", projectType:"Website Build", stage:"Won", estimatedValue:3000, closedDate: daysFromNow(-3), createdDate: daysFromNow(-40), activity:[] },
+    { id:"demo_preview_6", businessName:"Pelican Fitness", contactName:"Morgan Fit", clientId:"", projectType:"Website Build", stage:"Lost", lostReason:"Went with a cheaper template", estimatedValue:2500, closedDate: daysFromNow(-15), createdDate: daysFromNow(-45), activity:[] }
+  ];
   const cardPurchases = [
     { id:"cardpx_preview_1", clientId:c2.id, assistantId:"asst_2", assistantName:"Victoria Haas", amount:42.17, store:"Grocery Store", description:"Pantry restock", receiptPhotoDataUrl:"", submittedAt: hoursAgo(28), reviewed:false }
   ];
@@ -906,7 +915,7 @@ function seedPreviewData(){
     { id:"support_preview_2", kind:"feature", title:"Add a filter for overdue tasks", description:"Would help on Mondays.", screenshot:null, authorId:"asst_3", authorName:settings.assistants.find(a=>a.id==="asst_3")?.name||"Assistant", status:"In Progress", createdAt: hoursAgo(50), comments:[] },
     { id:"support_preview_3", kind:"bug", title:"Timer kept running after clock out", description:"Fixed after refresh.", screenshot:null, authorId:"asst_2", authorName:"Victoria Haas", status:"Resolved", resolvedAt: hoursAgo(30), createdAt: hoursAgo(96), comments:[{ id:"comment_preview_1", authorName:"Admin", text:"Fixed — let me know if it happens again.", date: hoursAgo(30) }] }
   ];
-  return { settings, clients:[...base.clients, c2, c3], tasks, timeEntries, vendors, leads, cardPurchases, supportTickets };
+  return { settings, clients:[...base.clients, c2, c3], tasks, timeEntries, vendors, leads, demoPipeline, cardPurchases, supportTickets };
 }
 // Floating bar shown on every screen in preview mode — makes it obvious the
 // data is fake and lets the viewer jump between roles without codes.
@@ -967,7 +976,7 @@ async function boot(){
   if(PREVIEW_MODE){
     const p = seedPreviewData();
     Object.assign(state, { settings:p.settings, clients:p.clients, tasks:p.tasks, timeEntries:p.timeEntries, vendors:p.vendors,
-      leads:p.leads, cardPurchases:p.cardPurchases, supportTickets:p.supportTickets, settingsReady:true, clientsReady:true, vendorsReady:true });
+      leads:p.leads, demoPipeline:p.demoPipeline, cardPurchases:p.cardPurchases, supportTickets:p.supportTickets, settingsReady:true, clientsReady:true, vendorsReady:true });
     switchPreviewRole("admin");
   } else if(!FIREBASE_AVAILABLE || !FIREBASE_CONFIGURED){
     console.warn("Running with local seed data only — Firebase is either unavailable or still using placeholder config. Nothing will persist.");
@@ -1072,6 +1081,7 @@ function subscribeAppData(){
   });
   subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
   subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
+  subscribe("demoPipeline", items=>{ state.demoPipeline = items; if(!state.modal) render(); });
   // vendors is subscribed unconditionally in boot() now (see the comment
   // there) — a vendor portal login needs to check it before anyone's
   // necessarily logged in yet, same reason clients/settings already did.
@@ -3816,12 +3826,12 @@ function renderAppShell(){
     ? [
         { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
-        { label:"Growth", tabs:[["leads","Lead Organizer"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
+        { label:"Growth", tabs:[["leads","Lead Organizer"],["demoPipeline","Demo Pipeline"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Goals"],["techSupport","Tech Support"]] }
       ]
     : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
        ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []),
-       ...(isDevDirector() ? [["goals","Goals"]] : []), ["techSupport","Tech Support"]] }];
+       ...(isDevDirector() ? [["demoPipeline","Demo Pipeline"],["goals","Goals"]] : []), ["techSupport","Tech Support"]] }];
 
   app.innerHTML = `
     <div class="app-shell">
@@ -3871,6 +3881,7 @@ function renderMain(){
     case "addons": return state.role==="admin" ? renderAddOnsTab() : "";
     case "content": return (state.role==="admin" || (state.currentAssistant && state.currentAssistant.isContentCreator)) ? renderContentCalendarTab() : "";
     case "leads": return state.role==="admin" ? renderLeadOrganizerTab() : "";
+    case "demoPipeline": return renderDemoPipelineTab();
     case "vendors": return renderVendorsTab();
     case "vendorTickets": return renderVendorTicketsTab();
     case "cardPurchases": return state.role==="admin" ? renderCardPurchasesTab() : "";
@@ -4353,6 +4364,7 @@ function renderAdminDashboard(){
 
   return `
     <h2>Dashboard</h2>
+    ${renderDemoDashboardCard()}
 
     ${openSupportTicketCount ? `
     <div class="alert warn" style="cursor:pointer;margin-bottom:14px;" onclick="setTab('techSupport')">
@@ -5861,6 +5873,370 @@ function removeLead(id){
   if(!confirm("Remove this lead?")) return;
   remove("leads", id);
 }
+// --- Demo Pipeline (Director of Development + admin) ---
+// Website/software demos for existing clients and prospects, tracked from
+// first contact through Won/Lost, with a follow-up date on every open deal.
+// Its own collection (demoPipeline), separate from the VA Lead Organizer,
+// so it can be walled off by role in firestore.rules once per-role auth
+// lands (see Security → Known remaining gap). Who sees it = canViewSoftware().
+const DEMO_STAGES = ["New lead","Demo scheduled","Demo done","Proposal sent","Negotiating","Won","Lost"];
+const DEMO_OPEN_STAGES = DEMO_STAGES.filter(s=>s!=="Won" && s!=="Lost");
+const DEMO_PROJECT_TYPES = ["Website Build","Website Refresh","Software Build","Productized Software","Other"];
+const DEMO_ACTIVITY_TYPES = ["Note","Call","Email","Text","Meeting","Demo"];
+function demoTodayYMD(){ return ymd(new Date()); }
+function demoAddDays(n){ const d = new Date(); d.setDate(d.getDate()+n); return ymd(d); }
+function demoDealTitle(d){
+  const client = d.clientId ? state.clients.find(c=>c.id===d.clientId) : null;
+  return d.businessName || (client && client.name) || d.contactName || "(unnamed)";
+}
+function demoMoney(v){ return "$" + Number(v||0).toLocaleString(undefined,{maximumFractionDigits:0}); }
+function demoIsOpen(d){ return DEMO_OPEN_STAGES.includes(d.stage||"New lead"); }
+// Open deals whose follow-up date is today or earlier — the "do this now" list.
+function demoFollowUpsDue(){
+  const today = demoTodayYMD();
+  return (state.demoPipeline||[]).filter(d=>demoIsOpen(d) && d.nextFollowUpDate && d.nextFollowUpDate<=today)
+    .sort((a,b)=>a.nextFollowUpDate<b.nextFollowUpDate?-1:1);
+}
+function demoUpcomingDemos(days){
+  const today = demoTodayYMD(), end = demoAddDays(days);
+  return (state.demoPipeline||[]).filter(d=>demoIsOpen(d) && d.demoDate && d.demoDate>=today && d.demoDate<=end)
+    .sort((a,b)=>(a.demoDate+(a.demoTime||"")) < (b.demoDate+(b.demoTime||"")) ? -1 : 1);
+}
+function demoFollowUpMeta(d){
+  if(!demoIsOpen(d)) return "";
+  if(!d.nextFollowUpDate) return `<div class="meta" style="color:var(--warn);font-weight:600;">No follow-up date set</div>`;
+  const days = daysUntil(parseYMD(d.nextFollowUpDate), new Date());
+  const color = days<0 ? "var(--danger)" : days===0 ? "var(--warn)" : null;
+  const label = days<0 ? `Follow-up overdue (${parseYMD(d.nextFollowUpDate).toLocaleDateString()})` : days===0 ? "Follow up today" : `Follow up ${parseYMD(d.nextFollowUpDate).toLocaleDateString()}`;
+  return `<div class="meta" style="${color?'color:'+color+';font-weight:600;':''}">${label}</div>`;
+}
+function demoFormatDemoDate(d){
+  if(!d.demoDate) return "";
+  let s = parseYMD(d.demoDate).toLocaleDateString();
+  if(d.demoTime){ const [h,m] = d.demoTime.split(":").map(Number); s += " " + ((h%12)||12) + ":" + String(m).padStart(2,"0") + (h<12?"am":"pm"); }
+  return s;
+}
+
+// Dashboard card (admin + Dev Director): follow-ups due and demos in the next 2 days.
+function renderDemoDashboardCard(){
+  if(!canViewSoftware()) return "";
+  const due = demoFollowUpsDue();
+  const demos = demoUpcomingDemos(2);
+  if(!due.length && !demos.length) return "";
+  return `
+    <div class="card">
+      <div class="flex-between"><h3 style="margin:0;">Demo Pipeline</h3><button class="secondary" onclick="setTab('demoPipeline')">Open pipeline</button></div>
+      ${demos.length ? `<div class="small" style="font-weight:600;margin:10px 0 4px;">Demos coming up</div>
+        ${demos.map(d=>`<div class="list-item" style="cursor:pointer;" onclick="openDemoDeal('${d.id}')"><div><strong>${escHtml(demoDealTitle(d))}</strong><div class="small">${escHtml(d.projectType||'')}</div></div><span class="small">${demoFormatDemoDate(d)}</span></div>`).join("")}` : ""}
+      ${due.length ? `<div class="small" style="font-weight:600;margin:10px 0 4px;">Follow-ups due</div>
+        ${due.map(d=>`<div class="list-item" style="cursor:pointer;" onclick="openDemoDeal('${d.id}')"><div><strong>${escHtml(demoDealTitle(d))}</strong><div class="small">${escHtml(d.stage||'New lead')}${d.nextStep?' · '+escHtml(d.nextStep):''}</div></div>${demoFollowUpMeta(d)}</div>`).join("")}` : ""}
+    </div>`;
+}
+
+function renderDemoPipelineTab(){
+  if(!canViewSoftware()) return "";
+  const f = state.demoFilter || (state.demoFilter = { view:"board", search:"", type:"all", who:"all", showClosed:false });
+  const all = state.demoPipeline || [];
+  const search = (f.search||"").trim().toLowerCase();
+  const matches = d=>{
+    if(f.type!=="all" && (d.projectType||"Other")!==f.type) return false;
+    if(f.who==="client" && !d.clientId) return false;
+    if(f.who==="prospect" && d.clientId) return false;
+    if(search){
+      const hay = [demoDealTitle(d), d.contactName, d.email, d.phone, d.nextStep].join(" ").toLowerCase();
+      if(!hay.includes(search)) return false;
+    }
+    return true;
+  };
+  const filtered = all.filter(matches);
+  const open = all.filter(demoIsOpen);
+  const pipelineValue = open.reduce((s,d)=>s+(Number(d.estimatedValue)||0),0);
+  const monthStart = demoTodayYMD().slice(0,8) + "01";
+  const wonThisMonth = all.filter(d=>d.stage==="Won" && (d.closedDate||"")>=monthStart);
+  const closed = all.filter(d=>d.stage==="Won"||d.stage==="Lost");
+  const winRate = closed.length ? Math.round(100*all.filter(d=>d.stage==="Won").length/closed.length) : null;
+  const due = demoFollowUpsDue();
+  const stages = f.showClosed ? DEMO_STAGES : DEMO_OPEN_STAGES;
+  const byFollowUp = (a,b)=>(a.nextFollowUpDate||"9999") < (b.nextFollowUpDate||"9999") ? -1 : 1;
+  return `
+    <div class="flex-between"><h2 style="margin:0;">Demo Pipeline</h2><button onclick="openDemoDeal(null)">+ Add lead</button></div>
+    <div class="small" style="margin:4px 0 14px;">Website and software demos for current clients and new prospects, from first contact to signed.</div>
+
+    <div class="stat-row">
+      <div class="stat-tile"><div class="stat-label">Open deals</div><div class="stat-value">${open.length}</div></div>
+      <div class="stat-tile ${due.length?'status-danger':''}"><div class="stat-label">Follow-ups due</div><div class="stat-value">${due.length}</div></div>
+      <div class="stat-tile"><div class="stat-label">Demos next 7 days</div><div class="stat-value">${demoUpcomingDemos(7).length}</div></div>
+      <div class="stat-tile"><div class="stat-label">Open pipeline value</div><div class="stat-value">${demoMoney(pipelineValue)}</div></div>
+      <div class="stat-tile"><div class="stat-label">Won this month</div><div class="stat-value">${wonThisMonth.length}${wonThisMonth.length?' · '+demoMoney(wonThisMonth.reduce((s,d)=>s+(Number(d.estimatedValue)||0),0)):''}</div></div>
+      <div class="stat-tile"><div class="stat-label">Win rate (all time)</div><div class="stat-value">${winRate===null?'—':winRate+'%'}</div></div>
+    </div>
+
+    ${due.length ? `<div class="card">
+      <h3>Follow up today</h3>
+      ${due.map(d=>`<div class="list-item">
+        <div style="cursor:pointer;" onclick="openDemoDeal('${d.id}')"><strong>${escHtml(demoDealTitle(d))}</strong>
+          <div class="small">${escHtml(d.stage||'New lead')} · ${escHtml(d.projectType||'')}${d.nextStep?' · Next: '+escHtml(d.nextStep):''}</div>
+          ${demoFollowUpMeta(d)}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button onclick="openDemoDeal('${d.id}',true)">Log follow-up</button>
+          <button class="secondary" onclick="snoozeDemoFollowUp('${d.id}',3)">+3 days</button>
+        </div>
+      </div>`).join("")}
+    </div>` : ""}
+
+    <div class="row" style="margin-bottom:14px;align-items:flex-end;">
+      <div class="tabs" style="margin:0;border:0;">
+        <button class="${f.view==='board'?'active':''}" onclick="setDemoFilter('view','board')">Board</button>
+        <button class="${f.view==='list'?'active':''}" onclick="setDemoFilter('view','list')">List</button>
+      </div>
+      <div><label class="small">Search</label><input id="demoSearch" style="width:190px;" placeholder="Name, business, email..." value="${escHtml(f.search||'')}" oninput="setDemoSearchDebounced(this.value)"></div>
+      <div><label class="small">Project type</label>
+        <select onchange="setDemoFilter('type',this.value)">
+          <option value="all">All types</option>
+          ${DEMO_PROJECT_TYPES.map(t=>`<option value="${t}" ${f.type===t?'selected':''}>${t}</option>`).join("")}
+        </select></div>
+      <div><label class="small">Who</label>
+        <select onchange="setDemoFilter('who',this.value)">
+          <option value="all" ${f.who==='all'?'selected':''}>Everyone</option>
+          <option value="client" ${f.who==='client'?'selected':''}>Current TMC clients</option>
+          <option value="prospect" ${f.who==='prospect'?'selected':''}>Potential clients</option>
+        </select></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;padding-bottom:8px;">
+        <input type="checkbox" ${f.showClosed?'checked':''} onchange="setDemoFilter('showClosed',this.checked)"> Show Won &amp; Lost
+      </label>
+    </div>
+
+    ${f.view==="list" ? `
+    <div class="card" style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead><tr style="text-align:left;"><th style="padding:6px;">Lead</th><th>Stage</th><th>Type</th><th>Demo</th><th>Next follow-up</th><th>Next step</th><th style="text-align:right;padding-right:6px;">Value</th></tr></thead>
+        <tbody>
+        ${filtered.filter(d=>f.showClosed || demoIsOpen(d)).sort(byFollowUp).map(d=>`
+          <tr style="cursor:pointer;border-top:1px solid var(--cream-dark);" onclick="openDemoDeal('${d.id}')">
+            <td style="padding:8px 6px;"><strong>${escHtml(demoDealTitle(d))}</strong>${d.clientId?' <span class="badge">Client</span>':''}<div class="small">${escHtml(d.contactName||'')}</div></td>
+            <td>${escHtml(d.stage||'New lead')}</td><td>${escHtml(d.projectType||'')}</td>
+            <td>${demoFormatDemoDate(d)||'—'}</td><td>${demoFollowUpMeta(d)||'—'}</td>
+            <td>${escHtml(d.nextStep||'')}</td><td style="text-align:right;padding-right:6px;">${d.estimatedValue?demoMoney(d.estimatedValue):'—'}</td>
+          </tr>`).join("") || `<tr><td colspan="7" class="small" style="padding:8px;">Nothing here yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>` : `
+    <div class="kanban">
+      ${stages.map(stage=>{
+        const items = filtered.filter(d=>(d.stage||"New lead")===stage).sort(byFollowUp);
+        const val = items.reduce((s,d)=>s+(Number(d.estimatedValue)||0),0);
+        return `<div class="kanban-col">
+          <h4>${stage} <span class="small">(${items.length}${val?' · '+demoMoney(val):''})</span></h4>
+          ${items.map(renderDemoCard).join("") || `<div class="small">—</div>`}
+        </div>`;
+      }).join("")}
+    </div>`}
+  `;
+}
+function renderDemoCard(d){
+  const idx = DEMO_STAGES.indexOf(d.stage||"New lead");
+  return `
+    <div class="task-card">
+      <div onclick="openDemoDeal('${d.id}')">
+        <span class="badge business">${escHtml(d.projectType||'Other')}</span>
+        ${d.clientId ? '<span class="badge">TMC client</span>' : ''}
+        <strong style="display:block;margin-top:4px;">${escHtml(demoDealTitle(d))}</strong>
+        ${d.contactName && d.contactName!==demoDealTitle(d) ? `<div class="meta">${escHtml(d.contactName)}</div>` : ""}
+        ${d.estimatedValue ? `<div class="meta">${demoMoney(d.estimatedValue)}</div>` : ""}
+        ${d.demoDate ? `<div class="meta">🖥 Demo ${demoFormatDemoDate(d)}</div>` : ""}
+        ${d.nextStep ? `<div class="meta">Next: ${escHtml(d.nextStep)}</div>` : ""}
+        ${demoFollowUpMeta(d)}
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        ${idx>0 ? `<button class="secondary" style="flex:1;padding:4px;" title="Move back" onclick="moveDemoStage('${d.id}',-1)">◀</button>` : ""}
+        ${idx<DEMO_STAGES.indexOf("Won") ? `<button class="secondary" style="flex:1;padding:4px;" title="Move forward" onclick="moveDemoStage('${d.id}',1)">▶</button>` : ""}
+      </div>
+    </div>`;
+}
+function setDemoFilter(field, value){ state.demoFilter[field] = value; render(); }
+let _demoSearchTimer = null;
+function setDemoSearchDebounced(v){
+  clearTimeout(_demoSearchTimer);
+  _demoSearchTimer = setTimeout(()=>{
+    setDemoFilter('search', v);
+    const el = document.getElementById("demoSearch");
+    if(el){ el.focus(); el.setSelectionRange(v.length, v.length); }
+  }, 250);
+}
+function demoActivityEntry(type, text){
+  const who = state.role==="admin" ? "Admin" : (state.currentAssistant && state.currentAssistant.name) || "";
+  return { id:newId("dact"), date:new Date().toISOString(), type, text, by:who };
+}
+function demoStagePatch(d, stage){
+  const patch = { stage, stageChangedAt:new Date().toISOString(),
+    activity:[...(d.activity||[]), demoActivityEntry("Stage", `${d.stage||'New lead'} → ${stage}`)] };
+  if(stage==="Won"||stage==="Lost"){ patch.closedDate = demoTodayYMD(); patch.nextFollowUpDate = ""; }
+  else patch.closedDate = "";
+  return patch;
+}
+function moveDemoStage(id, dir){
+  const d = (state.demoPipeline||[]).find(x=>x.id===id);
+  if(!d) return;
+  const idx = DEMO_STAGES.indexOf(d.stage||"New lead");
+  const next = DEMO_STAGES[idx+dir];
+  if(!next || next==="Lost") return;
+  if(next==="Won" && !confirm(`Mark ${demoDealTitle(d)} as Won?`)) return;
+  upsert("demoPipeline", id, demoStagePatch(d, next));
+}
+function snoozeDemoFollowUp(id, days){
+  upsert("demoPipeline", id, { nextFollowUpDate: demoAddDays(days) });
+}
+function openDemoDeal(id, focusLog){
+  const existing = id ? (state.demoPipeline||[]).find(x=>x.id===id) : null;
+  const deal = existing ? JSON.parse(JSON.stringify(existing)) : {
+    id:null, contactName:"", businessName:"", email:"", phone:"", clientId:"", projectType:"Website Build",
+    stage:"New lead", source:"", estimatedValue:"", demoDate:"", demoTime:"", demoLink:"",
+    nextFollowUpDate: demoAddDays(2), nextStep:"", lostReason:"", notes:"", activity:[]
+  };
+  state.modal = { type:"demoDeal", deal, originalStage: existing ? (existing.stage||"New lead") : null,
+    log:{ type: focusLog ? "Call" : "Note", text:"", followUp:"" }, focusLog: !!focusLog };
+  render();
+  if(focusLog) setTimeout(()=>{ const el = document.getElementById("demo_log_text"); if(el){ el.scrollIntoView({block:"center"}); el.focus(); } }, 50);
+}
+function demoDraftSet(field, value){ state.modal.deal[field] = value; }
+function demoPickClient(clientId){
+  const d = state.modal.deal;
+  d.clientId = clientId;
+  const c = state.clients.find(x=>x.id===clientId);
+  if(c){
+    if(!d.businessName) d.businessName = c.name || "";
+    if(!d.contactName) d.contactName = c.name || "";
+    if(!d.email) d.email = c.email || "";
+    if(!d.phone) d.phone = (c.profile && c.profile.phone) || "";
+  }
+  render();
+}
+function renderDemoDealModal(){
+  const m = state.modal, d = m.deal;
+  const v = k => escHtml(d[k]==null ? "" : String(d[k]));
+  const clientOptions = state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.clientStatus!=="cancelled").sort((a,b)=>(a.name||"").localeCompare(b.name||""));
+  const log = (d.activity||[]).slice().sort((a,b)=>a.date<b.date?1:-1);
+  return `
+    <div class="modal" style="width:760px;">
+      <div class="flex-between"><h3 style="margin:0;">${d.id ? escHtml(demoDealTitle(d)) : "New lead"}</h3>
+        ${d.id ? `<span class="badge" style="background:${d.stage==='Won'?'var(--ok)':d.stage==='Lost'?'#8a7a72':'var(--rose-dark)'};">${escHtml(d.stage||'New lead')}</span>` : ""}</div>
+
+      <div class="modal-section-label">Who</div>
+      <div class="row">
+        <div style="flex:1;"><label class="small">Current TMC client?</label>
+          <select onchange="demoPickClient(this.value)">
+            <option value="">No — potential client</option>
+            ${clientOptions.map(c=>`<option value="${c.id}" ${d.clientId===c.id?'selected':''}>${escHtml(c.name||'')}</option>`).join("")}
+          </select></div>
+        <div style="flex:1;"><label class="small">Business name</label><input value="${v('businessName')}" oninput="demoDraftSet('businessName',this.value)"></div>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <div style="flex:1;"><label class="small">Contact name</label><input value="${v('contactName')}" oninput="demoDraftSet('contactName',this.value)"></div>
+        <div style="flex:1;"><label class="small">Email</label><input type="email" value="${v('email')}" oninput="demoDraftSet('email',this.value)"></div>
+        <div style="flex:1;"><label class="small">Phone</label><input value="${v('phone')}" oninput="demoDraftSet('phone',this.value)"></div>
+      </div>
+
+      <div class="modal-section-label">The project</div>
+      <div class="row">
+        <div><label class="small">Project type</label>
+          <select onchange="demoDraftSet('projectType',this.value)">
+            ${DEMO_PROJECT_TYPES.map(t=>`<option ${d.projectType===t?'selected':''}>${t}</option>`).join("")}
+          </select></div>
+        <div><label class="small">Stage</label>
+          <select onchange="demoDraftSet('stage',this.value);render();">
+            ${DEMO_STAGES.map(s=>`<option ${(d.stage||'New lead')===s?'selected':''}>${s}</option>`).join("")}
+          </select></div>
+        <div><label class="small">Estimated value ($)</label><input type="number" min="0" step="50" style="width:130px;" value="${v('estimatedValue')}" oninput="demoDraftSet('estimatedValue',this.value)"></div>
+        <div style="flex:1;"><label class="small">How they found us / referred by</label><input value="${v('source')}" oninput="demoDraftSet('source',this.value)"></div>
+      </div>
+      ${d.stage==="Lost" ? `<div style="margin-top:8px;"><label class="small">Why we lost it</label><input style="width:100%;" value="${v('lostReason')}" placeholder="Price, timing, went with someone else..." oninput="demoDraftSet('lostReason',this.value)"></div>` : ""}
+
+      <div class="modal-section-label">Demo</div>
+      <div class="row">
+        <div><label class="small">Demo date</label><input type="date" value="${v('demoDate')}" onchange="demoDraftSet('demoDate',this.value)"></div>
+        <div><label class="small">Time</label><input type="time" value="${v('demoTime')}" onchange="demoDraftSet('demoTime',this.value)"></div>
+        <div style="flex:1;"><label class="small">Meeting link or location</label><input value="${v('demoLink')}" placeholder="Zoom/Meet link or address" oninput="demoDraftSet('demoLink',this.value)"></div>
+      </div>
+
+      <div class="modal-section-label">Follow-up</div>
+      <div class="row" style="align-items:flex-end;">
+        <div><label class="small">Next follow-up</label><input id="demo_followup" type="date" value="${v('nextFollowUpDate')}" onchange="demoDraftSet('nextFollowUpDate',this.value)"></div>
+        <div style="display:flex;gap:4px;padding-bottom:2px;">
+          ${[["Tomorrow",1],["+3 days",3],["+1 week",7],["+2 weeks",14]].map(([l,n])=>`<button class="secondary" style="padding:6px 8px;font-size:12px;" onclick="demoDraftSet('nextFollowUpDate',demoAddDays(${n}));render();">${l}</button>`).join("")}
+        </div>
+      </div>
+      <div style="margin-top:8px;"><label class="small">Next step</label><input style="width:100%;" value="${v('nextStep')}" placeholder="e.g. Send proposal, schedule demo, check in after they talk to their partner" oninput="demoDraftSet('nextStep',this.value)"></div>
+      <div style="margin-top:8px;"><label class="small">Notes (what they need, budget, timeline)</label><textarea style="width:100%;min-height:70px;" oninput="demoDraftSet('notes',this.value)">${v('notes')}</textarea></div>
+
+      <div class="modal-section-label">Activity log</div>
+      <div class="row" style="align-items:flex-start;">
+        <div style="flex:0 0 130px;"><select style="width:130px;" onchange="state.modal.log.type=this.value">${DEMO_ACTIVITY_TYPES.map(t=>`<option ${m.log.type===t?'selected':''}>${t}</option>`).join("")}</select></div>
+        <div style="flex:1;"><textarea id="demo_log_text" style="width:100%;min-height:50px;" placeholder="What happened? e.g. Called, left voicemail. Sent the proposal." oninput="state.modal.log.text=this.value">${escHtml(m.log.text||'')}</textarea></div>
+      </div>
+      <div class="small" style="margin:4px 0 6px;">Logging a follow-up saves the lead. Remember to set the next follow-up date above.</div>
+      <button class="secondary" onclick="addDemoActivity()">+ Add to log</button>
+      <div style="margin-top:10px;max-height:220px;overflow-y:auto;">
+        ${log.length ? log.map(a=>`<div class="list-item" style="align-items:flex-start;">
+          <div><span class="badge" style="background:${a.type==='Stage'?'#8a7a72':'var(--rose-dark)'};">${escHtml(a.type)}</span> ${escHtml(a.text)}
+            <div class="small">${new Date(a.date).toLocaleString([], {dateStyle:'medium', timeStyle:'short'})}${a.by?' · '+escHtml(a.by):''}</div></div>
+        </div>`).join("") : `<div class="small">No activity yet.</div>`}
+      </div>
+
+      <div style="margin-top:18px;display:flex;justify-content:space-between;gap:8px;">
+        <div>${d.id ? `<button class="danger" onclick="removeDemoDeal('${d.id}')">Delete</button>` : ""}</div>
+        <div style="display:flex;gap:8px;">
+          <button class="secondary" onclick="closeModal()">Cancel</button>
+          <button onclick="saveDemoDeal()">${d.id ? "Save" : "Add lead"}</button>
+        </div>
+      </div>
+    </div>`;
+}
+// Builds the record to write from the modal draft. Returns null (after an
+// alert) if it can't be saved yet.
+function demoDealFromDraft(){
+  const m = state.modal, d = { ...m.deal };
+  if(!(d.businessName||"").trim() && !(d.contactName||"").trim() && !d.clientId){ alert("Add a business or contact name first."); return null; }
+  ["businessName","contactName","email","phone","source","demoLink","nextStep","notes","lostReason"].forEach(k=>{ d[k] = (d[k]||"").trim(); });
+  d.estimatedValue = d.estimatedValue==="" || d.estimatedValue==null ? "" : Number(d.estimatedValue)||0;
+  d.activity = d.activity || [];
+  const stage = d.stage || "New lead";
+  if(!d.id){
+    d.id = newId("demo");
+    d.createdDate = demoTodayYMD();
+    d.createdBy = state.role==="admin" ? "admin" : (state.currentAssistant && state.currentAssistant.id) || "";
+    d.stageChangedAt = new Date().toISOString();
+    d.activity = [demoActivityEntry("Stage", "Added as " + stage), ...d.activity];
+    if(stage==="Won"||stage==="Lost") d.closedDate = demoTodayYMD();
+  } else if(m.originalStage!==stage){
+    Object.assign(d, demoStagePatch({ ...d, stage:m.originalStage }, stage));
+    m.originalStage = stage;
+  }
+  return d;
+}
+function addDemoActivity(){
+  const m = state.modal;
+  const text = (m.log.text||"").trim();
+  if(!text){ alert("Write what happened first."); return; }
+  m.deal.activity = [...(m.deal.activity||[]), demoActivityEntry(m.log.type||"Note", text)];
+  const d = demoDealFromDraft();
+  if(!d){ m.deal.activity.pop(); return; }
+  upsert("demoPipeline", d.id, d);
+  m.deal = d;
+  m.log = { type:"Note", text:"" };
+  render();
+}
+function saveDemoDeal(){
+  const d = demoDealFromDraft();
+  if(!d) return;
+  if(demoIsOpen(d) && !d.nextFollowUpDate && !confirm("No follow-up date set, so this lead won't show up as due. Save anyway?")) return;
+  upsert("demoPipeline", d.id, d);
+  closeModal();
+}
+function removeDemoDeal(id){
+  if(!confirm("Delete this lead and its whole activity log? This can't be undone.")) return;
+  remove("demoPipeline", id);
+  closeModal();
+}
 // --- Vendor Directory — shared reference list of outside professionals
 // (visible to admin + team). Commission % and the referral earnings log
 // are admin-only, hidden from the assistant view entirely (not just
@@ -7085,6 +7461,7 @@ function renderTeamDashboard(){
         : `Upload your signed W9 — ${w9DaysLeft} day${w9DaysLeft===1?'':'s'} left (Onboarding tab).`}
     </div>` : ""}
     ${renderClientRequestsCard(myPending, { title: "Requests awaiting your review" })}
+    ${renderDemoDashboardCard()}
     ${myEntry ? `
       <div class="card">
         <div class="flex-between">
@@ -14992,6 +15369,7 @@ function renderModal(){
     : state.modal.type==="orgChartSeat" ? renderOrgChartSeatModal(state.modal.rowId, state.modal.seat)
     : state.modal.type==="contentTaskViewer" ? renderContentTaskViewerModal(state.modal.taskId)
     : state.modal.type==="leadEditor" ? renderLeadEditorModal(state.modal.prefill)
+    : state.modal.type==="demoDeal" ? renderDemoDealModal()
     : state.modal.type==="cardPurchaseEntry" ? renderCardPurchaseEntryModal()
     : state.modal.type==="newVendorTicket" ? renderNewVendorTicketModal()
     : state.modal.type==="vendorTicketDetail" ? renderVendorTicketDetailModal(state.modal.vendorId, state.modal.ticketId)
