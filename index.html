@@ -1080,8 +1080,13 @@ function subscribeAppData(){
     if(!state.modal) render();
   });
   subscribe("timeEntries", items=>{ state.timeEntries = items; if(!state.modal) render(); });
-  subscribe("leads", items=>{ state.leads = items; if(!state.modal) render(); });
-  subscribe("demoPipeline", items=>{ state.demoPipeline = items; if(!state.modal) render(); });
+  // One listener, two lists: Demo Pipeline records live in "leads" tagged
+  // pipeline:"dev" (see demoUpsert), the rest are Lead Organizer leads.
+  subscribe("leads", items=>{
+    state.leads = items.filter(l=>l.pipeline!=="dev");
+    state.demoPipeline = items.filter(l=>l.pipeline==="dev");
+    if(!state.modal) render();
+  });
   // vendors is subscribed unconditionally in boot() now (see the comment
   // there) — a vendor portal login needs to check it before anyone's
   // necessarily logged in yet, same reason clients/settings already did.
@@ -5876,13 +5881,23 @@ function removeLead(id){
 // --- Demo Pipeline (Director of Development + admin) ---
 // Website/software demos for existing clients and prospects, tracked from
 // first contact through Won/Lost, with a follow-up date on every open deal.
-// Its own collection (demoPipeline), separate from the VA Lead Organizer,
-// so it can be walled off by role in firestore.rules once per-role auth
-// lands (see Security → Known remaining gap). Who sees it = canViewSoftware().
+// Stored in the existing "leads" collection tagged pipeline:"dev" (so it
+// works under the already-deployed firestore.rules); the leads listener
+// splits them into state.demoPipeline and keeps them out of state.leads, so
+// the Lead Organizer and Scorecard never see them. If per-role auth lands,
+// move these to their own collection. Who sees it = canViewSoftware().
 const DEMO_STAGES = ["New lead","Demo scheduled","Demo done","Proposal sent","Negotiating","Won","Lost"];
 const DEMO_OPEN_STAGES = DEMO_STAGES.filter(s=>s!=="Won" && s!=="Lost");
 const DEMO_PROJECT_TYPES = ["Website Build","Website Refresh","Software Build","Productized Software","Other"];
 const DEMO_ACTIVITY_TYPES = ["Note","Call","Email","Text","Meeting","Demo"];
+function demoUpsert(id, data){
+  if(!db){ upsertLocal("demoPipeline", id, data); if(!_rendering) render(); return Promise.resolve(true); }
+  return upsert("leads", id, { ...data, pipeline:"dev" });
+}
+function demoRemove(id){
+  if(!db){ removeLocal("demoPipeline", id); if(!_rendering) render(); return Promise.resolve(); }
+  return remove("leads", id);
+}
 function demoTodayYMD(){ return ymd(new Date()); }
 function demoAddDays(n){ const d = new Date(); d.setDate(d.getDate()+n); return ymd(d); }
 function demoDealTitle(d){
@@ -6081,10 +6096,10 @@ function moveDemoStage(id, dir){
   const next = DEMO_STAGES[idx+dir];
   if(!next || next==="Lost") return;
   if(next==="Won" && !confirm(`Mark ${demoDealTitle(d)} as Won?`)) return;
-  upsert("demoPipeline", id, demoStagePatch(d, next));
+  demoUpsert(id, demoStagePatch(d, next));
 }
 function snoozeDemoFollowUp(id, days){
-  upsert("demoPipeline", id, { nextFollowUpDate: demoAddDays(days) });
+  demoUpsert(id, { nextFollowUpDate: demoAddDays(days) });
 }
 function openDemoDeal(id, focusLog){
   const existing = id ? (state.demoPipeline||[]).find(x=>x.id===id) : null;
@@ -6220,7 +6235,7 @@ function addDemoActivity(){
   m.deal.activity = [...(m.deal.activity||[]), demoActivityEntry(m.log.type||"Note", text)];
   const d = demoDealFromDraft();
   if(!d){ m.deal.activity.pop(); return; }
-  upsert("demoPipeline", d.id, d);
+  demoUpsert(d.id, d);
   m.deal = d;
   m.log = { type:"Note", text:"" };
   render();
@@ -6229,12 +6244,12 @@ function saveDemoDeal(){
   const d = demoDealFromDraft();
   if(!d) return;
   if(demoIsOpen(d) && !d.nextFollowUpDate && !confirm("No follow-up date set, so this lead won't show up as due. Save anyway?")) return;
-  upsert("demoPipeline", d.id, d);
+  demoUpsert(d.id, d);
   closeModal();
 }
 function removeDemoDeal(id){
   if(!confirm("Delete this lead and its whole activity log? This can't be undone.")) return;
-  remove("demoPipeline", id);
+  demoRemove(id);
   closeModal();
 }
 // --- Vendor Directory — shared reference list of outside professionals
