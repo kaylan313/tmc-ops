@@ -5437,21 +5437,22 @@ function ensureCurrentScorecardPeriodSnapshot(){
 // to navigating the current tab means the flow can never go fully silent,
 // just less convenient (loses the open app tab) on a browser that blocks
 // both popup attempts.
-function openOAuthUrl(authTab, url){
-  if(authTab && !authTab.closed){ authTab.location.href = url; return; }
-  const opened = window.open(url, "_blank");
-  if(!opened) window.location.href = url;
+// Nov 2026: used to open a blank tab synchronously on click, then navigate
+// IT once the auth URL was ready (the standard trick to dodge popup
+// blockers waiting on a network call). That still failed silently in
+// Safari specifically — the blank tab opens fine, but Safari can just
+// ignore the later authTab.location.href assignment with no error at all,
+// leaving a dead about:blank tab forever with zero sign anything went
+// wrong ("I click Connect and nothing happens"). Navigating the CURRENT
+// tab directly is never blocked and can't fail silently in any browser —
+// the tradeoff is leaving the app, but the OAuth callback page tells you
+// to come back, and that's far better than a connect button that just
+// doesn't work.
+function openOAuthUrl(url){
+  window.location.href = url;
 }
 async function connectQuickBooks(){
   if(!fns){ alert("QuickBooks isn't available right now — try reloading the page."); return; }
-  // Opened synchronously, BEFORE the await below — a window.open() that
-  // happens only after an await has already lost the "direct result of a
-  // click" status most browsers require, so it gets silently blocked with
-  // no error at all (this is exactly what "nothing happens when I click
-  // connect" turned out to be). Opening a blank tab right now, then
-  // navigating it once the real URL is ready, keeps it inside the original
-  // click so it's never blocked.
-  const authTab = window.open("", "_blank");
   try{
     // The state value comes from the server (getQuickBooksAuthConfig mints
     // and stores it), not generated here — a client-side-only state is
@@ -5465,10 +5466,9 @@ async function connectQuickBooks(){
       + "&response_type=code"
       + "&scope=com.intuit.quickbooks.accounting"
       + "&state=" + encodeURIComponent(data.state);
-    openOAuthUrl(authTab, authUrl);
+    openOAuthUrl(authUrl);
   }catch(err){
     console.error(err);
-    if(authTab) authTab.close();
     alert("Couldn't start the QuickBooks connection — check the console for details.");
   }
 }
@@ -5495,10 +5495,6 @@ async function disconnectQuickBooksAccount(){
 // token at all, since Google only issues one on first consent by default.
 async function connectGmailNotifications(){
   if(!fns){ alert("This isn't available right now — try reloading the page."); return; }
-  // Same reasoning as connectQuickBooks() above — open the tab synchronously
-  // now, navigate it once the real URL is ready, so it can't get silently
-  // popup-blocked by waiting on the network call first.
-  const authTab = window.open("", "_blank");
   try{
     const { data } = await fns.httpsCallable("getGmailAuthConfig")();
     const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -5510,10 +5506,9 @@ async function connectGmailNotifications(){
       + "&prompt=consent"
       + "&login_hint=support@themodernconcierge.co"
       + "&state=" + encodeURIComponent(data.state);
-    openOAuthUrl(authTab, authUrl);
+    openOAuthUrl(authUrl);
   }catch(err){
     console.error(err);
-    if(authTab) authTab.close();
     alert("Couldn't start the email connection — check the console for details.");
   }
 }
@@ -12187,9 +12182,6 @@ function refreshGoogleCalendar(){
 async function connectGoogleCalendar(){
   if(PREVIEW_MODE){ alert("Connecting Google only works in the real app — preview shows sample events instead."); return; }
   if(!fns || !state.currentAssistant){ alert("This isn't available right now — try reloading the page."); return; }
-  // Open the tab synchronously so it can't get popup-blocked while we wait
-  // on the network (same as connectGmailNotifications).
-  const authTab = window.open("", "_blank");
   try{
     const { data } = await fns.httpsCallable("getGoogleCalendarAuthConfig")({ assistantId: state.currentAssistant.id });
     const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -12201,12 +12193,9 @@ async function connectGoogleCalendar(){
       + "&prompt=consent"
       + (state.currentAssistant.email ? "&login_hint=" + encodeURIComponent(state.currentAssistant.email) : "")
       + "&state=" + encodeURIComponent(data.state);
-    openOAuthUrl(authTab, authUrl);
-    // Pick up the new connection when they come back to this tab.
-    window.addEventListener("focus", ()=>{ if(state.activeTab==="calendar") refreshGoogleCalendar(); }, { once:true });
+    openOAuthUrl(authUrl);
   }catch(err){
     console.error(err);
-    if(authTab) authTab.close();
     alert("Couldn't start the Google Calendar connection — check the console for details.");
   }
 }
@@ -13111,7 +13100,6 @@ function fetchReportGmailStatus(force){
 async function connectReportGmail(){
   if(PREVIEW_MODE){ alert("Connecting Gmail only works in the real app."); return; }
   if(!fns || !state.currentAssistant){ alert("This isn't available right now — try reloading the page."); return; }
-  const authTab = window.open("", "_blank");
   try{
     const { data } = await fns.httpsCallable("getReportGmailAuthConfig")({ assistantId: state.currentAssistant.id });
     const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
@@ -13122,11 +13110,9 @@ async function connectReportGmail(){
       + "&access_type=offline&prompt=consent"
       + (state.currentAssistant.email ? "&login_hint=" + encodeURIComponent(state.currentAssistant.email) : "")
       + "&state=" + encodeURIComponent(data.state);
-    openOAuthUrl(authTab, authUrl);
-    window.addEventListener("focus", ()=>fetchReportGmailStatus(true), { once:true });
+    openOAuthUrl(authUrl);
   }catch(err){
     console.error(err);
-    if(authTab) authTab.close();
     alert("Couldn't start the Gmail connection — check the console for details.");
   }
 }
