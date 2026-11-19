@@ -3008,7 +3008,27 @@ function tasksAwaitingClientResponse(){
   });
   return rows
     .map(r=>({ ...r, days: r.askedAt ? (Date.now()-new Date(r.askedAt).getTime())/86400000 : null }))
+    .filter(r=>!opsNudgeStillDismissed(r.task))
     .sort((a,b)=>(b.days||0)-(a.days||0));
+}
+// Tori can dismiss a stale "nudge the assistant" reminder once she's
+// actually nudged them — but it comes back on its own once the client
+// renews again and the task is STILL stuck waiting, since a fresh cycle
+// still stuck is worth flagging again, not the same one she already acted on.
+function opsNudgeStillDismissed(task){
+  if(!task.opsNudgeDismissedAt) return false;
+  const client = state.clients.find(c=>c.id===task.clientId);
+  if(!client) return true;
+  const period = currentBillingPeriod(client);
+  if(!period) return true;
+  return task.opsNudgeDismissedPeriodKey === billingCheckKey(period.start);
+}
+function dismissOpsNudge(taskId){
+  const task = state.tasks.find(t=>t.id===taskId);
+  if(!task) return;
+  const client = state.clients.find(c=>c.id===task.clientId);
+  const period = client ? currentBillingPeriod(client) : null;
+  upsert("tasks", taskId, { opsNudgeDismissedAt: new Date().toISOString(), opsNudgeDismissedPeriodKey: period ? billingCheckKey(period.start) : "none" });
 }
 // Distinct from overdueTasks() above: that's "been sitting open a while"
 // (staleness); this is "missed an actual deadline" — different signals.
@@ -4041,8 +4061,9 @@ function renderOpsLeadColumn(assistant, d){
       const client = state.clients.find(c=>c.id===task.clientId);
       const label = kind==="review" ? "Needs client review" : "Asked about pushing to next month";
       const stale = days!==null && days>=5;
-      return `<div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${task.id}',null)">
-        <div><strong>${task.title||'(untitled task)'}</strong><span class="small"> · ${client?client.name:'Internal'}</span><div class="small" style="${stale?'color:var(--warn);':''}">${label}${days!==null?' · asked '+Math.floor(days)+'d ago'+(stale?' — nudge the assistant to follow up':''):' — not yet sent'}</div></div>
+      return `<div class="list-item">
+        <div style="cursor:pointer;" onclick="openTaskEditor('${task.id}',null)"><strong>${task.title||'(untitled task)'}</strong><span class="small"> · ${client?client.name:'Internal'}</span><div class="small" style="${stale?'color:var(--warn);':''}">${label}${days!==null?' · asked '+Math.floor(days)+'d ago'+(stale?' — nudge the assistant to follow up':''):' — not yet sent'}</div></div>
+        ${stale ? `<button class="secondary" onclick="event.stopPropagation();dismissOpsNudge('${task.id}')" title="Clears this until the client renews again — if the task's still stuck then, it comes back.">Nudged ✓</button>` : ""}
       </div>`;
     }).join("")}
   `);
@@ -5147,6 +5168,19 @@ function ensureCurrentScorecardPeriodSnapshot(){
 // explanation of why tokens live server-side only. This app never touches
 // qbTokens directly (Firestore Rules block it entirely); everything here
 // goes through the three callable functions.
+// Safari's popup blocker can silently return null from window.open even
+// when it's called synchronously from a click handler (the usual
+// Chrome-safe workaround every connect function below already uses) —
+// with no blocked-popup indicator at all, which is exactly what "I click
+// Connect and nothing happens" turned out to be. Falling all the way back
+// to navigating the current tab means the flow can never go fully silent,
+// just less convenient (loses the open app tab) on a browser that blocks
+// both popup attempts.
+function openOAuthUrl(authTab, url){
+  if(authTab && !authTab.closed){ authTab.location.href = url; return; }
+  const opened = window.open(url, "_blank");
+  if(!opened) window.location.href = url;
+}
 async function connectQuickBooks(){
   if(!fns){ alert("QuickBooks isn't available right now — try reloading the page."); return; }
   // Opened synchronously, BEFORE the await below — a window.open() that
@@ -5170,7 +5204,7 @@ async function connectQuickBooks(){
       + "&response_type=code"
       + "&scope=com.intuit.quickbooks.accounting"
       + "&state=" + encodeURIComponent(data.state);
-    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
+    openOAuthUrl(authTab, authUrl);
   }catch(err){
     console.error(err);
     if(authTab) authTab.close();
@@ -5215,7 +5249,7 @@ async function connectGmailNotifications(){
       + "&prompt=consent"
       + "&login_hint=support@themodernconcierge.co"
       + "&state=" + encodeURIComponent(data.state);
-    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
+    openOAuthUrl(authTab, authUrl);
   }catch(err){
     console.error(err);
     if(authTab) authTab.close();
@@ -11271,7 +11305,7 @@ async function connectGoogleCalendar(){
       + "&prompt=consent"
       + (state.currentAssistant.email ? "&login_hint=" + encodeURIComponent(state.currentAssistant.email) : "")
       + "&state=" + encodeURIComponent(data.state);
-    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
+    openOAuthUrl(authTab, authUrl);
     // Pick up the new connection when they come back to this tab.
     window.addEventListener("focus", ()=>{ if(state.activeTab==="calendar") refreshGoogleCalendar(); }, { once:true });
   }catch(err){
@@ -12192,7 +12226,7 @@ async function connectReportGmail(){
       + "&access_type=offline&prompt=consent"
       + (state.currentAssistant.email ? "&login_hint=" + encodeURIComponent(state.currentAssistant.email) : "")
       + "&state=" + encodeURIComponent(data.state);
-    if(authTab) authTab.location.href = authUrl; else window.open(authUrl, "_blank");
+    openOAuthUrl(authTab, authUrl);
     window.addEventListener("focus", ()=>fetchReportGmailStatus(true), { once:true });
   }catch(err){
     console.error(err);
