@@ -3280,7 +3280,7 @@ function overdueTasks(){
 // reason should still get a periodic check-in, not disappear forever.
 function pausedTasks(){
   return state.tasks
-    .filter(t=>t.status==="Paused" && taskBelongsToActiveClient(t))
+    .filter(t=>t.status==="Paused" && taskBelongsToActiveClient(t) && !opsPausedStillDismissed(t))
     .map(t=>({ task:t, days: daysOpen(t) }))
     .sort((a,b)=>(b.days||0)-(a.days||0));
 }
@@ -3306,25 +3306,46 @@ function tasksAwaitingClientResponse(){
     .filter(r=>!opsNudgeStillDismissed(r.task))
     .sort((a,b)=>(b.days||0)-(a.days||0));
 }
-// Tori can dismiss a stale "nudge the assistant" reminder once she's
-// actually nudged them — but it comes back on its own once the client
-// renews again and the task is STILL stuck waiting, since a fresh cycle
-// still stuck is worth flagging again, not the same one she already acted on.
-function opsNudgeStillDismissed(task){
-  if(!task.opsNudgeDismissedAt) return false;
+// Shared by every dismissible Ops Lead reminder (nudge, paused, ...): Tori
+// can dismiss it once she's seen/handled it, but it comes back on its own
+// once the client renews again if the task is STILL in the same state —
+// a fresh cycle still stuck is worth flagging again, not the same one she
+// already acted on, and nothing stays silently dismissed forever.
+function opsReminderStillDismissed(task, field){
+  if(!task[field+"DismissedAt"]) return false;
   const client = state.clients.find(c=>c.id===task.clientId);
   if(!client) return true;
   const period = currentBillingPeriod(client);
   if(!period) return true;
-  return task.opsNudgeDismissedPeriodKey === billingCheckKey(period.start);
+  return task[field+"DismissedPeriodKey"] === billingCheckKey(period.start);
 }
-function dismissOpsNudge(taskId){
+function dismissOpsReminder(taskId, field){
   const task = state.tasks.find(t=>t.id===taskId);
   if(!task) return;
   const client = state.clients.find(c=>c.id===task.clientId);
   const period = client ? currentBillingPeriod(client) : null;
-  upsert("tasks", taskId, { opsNudgeDismissedAt: new Date().toISOString(), opsNudgeDismissedPeriodKey: period ? billingCheckKey(period.start) : "none" });
+  upsert("tasks", taskId, { [field+"DismissedAt"]: new Date().toISOString(), [field+"DismissedPeriodKey"]: period ? billingCheckKey(period.start) : "none" });
 }
+function opsNudgeStillDismissed(task){ return opsReminderStillDismissed(task, "opsNudge"); }
+function dismissOpsNudge(taskId){ dismissOpsReminder(taskId, "opsNudge"); }
+function opsPausedStillDismissed(task){ return opsReminderStillDismissed(task, "opsPaused"); }
+function dismissOpsPaused(taskId){ dismissOpsReminder(taskId, "opsPaused"); }
+// Same idea, but for reminders keyed by CLIENT instead of by task (at-risk
+// clients don't have one specific task to attach the dismissal to).
+function opsClientReminderStillDismissed(client, field){
+  if(!client[field+"DismissedAt"]) return false;
+  const period = currentBillingPeriod(client);
+  if(!period) return true;
+  return client[field+"DismissedPeriodKey"] === billingCheckKey(period.start);
+}
+function dismissOpsClientReminder(clientId, field){
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const period = currentBillingPeriod(client);
+  upsert("clients", clientId, { [field+"DismissedAt"]: new Date().toISOString(), [field+"DismissedPeriodKey"]: period ? billingCheckKey(period.start) : "none" });
+}
+function opsAtRiskStillDismissed(client){ return opsClientReminderStillDismissed(client, "opsAtRisk"); }
+function dismissOpsAtRisk(clientId){ dismissOpsClientReminder(clientId, "opsAtRisk"); }
 // Distinct from overdueTasks() above: that's "been sitting open a while"
 // (staleness); this is "missed an actual deadline" — different signals.
 // At-risk: no billable hours this period AND no completed task in the last
@@ -4351,9 +4372,12 @@ function renderOpsLeadColumn(assistant, d){
   if(d.atRiskClients.length) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">At-risk clients</div>
     ${d.atRiskClients.map(c=>`
-      <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}">
-        <div><div>${c.name}</div><div class="small">${atRiskClientDetail(c)}</div></div>
-        <span class="alert warn" style="margin:0;">at risk</span>
+      <div class="list-item">
+        <div style="cursor:pointer;" onclick="viewClientMembership('${c.id}')" title="${atRiskClientDetail(c).replace(/"/g,'&quot;')}"><div>${c.name}</div><div class="small">${atRiskClientDetail(c)}</div></div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="alert warn" style="margin:0;">at risk</span>
+          <button class="secondary" onclick="dismissOpsAtRisk('${c.id}')" title="Clears this until the client renews again — if they're still at risk then, it comes back.">Dismiss</button>
+        </div>
       </div>`).join("")}
   `);
   if(d.awaitingClient.length) sections.push(`
@@ -4372,8 +4396,9 @@ function renderOpsLeadColumn(assistant, d){
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Paused</div>
     ${d.paused.map(({task,days})=>{
       const client = state.clients.find(c=>c.id===task.clientId);
-      return `<div class="list-item" style="cursor:pointer;" onclick="openTaskEditor('${task.id}',null)">
-        <div><strong>${task.title||'(untitled task)'}</strong><span class="small"> · ${client?client.name:'Internal'}${days!==null?' · paused '+Math.floor(days)+'d':''}</span>${task.pausedNote?`<div class="small">${escHtml(task.pausedNote)}</div>`:''}</div>
+      return `<div class="list-item">
+        <div style="cursor:pointer;" onclick="openTaskEditor('${task.id}',null)"><strong>${task.title||'(untitled task)'}</strong><span class="small"> · ${client?client.name:'Internal'}${days!==null?' · paused '+Math.floor(days)+'d':''}</span>${task.pausedNote?`<div class="small">${escHtml(task.pausedNote)}</div>`:''}</div>
+        <button class="secondary" onclick="event.stopPropagation();dismissOpsPaused('${task.id}')" title="Clears this until the client renews again — if it's still paused then, it comes back.">Dismiss</button>
       </div>`;
     }).join("")}
   `);
@@ -4657,7 +4682,7 @@ function renderAdminDashboard(){
   // of the company-wide stat-row counts above — those still reflect every
   // real client.
   const opsExcludedIds = new Set(state.clients.filter(c=>c.excludeFromOpsOversight).map(c=>c.id));
-  const atRiskClientsForOps = atRiskClients.filter(c=>!opsExcludedIds.has(c.id));
+  const atRiskClientsForOps = atRiskClients.filter(c=>!opsExcludedIds.has(c.id) && !opsAtRiskStillDismissed(c));
   const notStartedClientsForOps = notStartedClients.filter(c=>!opsExcludedIds.has(c.id));
   const pendingForOps = pending.filter(t=>!opsExcludedIds.has(t.clientId));
   const clientCheckInsForOps = clientCheckIns.filter(({client})=>!opsExcludedIds.has(client.id));
