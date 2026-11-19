@@ -1941,7 +1941,14 @@ function togglePayrollPeriodPaid(periodEndIso, paid){
 // indefinitely instead of actually clearing out at 60 days like intended.
 // Dropped that gate; this is now a plain age check.
 function cleanupOldCompletedTasks(){
-  const cutoff = Date.now() - 60*24*3600000;
+  // Nov 2026: shrunk from 60 to 30 days — completed tasks were piling up
+  // with embedded receipt/attachment photos (850 Done tasks, ~35MB, almost
+  // all receipts from errand-type tasks) that the app loads into memory
+  // on every session and rescans on every render, well past what's needed
+  // for anything still actively used (reports only ever look at the
+  // current week/period; payroll and build/maintenance pay history live
+  // on the client record, not on the task itself).
+  const cutoff = Date.now() - 30*24*3600000;
   state.tasks.forEach(t=>{
     if(t.status!=="Done" || !t.completedAt) return;
     const completedAt = new Date(t.completedAt).getTime();
