@@ -5475,7 +5475,7 @@ async function connectQuickBooks(){
     // never actually verified against anything at callback time, which is
     // the exact CSRF gap Intuit's security review checks for. See
     // quickBooksOAuthCallback in functions/index.js for the other half.
-    const { data } = await fns.httpsCallable("getQuickBooksAuthConfig")();
+    const { data } = await withTimeout(fns.httpsCallable("getQuickBooksAuthConfig")(), 20000, "QuickBooks connect");
     const authUrl = "https://appcenter.intuit.com/connect/oauth2"
       + "?client_id=" + encodeURIComponent(data.clientId)
       + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
@@ -5485,7 +5485,7 @@ async function connectQuickBooks(){
     openOAuthUrl(authUrl);
   }catch(err){
     console.error(err);
-    alert("Couldn't start the QuickBooks connection — check the console for details.");
+    alert("Couldn't start the QuickBooks connection — " + (err.message||err));
   }
 }
 async function disconnectQuickBooksAccount(){
@@ -5512,7 +5512,7 @@ async function disconnectQuickBooksAccount(){
 async function connectGmailNotifications(){
   if(!fns){ alert("This isn't available right now — try reloading the page."); return; }
   try{
-    const { data } = await fns.httpsCallable("getGmailAuthConfig")();
+    const { data } = await withTimeout(fns.httpsCallable("getGmailAuthConfig")(), 20000, "Email connect");
     const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
       + "?client_id=" + encodeURIComponent(data.clientId)
       + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
@@ -5525,7 +5525,7 @@ async function connectGmailNotifications(){
     openOAuthUrl(authUrl);
   }catch(err){
     console.error(err);
-    alert("Couldn't start the email connection — check the console for details.");
+    alert("Couldn't start the email connection — " + (err.message||err));
   }
 }
 async function disconnectGmailNotificationsAccount(){
@@ -12199,7 +12199,7 @@ async function connectGoogleCalendar(){
   if(PREVIEW_MODE){ alert("Connecting Google only works in the real app — preview shows sample events instead."); return; }
   if(!fns || !state.currentAssistant){ alert("This isn't available right now — try reloading the page."); return; }
   try{
-    const { data } = await fns.httpsCallable("getGoogleCalendarAuthConfig")({ assistantId: state.currentAssistant.id });
+    const { data } = await withTimeout(fns.httpsCallable("getGoogleCalendarAuthConfig")({ assistantId: state.currentAssistant.id }), 20000, "Calendar connect");
     const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
       + "?client_id=" + encodeURIComponent(data.clientId)
       + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
@@ -12212,7 +12212,7 @@ async function connectGoogleCalendar(){
     openOAuthUrl(authUrl);
   }catch(err){
     console.error(err);
-    alert("Couldn't start the Google Calendar connection — check the console for details.");
+    alert("Couldn't start the Google Calendar connection — " + (err.message||err));
   }
 }
 async function disconnectGoogleCalendarAccount(){
@@ -13117,7 +13117,7 @@ async function connectReportGmail(){
   if(PREVIEW_MODE){ alert("Connecting Gmail only works in the real app."); return; }
   if(!fns || !state.currentAssistant){ alert("This isn't available right now — try reloading the page."); return; }
   try{
-    const { data } = await fns.httpsCallable("getReportGmailAuthConfig")({ assistantId: state.currentAssistant.id });
+    const { data } = await withTimeout(fns.httpsCallable("getReportGmailAuthConfig")({ assistantId: state.currentAssistant.id }), 20000, "Report Gmail connect");
     const authUrl = "https://accounts.google.com/o/oauth2/v2/auth"
       + "?client_id=" + encodeURIComponent(data.clientId)
       + "&redirect_uri=" + encodeURIComponent(data.redirectUri)
@@ -13129,7 +13129,7 @@ async function connectReportGmail(){
     openOAuthUrl(authUrl);
   }catch(err){
     console.error(err);
-    alert("Couldn't start the Gmail connection — check the console for details.");
+    alert("Couldn't start the Gmail connection — " + (err.message||err));
   }
 }
 async function disconnectReportGmail(){
