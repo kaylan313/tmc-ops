@@ -3674,18 +3674,18 @@ function emailsNeededList(){
 const TOUCHPOINT_SCHEDULE = {
   pilot: [
     { day:10, type:"dropin", label:"Drop In Visit", note:"See the assistant working and confirm the orientation expectations are being met. Fix anything now, before the day 21 call." },
-    { day:21, type:"call", label:"Check In Call", note:"Follow up on anything from the drop in visit and start the 3 month renewal conversation." }
+    { day:21, type:"call", label:"Check In Call", note:"Follow up on anything from the drop in visit and start the 3 month renewal conversation.", renewal:true }
   ],
   "3month": [
     { day:30, type:"dropin", label:"Drop In Visit", note:"Visit while the assistant is working. Check quality and client satisfaction." },
     { day:60, type:"call", label:"Check In Call", note:"Midpoint check in with the client." },
-    { day:75, type:"dropin", label:"Drop In Visit and Renewal Call", note:"Final quality check, then present the annual agreement." }
+    { day:75, type:"dropin", label:"Drop In Visit and Renewal Call", note:"Final quality check, then present the annual agreement.", renewal:true }
   ],
   annual: [
     { day:90, type:"call", label:"Check In Call", note:"Quarterly check in." },
     { day:180, type:"dropin", label:"Drop In Visit", note:"Mid year review of assistant performance." },
     { day:270, type:"call", label:"Check In Call", note:"Quarterly check in." },
-    { day:320, type:"call", label:"Renewal Call", note:"Discuss renewing the annual agreement." }
+    { day:320, type:"call", label:"Renewal Call", note:"Discuss renewing the annual agreement.", renewal:true }
   ]
 };
 const TOUCHPOINT_STAGE_LABELS = { pilot:"Pilot", "3month":"3 Month Contract", annual:"Annual Contract" };
@@ -3723,10 +3723,16 @@ function generateStageTouchpoints(client, stage, startDateStr, backfill){
     const preLaunchSkip = !!backfill && dueDate < todayStr;
     return {
       id:newId("tp"), stage, type:item.type, label:item.label, note:item.note, dueDate,
+      renewal: !!item.renewal,
       assistantId:null, assistantName:null, assistantPhone:null,
       status: preLaunchSkip ? "skipped" : "open",
       completedAt:null, completedNote: preLaunchSkip ? "Skipped (Pre Launch)" : null,
-      anchorKey: "stage:"+stage+":"+startDateStr
+      anchorKey: "stage:"+stage+":"+startDateStr,
+      // Contact attempt log (Nov 2026) — contactStatus is always computed
+      // from this, never stored, same reasoning as touchpointPhase.
+      contactLog: [],
+      renewalDecision:null, renewalContractType:null, renewalNotesForHeidi:null,
+      renewalNotRenewingReason:null, renewalFollowUpDate:null, renewalDecidedAt:null
     };
   });
 }
@@ -3738,7 +3744,11 @@ function ensureClientStageTouchpoints(client, backfill){
   const anchorKey = "stage:"+stage+":"+startDateStr;
   const existing = client.touchpoints || [];
   if(existing.some(t=>t.anchorKey===anchorKey)) return null; // already generated for this exact stage+date
-  const kept = existing.map(t=> (!t.assistantId && t.status==="open" && t.anchorKey!==anchorKey) ? { ...t, status:"cancelled" } : t);
+  // Only cancel touchpoints THIS function generated (anchorKey starts
+  // with "stage:") — a standalone Renewal Follow Up touchpoint also has
+  // assistantId:null but its own "followup:" anchorKey, and must survive
+  // a stage regeneration untouched.
+  const kept = existing.map(t=> (!t.assistantId && t.status==="open" && (t.anchorKey||"").startsWith("stage:") && t.anchorKey!==anchorKey) ? { ...t, status:"cancelled" } : t);
   return [...kept, ...generateStageTouchpoints(client, stage, startDateStr, backfill)];
 }
 // Assistant check-in is independent of client stage — tracks the MAIN
@@ -3764,10 +3774,12 @@ function ensureAssistantTouchpoint(client, backfill){
   const dueDate = addDaysYMD(assignedDate, ASSISTANT_CHECKIN_DAY);
   const kept = existing.map(t=> (t.assistantId && t.status==="open" && t.anchorKey!==anchorKey) ? { ...t, status:"cancelled" } : t);
   const fresh = {
-    id:newId("tp"), stage:null, type:"assistantCall", label:"Assistant Check In Call",
+    id:newId("tp"), stage:null, type:"assistantCall", label:"Assistant Check In Call", renewal:false,
     note:`Call ${assistant?assistant.name:'the assistant'} about ${client.name}. Ask how things are going, what's been completed, anything unclear about client expectations, and how they're doing personally.`,
     dueDate, assistantId, assistantName: assistant?assistant.name:null, assistantPhone: assistant?assistant.phone:null,
-    status:"open", completedAt:null, completedNote:null, anchorKey
+    status:"open", completedAt:null, completedNote:null, anchorKey,
+    contactLog: [], renewalDecision:null, renewalContractType:null, renewalNotesForHeidi:null,
+    renewalNotRenewingReason:null, renewalFollowUpDate:null, renewalDecidedAt:null
   };
   return [...kept, fresh];
 }
@@ -3832,13 +3844,297 @@ function openTouchpoints(includeFuture){
   });
   return items.sort((a,b)=>a.days-b.days);
 }
-function completeTouchpoint(clientId, touchpointId){
+// Every client with an open renewal handoff in flight (any status short
+// of paymentReceived) — Heidi's queue, keyed off client.renewalHandoffs
+// rather than touchpoints since a handoff outlives the touchpoint that
+// spawned it.
+function renewalHandoffsOpen(){
+  const items = [];
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID).forEach(client=>{
+    (client.renewalHandoffs||[]).forEach(h=>{
+      if(h.status!=="paymentReceived") items.push({ client, handoff:h });
+    });
+  });
+  return items.sort((a,b)=>new Date(a.handoff.decidedAt)-new Date(b.handoff.decidedAt));
+}
+// Every active client whose contract ends within 45 days, OR who has an
+// open renewal handoff, OR an open renewal:true touchpoint — Kaylan's
+// view across the whole renewal pipeline regardless of which stage it's
+// stuck at. "Last activity" takes the most recent of: a contact log entry
+// on the relevant renewal touchpoint, a handoff status timestamp, or the
+// touchpoint's own completedAt.
+function renewalsBoardRows(){
+  const now = new Date();
+  return state.clients
+    .filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active"))
+    .map(client=>{
+      const end = termEndDate(client);
+      const daysToEnd = end ? Math.round((end-now)/86400000) : null;
+      const openHandoff = (client.renewalHandoffs||[]).find(h=>h.status!=="paymentReceived");
+      const renewalTouchpoint = (client.touchpoints||[])
+        .filter(t=>t.renewal)
+        .sort((a,b)=> (a.status==="open"?0:1)-(b.status==="open"?0:1) || (b.dueDate<a.dueDate?-1:1))[0] || null;
+      const inWindow = daysToEnd!==null && daysToEnd<=45;
+      if(!inWindow && !openHandoff && !(renewalTouchpoint && renewalTouchpoint.status==="open")) return null;
+      const activityDates = [
+        renewalTouchpoint && renewalTouchpoint.completedAt,
+        renewalTouchpoint && (renewalTouchpoint.contactLog||[]).length ? renewalTouchpoint.contactLog[renewalTouchpoint.contactLog.length-1].at : null,
+        openHandoff && openHandoff.contractSignedAt, openHandoff && openHandoff.contractSentAt, openHandoff && openHandoff.decidedAt
+      ].filter(Boolean).map(d=>new Date(d));
+      const lastActivity = activityDates.length ? new Date(Math.max(...activityDates.map(d=>d.getTime()))) : null;
+      return {
+        client, end, daysToEnd,
+        assistant: state.settings.assistants.find(a=>a.id===mainAssistantId(client)),
+        stage: client.currentStage||null,
+        renewalTouchpoint,
+        outreachStatus: renewalTouchpoint ? touchpointContactStatus(renewalTouchpoint) : null,
+        renewalDecision: renewalTouchpoint ? renewalTouchpoint.renewalDecision : null,
+        handoff: openHandoff || null,
+        awaitingSignature: openHandoff ? renewalHandoffIsAwaitingSignature(openHandoff) : false,
+        lastActivity
+      };
+    })
+    .filter(Boolean)
+    .sort((a,b)=>{
+      if(a.daysToEnd===null && b.daysToEnd===null) return 0;
+      if(a.daysToEnd===null) return 1;
+      if(b.daysToEnd===null) return -1;
+      return a.daysToEnd-b.daysToEnd;
+    });
+}
+// Shared by the Dashboard card, the Touchpoints tab, and the client
+// profile — one row shape everywhere so the contact log/action buttons
+// only need to be built correctly once.
+function renderTouchpointRow(client, t){
+  const phase = t.status==="open" ? touchpointPhase(t.dueDate) : null;
+  const contactStatus = touchpointContactStatus(t);
+  const statusColor = contactStatus==="noResponse" ? 'var(--danger)' : contactStatus==="reached" ? 'var(--ok)' : contactStatus==="complete" ? '#8a7a72' : 'var(--warn)';
+  const canAct = t.status==="open" && canLogOutreach();
+  const mainAssistant = state.settings.assistants.find(a=>a.id===mainAssistantId(client));
+  return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+    <div class="flex-between" style="align-items:flex-start;">
+      <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+        <strong>${escHtml(client.name)}</strong> — ${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}
+        <span class="small" style="${phase==='overdue'?'color:var(--danger);font-weight:600;':''}"> · ${phase==='overdue'?'OVERDUE':phase==='due'?'Due':phase==='upcoming'?'Upcoming':''} · due ${parseYMD(t.dueDate).toLocaleDateString()}</span>
+        <div class="small">${escHtml(t.note)}</div>
+        ${t.type==='assistantCall' ? `<div class="small">${escHtml(t.assistantName||'')}${t.assistantPhone?' · '+escHtml(t.assistantPhone):''}</div>` : (mainAssistant?`<div class="small">Assistant: ${escHtml(mainAssistant.name)}</div>`:'')}
+      </div>
+      <span class="badge" style="background:${statusColor};margin:0;white-space:nowrap;">${CONTACT_STATUS_LABELS[contactStatus]}</span>
+    </div>
+    ${(t.contactLog||[]).length ? `<div class="small" style="color:#8a7a72;">${t.contactLog.map(formatContactLogLine).join(" · ")}</div>` : ""}
+    ${t.renewalDecision ? `<div class="small" style="font-weight:600;">Renewal: ${t.renewalDecision==='renewing'?'Renewing → '+TOUCHPOINT_STAGE_LABELS[t.renewalContractType]:t.renewalDecision==='notRenewing'?'Not renewing — '+escHtml(t.renewalNotRenewingReason||''):'Undecided — follow up '+parseYMD(t.renewalFollowUpDate).toLocaleDateString()}</div>` : ""}
+    ${canAct ? `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      ${Object.entries(CONTACT_METHOD_LABELS).map(([k,l])=>`<button class="secondary" style="padding:3px 8px;font-size:12px;" onclick="logTouchpointContact('${client.id}','${t.id}','${k}')">${l}</button>`).join("")}
+      <button style="padding:3px 8px;font-size:12px;" onclick="markTouchpointComplete('${client.id}','${t.id}')">Mark Complete</button>
+    </div>` : ""}
+  </div>`;
+}
+// ---- Contact attempt log + renewal decision + Heidi handoff (Nov 2026) ----
+// A touchpoint can no longer be dismissed with nothing recorded — Tori logs
+// a real attempt (method + timestamp, optional note) every time, and
+// contactStatus is always computed from that log, never stored separately,
+// same reasoning as touchpointPhase above.
+const CONTACT_METHOD_LABELS = {
+  calledNoAnswer:"Called (No Answer)", leftVoicemail:"Left Voicemail",
+  texted:"Texted", emailed:"Emailed", reachedClient:"Reached Client"
+};
+const CONTACT_STATUS_LABELS = { notStarted:"Not Started", attempting:"Attempting", noResponse:"No Response", reached:"Reached", complete:"Complete" };
+const NO_RESPONSE_DAYS = 5;
+const AWAITING_SIGNATURE_DAYS = 5;
+function touchpointContactStatus(t){
+  if(t.status==="completed") return "complete";
+  const log = t.contactLog||[];
+  if(log.some(e=>e.method==="reachedClient")) return "reached";
+  if(!log.length) return "notStarted";
+  const daysSinceFirst = (Date.now() - new Date(log[0].at).getTime())/86400000;
+  return daysSinceFirst>=NO_RESPONSE_DAYS ? "noResponse" : "attempting";
+}
+function formatContactLogLine(e){
+  const d = new Date(e.at);
+  return CONTACT_METHOD_LABELS[e.method] + (e.note?' — '+escHtml(e.note):'') + ", " + d.toLocaleDateString() + " " + d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});
+}
+// Shared-admin logins have no individual identity to attribute an action
+// to — same pattern as markBillingCheckComplete's name prompt, remembered
+// per-browser so it's a one-time thing, not every single click.
+function actingPersonName(){
+  if(state.currentAssistant) return state.currentAssistant.name;
+  let lastName = "";
+  try { lastName = localStorage.getItem("tmcActingPersonName") || ""; } catch(e){}
+  const name = (prompt("Your name (admin logins are shared — this attributes the action correctly):", lastName) || "").trim();
+  if(name){ try { localStorage.setItem("tmcActingPersonName", name); } catch(e){} }
+  return name || null;
+}
+// Permissions (per Kaylan, Nov 2026): reuses the existing isOpsLead/
+// isDocsLead Team-tab role flags rather than inventing new ones — Tori is
+// Ops Lead, Heidi is Docs & Billing Lead already. Admin (including a
+// shared login either of them might use) can always do both.
+function canLogOutreach(){
+  return state.role==="admin" || !!(state.currentAssistant && state.currentAssistant.isOpsLead);
+}
+function canManageRenewalContracts(){
+  return state.role==="admin" || !!(state.currentAssistant && state.currentAssistant.isDocsLead);
+}
+function logTouchpointContact(clientId, touchpointId, method){
+  if(!canLogOutreach()){ alert("Only the Operations Lead (or admin) can log outreach."); return; }
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
-  const notes = prompt("Any notes about this touchpoint? (optional)", "");
-  if(notes===null) return; // Cancel — don't mark it complete
-  const touchpoints = (client.touchpoints||[]).map(t=> t.id===touchpointId ? { ...t, status:"completed", completedAt:new Date().toISOString(), completedNote:notes.trim() } : t);
+  const note = (prompt(CONTACT_METHOD_LABELS[method] + " — any notes? (optional)", "") || "").trim();
+  const entry = { id:newId("contact"), method, at:new Date().toISOString(), note, by:actingPersonName() };
+  const touchpoints = client.touchpoints.map(t=> t.id===touchpointId ? { ...t, contactLog:[...(t.contactLog||[]), entry] } : t);
   upsert("clients", clientId, { touchpoints });
+}
+// Requires at least a "Reached Client" entry (or a hit of the No Response
+// threshold, so a genuinely unreachable client doesn't stay open forever)
+// before this can close — and for a renewal touchpoint, requires a
+// recorded decision first, same gate as everywhere else that reuses a
+// write path (renewalDecision gets set by saveRenewalDecision, which
+// itself marks the touchpoint complete, so this function is really only
+// the non-renewal path once that's accounted for).
+function markTouchpointComplete(clientId, touchpointId){
+  if(!canLogOutreach()){ alert("Only the Operations Lead (or admin) can complete this."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const t = client.touchpoints.find(x=>x.id===touchpointId);
+  if(!t) return;
+  const cs = touchpointContactStatus(t);
+  if(cs!=="reached" && cs!=="noResponse"){ alert("Log \"Reached Client\" (or wait for No Response) before marking this complete."); return; }
+  if(t.renewal && !t.renewalDecision){ openRenewalDecisionModal(clientId, touchpointId); return; }
+  const touchpoints = client.touchpoints.map(x=> x.id===touchpointId ? { ...x, status:"completed", completedAt:new Date().toISOString() } : x);
+  upsert("clients", clientId, { touchpoints });
+}
+function openRenewalDecisionModal(clientId, touchpointId){
+  if(!canLogOutreach()){ alert("Only the Operations Lead (or admin) can record a renewal decision."); return; }
+  state.modal = { type:"renewalDecision", clientId, touchpointId, draft:{ decision:"", contractType:"3month", notesForHeidi:"", notRenewingReason:"", followUpDate:"" } };
+  render();
+}
+function saveRenewalDecision(){
+  const { clientId, touchpointId, draft } = state.modal;
+  const client = state.clients.find(c=>c.id===clientId);
+  const original = client && client.touchpoints.find(t=>t.id===touchpointId);
+  if(!client || !original) return;
+  if(!draft.decision){ alert("Pick a decision."); return; }
+  if(draft.decision==="notRenewing" && !draft.notRenewingReason.trim()){ alert("A reason is required."); return; }
+  if(draft.decision==="undecided" && !draft.followUpDate){ alert("Pick a follow up date."); return; }
+  const now = new Date().toISOString();
+  const by = actingPersonName();
+  let touchpoints = client.touchpoints.map(t=>{
+    if(t.id!==touchpointId) return t;
+    const patch = { renewalDecision:draft.decision, renewalDecidedAt:now, status:"completed", completedAt:now };
+    if(draft.decision==="renewing"){ patch.renewalContractType = draft.contractType; patch.renewalNotesForHeidi = draft.notesForHeidi.trim(); }
+    if(draft.decision==="notRenewing"){ patch.renewalNotRenewingReason = draft.notRenewingReason.trim(); }
+    if(draft.decision==="undecided"){ patch.renewalFollowUpDate = draft.followUpDate; }
+    return { ...t, ...patch };
+  });
+  let renewalHandoffs = client.renewalHandoffs || [];
+  const patch = {};
+  if(draft.decision==="renewing"){
+    // Immediate handoff to Heidi — surfaces on her Dashboard column and
+    // the Renewals Board the instant this saves.
+    renewalHandoffs = [...renewalHandoffs, {
+      id:newId("handoff"), touchpointId, contractType:draft.contractType, notesForHeidi:draft.notesForHeidi.trim(),
+      decidedAt:now, decidedBy:by,
+      status:"awaitingContract", contractSentAt:null, contractSignedAt:null, paymentReceivedAt:null, confirmedStartDate:null
+    }];
+  }
+  if(draft.decision==="notRenewing"){
+    patch.notRenewingAlertAt = now; // dismissible admin Dashboard callout
+  }
+  if(draft.decision==="undecided"){
+    // Independent of the stage schedule (won't get cancelled by a later
+    // stage/date change the way stage-generated touchpoints do) — its
+    // own contact log starts fresh; the original's full history stays on
+    // the completed record above for context.
+    touchpoints = [...touchpoints, {
+      id:newId("tp"), stage:original.stage, type:"call", label:"Renewal Follow Up", renewal:true,
+      note:"Follow up on the renewal decision for "+client.name+".",
+      dueDate: draft.followUpDate, assistantId:null, assistantName:null, assistantPhone:null,
+      status:"open", completedAt:null, completedNote:null, anchorKey:"followup:"+newId("anchor"),
+      contactLog:[], renewalDecision:null, renewalContractType:null, renewalNotesForHeidi:null,
+      renewalNotRenewingReason:null, renewalFollowUpDate:null, renewalDecidedAt:null
+    }];
+  }
+  upsert("clients", clientId, { touchpoints, renewalHandoffs, ...patch });
+  closeModal();
+}
+function renewalHandoffIsAwaitingSignature(h){
+  if(!h || h.status!=="contractSent" || !h.contractSentAt) return false;
+  return (Date.now() - new Date(h.contractSentAt).getTime())/86400000 >= AWAITING_SIGNATURE_DAYS;
+}
+function updateRenewalHandoffStep(clientId, handoffId, step){
+  if(!canManageRenewalContracts()){ alert("Only the Documentation & Billing Lead (or admin) can update this."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const now = new Date().toISOString();
+  const renewalHandoffs = client.renewalHandoffs.map(h=>{
+    if(h.id!==handoffId) return h;
+    if(step==="contractSent") return { ...h, status:"contractSent", contractSentAt:now };
+    if(step==="contractSigned") return { ...h, status:"contractSigned", contractSignedAt:now };
+    return h;
+  });
+  upsert("clients", clientId, { renewalHandoffs });
+}
+// The one step that actually moves the client into the new stage — this
+// is what triggers ensureAllClientTouchpoints to cancel the old stage's
+// open touchpoints and generate the new stage's schedule, same mechanism
+// as any other stage change or annual renewal. Also keeps the legacy
+// termType/termStartDate (Agreement card, cancellation notice) in sync,
+// since nothing else updates those once a client starts renewing through
+// this flow.
+function markRenewalPaymentReceived(clientId, handoffId){
+  if(!canManageRenewalContracts()){ alert("Only the Documentation & Billing Lead (or admin) can update this."); return; }
+  const client = state.clients.find(c=>c.id===clientId);
+  if(!client) return;
+  const handoff = client.renewalHandoffs.find(h=>h.id===handoffId);
+  if(!handoff) return;
+  const startDate = prompt(`Confirm the start date for ${client.name}'s new ${TOUCHPOINT_STAGE_LABELS[handoff.contractType]} (it may differ from today's payment date):`, ymd(new Date()));
+  if(!startDate) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate)){ alert("Enter a date as YYYY-MM-DD."); return; }
+  const now = new Date().toISOString();
+  const renewalHandoffs = client.renewalHandoffs.map(h=> h.id===handoffId ? { ...h, status:"paymentReceived", paymentReceivedAt:now, confirmedStartDate:startDate } : h);
+  const stageField = TOUCHPOINT_STAGE_FIELD[handoff.contractType];
+  upsert("clients", clientId, {
+    renewalHandoffs, currentStage: handoff.contractType, [stageField]: startDate,
+    termType: handoff.contractType==="annual" ? "12month_renewal" : "3month", termStartDate: startDate
+  });
+}
+function renderRenewalDecisionModal(){
+  const { clientId, touchpointId, draft } = state.modal;
+  const client = state.clients.find(c=>c.id===clientId);
+  const touchpoint = client && client.touchpoints.find(t=>t.id===touchpointId);
+  if(!client || !touchpoint) return `<div class="modal"><div class="small">This touchpoint no longer exists.</div><div style="margin-top:10px;"><button class="secondary" onclick="closeModal()">Close</button></div></div>`;
+  return `
+    <div class="modal">
+      <h3>Renewal Decision — ${escHtml(client.name)}</h3>
+      <div class="small" style="margin-bottom:10px;">${escHtml(touchpoint.label)} · due ${parseYMD(touchpoint.dueDate).toLocaleDateString()}</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="rd_decision" ${draft.decision==='renewing'?'checked':''} onchange="state.modal.draft.decision='renewing';render();"> Yes, Renewing</label>
+        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="rd_decision" ${draft.decision==='notRenewing'?'checked':''} onchange="state.modal.draft.decision='notRenewing';render();"> Not Renewing</label>
+        <label style="display:flex;align-items:center;gap:8px;"><input type="radio" name="rd_decision" ${draft.decision==='undecided'?'checked':''} onchange="state.modal.draft.decision='undecided';render();"> Undecided</label>
+      </div>
+      ${draft.decision==='renewing' ? `
+      <div class="row" style="margin-top:10px;">
+        <div><label class="small">Moving to</label>
+          <select onchange="state.modal.draft.contractType=this.value">
+            <option value="3month" ${draft.contractType==='3month'?'selected':''}>3 Month Contract</option>
+            <option value="annual" ${draft.contractType==='annual'?'selected':''}>Annual Contract</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:8px;"><label class="small">Notes for Heidi (hours changes, services, assistant requests, etc.)</label><textarea id="rd_notes" oninput="state.modal.draft.notesForHeidi=this.value">${escHtml(draft.notesForHeidi)}</textarea></div>
+      ` : ""}
+      ${draft.decision==='notRenewing' ? `
+      <div style="margin-top:10px;"><label class="small">Reason (required)</label><textarea id="rd_reason" oninput="state.modal.draft.notRenewingReason=this.value">${escHtml(draft.notRenewingReason)}</textarea></div>
+      ` : ""}
+      ${draft.decision==='undecided' ? `
+      <div style="margin-top:10px;"><label class="small">Follow up date (required)</label><input type="date" value="${draft.followUpDate||''}" onchange="state.modal.draft.followUpDate=this.value"></div>
+      ` : ""}
+      <div style="margin-top:14px;display:flex;justify-content:flex-end;gap:8px;">
+        <button class="secondary" onclick="closeModal()">Cancel</button>
+        <button onclick="saveRenewalDecision()">Save</button>
+      </div>
+    </div>
+  `;
 }
 function updateClientStageField(clientId, field, value){
   upsert("clients", clientId, { [field]: value });
@@ -3871,20 +4167,16 @@ function renderClientTouchpointSchedule(client){
       ${open.length ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">Upcoming</label>
-        ${open.map(t=>{
-          const phase = touchpointPhase(t.dueDate);
-          return `<div class="list-item">
-            <div><strong>${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}</strong><span class="small" style="${phase==='overdue'?'color:var(--danger);font-weight:600;':''}"> · due ${parseYMD(t.dueDate).toLocaleDateString()}${phase==='overdue'?' — OVERDUE':''}</span><div class="small">${escHtml(t.note)}</div></div>
-            <button class="secondary" onclick="completeTouchpoint('${client.id}','${t.id}')">Complete</button>
-          </div>`;
-        }).join("")}
+        ${open.map(t=>renderTouchpointRow(client,t)).join("")}
       </div>` : ""}
       ${history.length ? `
       <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
         <label class="small" style="font-weight:600;">History</label>
         ${history.map(t=>`
-          <div class="list-item">
+          <div class="list-item" style="flex-direction:column;align-items:stretch;gap:4px;">
             <div><strong>${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}</strong><span class="small"> · ${t.status==='skipped'?'skipped':'completed'} ${t.completedAt?new Date(t.completedAt).toLocaleDateString():''}${t.status!=='skipped'?' (due '+parseYMD(t.dueDate).toLocaleDateString()+')':''}</span>${t.completedNote?`<div class="small">${escHtml(t.completedNote)}</div>`:''}</div>
+            ${(t.contactLog||[]).length ? `<div class="small" style="color:#8a7a72;">${t.contactLog.map(formatContactLogLine).join(" · ")}</div>` : ""}
+            ${t.renewalDecision ? `<div class="small" style="font-weight:600;">Renewal: ${t.renewalDecision==='renewing'?'Renewing → '+TOUCHPOINT_STAGE_LABELS[t.renewalContractType]:t.renewalDecision==='notRenewing'?'Not renewing — '+escHtml(t.renewalNotRenewingReason||''):'Undecided — follow up '+parseYMD(t.renewalFollowUpDate).toLocaleDateString()}</div>` : ""}
           </div>`).join("")}
       </div>` : ""}
     </div>
@@ -3917,25 +4209,7 @@ function renderTouchpointsTab(){
       </div>
     </div>
     <div class="card">
-      ${items.length ? items.map(({client,touchpoint:t,phase})=>{
-        const mainAssistant = state.settings.assistants.find(a=>a.id===mainAssistantId(client));
-        const phaseLabel = phase==="overdue" ? "OVERDUE" : phase==="due" ? "Due" : "Upcoming";
-        const phaseColor = phase==="overdue" ? 'var(--danger)' : phase==="due" ? 'var(--warn)' : '#8a7a72';
-        return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
-          <div class="flex-between" style="align-items:flex-start;">
-            <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
-              <strong>${escHtml(client.name)}</strong> — ${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}
-              <div class="small">${escHtml(t.note)}</div>
-              ${t.type==='assistantCall' ? `<div class="small">${escHtml(t.assistantName||'')}${t.assistantPhone?' · '+escHtml(t.assistantPhone):''}</div>` : (mainAssistant?`<div class="small">Assistant: ${escHtml(mainAssistant.name)}</div>`:'')}
-            </div>
-            <span class="badge" style="background:${phaseColor};margin:0;white-space:nowrap;">${phaseLabel}</span>
-          </div>
-          <div class="flex-between">
-            <span class="small">Due ${parseYMD(t.dueDate).toLocaleDateString()}</span>
-            <button class="secondary" onclick="completeTouchpoint('${client.id}','${t.id}')">Complete</button>
-          </div>
-        </div>`;
-      }).join("") : `<div class="small">Nothing open right now.</div>`}
+      ${items.length ? items.map(({client,touchpoint:t})=>renderTouchpointRow(client,t)).join("") : `<div class="small">Nothing open right now.</div>`}
     </div>
   `;
 }
@@ -4409,7 +4683,7 @@ function renderAppShell(){
     : state.role==="admin"
     ? [
         { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"],["touchpoints","Touchpoints"]] },
-        { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
+        { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["renewalsBoard","Renewals Board"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["demoPipeline","Demo Pipeline"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Goals"],["techSupport","Tech Support"]] }
       ]
@@ -4467,6 +4741,7 @@ function renderMain(){
     case "payroll": return state.role==="admin" ? renderPayrollTool() : "";
     case "reports": return state.role==="admin" ? renderReportsTab() : "";
     case "renewals": return state.role==="admin" ? renderRenewalsTab() : "";
+    case "renewalsBoard": return state.role==="admin" ? renderRenewalsBoardTab() : "";
     case "addons": return state.role==="admin" ? renderAddOnsTab() : "";
     case "content": return (state.role==="admin" || (state.currentAssistant && state.currentAssistant.isContentCreator)) ? renderContentCalendarTab() : "";
     case "leads": return state.role==="admin" ? renderLeadOrganizerTab() : "";
@@ -4598,19 +4873,7 @@ function renderOpsLeadColumn(assistant, d){
   `);
   if(d.clientCheckIns.length) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Touchpoints due <a href="#" class="small" onclick="setTab('touchpoints');return false;" style="font-weight:400;float:right;">See all &amp; filter →</a></div>
-    ${d.clientCheckIns.map(({client,touchpoint:t,phase})=>{
-      const mainAssistant = state.settings.assistants.find(a=>a.id===(client.assistantIds||[])[0]);
-      const phaseLabel = phase==="overdue" ? "OVERDUE" : phase==="due" ? "Due" : "Upcoming";
-      return `<div class="list-item">
-        <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
-          <strong>${escHtml(client.name)}</strong> — ${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}
-          <span class="small" style="${phase==='overdue'?'color:var(--danger);font-weight:600;':''}"> · ${phaseLabel} · due ${parseYMD(t.dueDate).toLocaleDateString()}</span>
-          <div class="small">${escHtml(t.note)}</div>
-          ${t.type==='assistantCall' ? `<div class="small">${escHtml(t.assistantName||'')}${t.assistantPhone?' · '+escHtml(t.assistantPhone):''}</div>` : (mainAssistant?`<div class="small">Assistant: ${escHtml(mainAssistant.name)}</div>`:'')}
-        </div>
-        <button class="secondary" onclick="event.stopPropagation();completeTouchpoint('${client.id}','${t.id}')">Complete</button>
-      </div>`;
-    }).join("")}
+    ${d.clientCheckIns.map(({client,touchpoint:t})=>renderTouchpointRow(client,t)).join("")}
   `);
   if(d.renewalCheckInEmails.length) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Check in about renewing</div>
@@ -4699,6 +4962,28 @@ function renderDocsLeadColumn(assistant, d){
         <div><strong>${task.title||'(untitled task)'}</strong><div class="small">${task.dueDate?'due '+parseYMD(task.dueDate).toLocaleDateString():'no due date'}</div></div>
         <button class="secondary" onclick="ackTaskAssignment('${task.id}','${a.id}')">Got it</button>
       </div>`).join("")}
+  `);
+  if(d.renewalHandoffs.length && canManageRenewalContracts()) sections.push(`
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Renewal contracts in progress</div>
+    ${d.renewalHandoffs.map(({client,handoff})=>{
+      const awaitingSig = renewalHandoffIsAwaitingSignature(handoff);
+      const statusLabel = handoff.status==="awaitingContract" ? "Awaiting contract" : handoff.status==="contractSent" ? "Contract sent" : "Contract signed";
+      return `
+      <div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+        <div class="flex-between" style="align-items:flex-start;">
+          <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+            <strong>${escHtml(client.name)}</strong> — renewing to ${escHtml(TOUCHPOINT_STAGE_LABELS[handoff.contractType]||handoff.contractType)}
+            ${handoff.notesForHeidi ? `<div class="small">${escHtml(handoff.notesForHeidi)}</div>` : ""}
+          </div>
+          <span class="badge" style="background:${awaitingSig?'var(--danger)':'var(--warn)'};margin:0;white-space:nowrap;">${awaitingSig?'Awaiting Signature':statusLabel}</span>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${handoff.status==="awaitingContract" ? `<button class="secondary" style="padding:3px 8px;font-size:12px;" onclick="updateRenewalHandoffStep('${client.id}','${handoff.id}','contractSent')">Mark Contract Sent</button>` : ""}
+          ${handoff.status==="contractSent" ? `<button class="secondary" style="padding:3px 8px;font-size:12px;" onclick="updateRenewalHandoffStep('${client.id}','${handoff.id}','contractSigned')">Mark Contract Signed</button>` : ""}
+          ${handoff.status==="contractSigned" ? `<button style="padding:3px 8px;font-size:12px;" onclick="markRenewalPaymentReceived('${client.id}','${handoff.id}')">Mark Payment Received</button>` : ""}
+        </div>
+      </div>`;
+    }).join("")}
   `);
   if(d.paymentsReady.length && canViewSoftware()) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Payments ready to process</div>
@@ -4911,6 +5196,35 @@ function renderBackgroundCheckCard(){
         </div>`).join("")}
     </div>`;
 }
+// ---- Not renewing alert (admin) ----
+// Fires the moment Tori records a "Not Renewing" decision on a renewal
+// touchpoint (see saveRenewalDecision) — notRenewingAlertAt is set once
+// there, cleared by dismissal below. Re-fires if a client somehow gets a
+// second not-renewing decision after a dismissed first one, since the
+// dismissed timestamp is compared against the alert timestamp rather than
+// just checking a boolean.
+function notRenewingAlerts(){
+  return state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && c.notRenewingAlertAt && (!c.notRenewingAlertDismissedAt || c.notRenewingAlertDismissedAt < c.notRenewingAlertAt));
+}
+function dismissNotRenewingAlert(clientId){
+  upsert("clients", clientId, { notRenewingAlertDismissedAt: new Date().toISOString() });
+}
+function renderNotRenewingCard(){
+  const alerts = notRenewingAlerts();
+  if(!alerts.length) return "";
+  return `
+    <div class="card">
+      <h3 style="color:var(--danger);">Clients not renewing</h3>
+      ${alerts.map(c=>{
+        const touchpoint = (c.touchpoints||[]).filter(t=>t.renewalDecision==="notRenewing").sort((a,b)=>b.renewalDecidedAt<a.renewalDecidedAt?-1:1)[0];
+        return `
+        <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${c.id}')">
+          <div><strong>${escHtml(c.name)}</strong>${touchpoint?`<div class="small">${escHtml(touchpoint.renewalNotRenewingReason||'')}</div>`:''}</div>
+          <button class="secondary" onclick="event.stopPropagation();dismissNotRenewingAlert('${c.id}')">Dismiss</button>
+        </div>`;
+      }).join("")}
+    </div>`;
+}
 function renderAdminDashboard(){
   const period = currentPayrollPeriod();
   const totalPayrollHours = hoursInPeriod(state.timeEntries, period);
@@ -5027,12 +5341,13 @@ function renderAdminDashboard(){
       </div>
     </div>
 
+    ${renderNotRenewingCard()}
     ${renderBillingChecksCard()}
     ${renderBackgroundCheckCard()}
 
     <div class="row">
       ${renderOpsLeadColumn(opsLead, { unackedAssignments, clientCheckIns:clientCheckInsForOps, renewalCheckInEmails:renewalCheckInEmailsForOps, pending:pendingForOps, notStartedClients:notStartedClientsForOps, atRiskClients:atRiskClientsForOps, awaitingClient:awaitingClientForOps, paused:pausedForOps, overdue, pastDue })}
-      ${renderDocsLeadColumn(docsLead, { unackedAssignments, paymentsReady, maintenanceFeesDue: maintenanceFeesDue(), contractsReady, emailsNeeded:docsEmailsNeeded, termUpdateClients, vendorTicketsAwaitingMarkup: vendorTicketsAwaitingMarkup(), vendorTicketsAwaitingPayout: vendorTicketsAwaitingPayout(), nextPayoutDate: nextVendorPayoutDate() })}
+      ${renderDocsLeadColumn(docsLead, { unackedAssignments, renewalHandoffs: renewalHandoffsOpen(), paymentsReady, maintenanceFeesDue: maintenanceFeesDue(), contractsReady, emailsNeeded:docsEmailsNeeded, termUpdateClients, vendorTicketsAwaitingMarkup: vendorTicketsAwaitingMarkup(), vendorTicketsAwaitingPayout: vendorTicketsAwaitingPayout(), nextPayoutDate: nextVendorPayoutDate() })}
     </div>
 
     ${(renewingThisWeek.length || renewingNextWeek.length) ? `
@@ -8291,6 +8606,85 @@ function renderRenewalsTab(){
   `;
 }
 
+// Full cross-client renewal pipeline view for Kaylan (and Heidi/Tori via
+// the shared admin login, same as the Dashboard Ops/Docs Lead columns) —
+// every active client within 45 days of their contract end date, or
+// already mid-renewal, in one sortable/filterable table. Row shape comes
+// from renewalsBoardRows(); this function is display-only.
+function renewalsBoardStatusLabel(row){
+  if(row.handoff){
+    if(row.handoff.status==="paymentReceived") return "Payment received";
+    if(row.awaitingSignature) return "Awaiting signature";
+    if(row.handoff.status==="contractSigned") return "Contract signed";
+    if(row.handoff.status==="contractSent") return "Contract sent";
+    return "Awaiting contract";
+  }
+  if(row.renewalDecision==="notRenewing") return "Not renewing";
+  if(row.renewalDecision==="undecided") return "Undecided";
+  if(!row.renewalTouchpoint) return "No open renewal call";
+  return CONTACT_STATUS_LABELS[row.outreachStatus] || "Not started";
+}
+function renderRenewalsBoardTab(){
+  const statusFilter = state.renewalsBoardStatusFilter || "all";
+  const sort = state.renewalsBoardSort || "endAsc";
+  let rows = renewalsBoardRows();
+  if(statusFilter!=="all") rows = rows.filter(r=>{
+    if(statusFilter==="awaitingHeidi") return !!r.handoff && !r.awaitingSignature;
+    if(statusFilter==="awaitingSignature") return !!r.awaitingSignature;
+    if(statusFilter==="notRenewing") return r.renewalDecision==="notRenewing";
+    if(statusFilter==="undecided") return r.renewalDecision==="undecided";
+    if(statusFilter==="outreach") return !r.handoff && r.renewalDecision!=="notRenewing" && r.renewalDecision!=="undecided";
+    return true;
+  });
+  if(sort==="endDesc") rows = [...rows].sort((a,b)=>{
+    if(a.daysToEnd===null && b.daysToEnd===null) return 0;
+    if(a.daysToEnd===null) return 1;
+    if(b.daysToEnd===null) return -1;
+    return b.daysToEnd-a.daysToEnd;
+  });
+  return `
+    <h2>Renewals Board</h2>
+    <div class="small" style="margin-bottom:14px;">Every active client within 45 days of their contract end date, or already mid-renewal — Tori's outreach on the renewal call, Heidi's contract/payment status, and whatever's most recent, all in one place.</div>
+    <div class="row" style="margin-bottom:12px;">
+      <div><label class="small">Status</label>
+        <select onchange="state.renewalsBoardStatusFilter=this.value;render();">
+          <option value="all" ${statusFilter==='all'?'selected':''}>All statuses</option>
+          <option value="outreach" ${statusFilter==='outreach'?'selected':''}>Tori's outreach in progress</option>
+          <option value="awaitingHeidi" ${statusFilter==='awaitingHeidi'?'selected':''}>With Heidi (contract/payment)</option>
+          <option value="awaitingSignature" ${statusFilter==='awaitingSignature'?'selected':''}>Awaiting signature</option>
+          <option value="undecided" ${statusFilter==='undecided'?'selected':''}>Undecided</option>
+          <option value="notRenewing" ${statusFilter==='notRenewing'?'selected':''}>Not renewing</option>
+        </select>
+      </div>
+      <div><label class="small">Sort by end date</label>
+        <select onchange="state.renewalsBoardSort=this.value;render();">
+          <option value="endAsc" ${sort==='endAsc'?'selected':''}>Soonest first</option>
+          <option value="endDesc" ${sort==='endDesc'?'selected':''}>Latest first</option>
+        </select>
+      </div>
+    </div>
+    <div class="card">
+      ${rows.length===0 ? `<div class="small">Nothing in the renewal window right now.</div>` : `
+      <div class="table-scroll"><table class="data-table">
+        <thead><tr><th>Client</th><th>Assistant</th><th>Stage</th><th>Contract End</th><th>Tori's Outreach</th><th>Renewal Decision</th><th>Heidi's Status</th><th>Last Activity</th></tr></thead>
+        <tbody>
+          ${rows.map(r=>`
+            <tr style="cursor:pointer;" onclick="viewClientMembership('${r.client.id}')">
+              <td>${escHtml(r.client.name)}</td>
+              <td>${r.assistant?escHtml(r.assistant.name):'—'}</td>
+              <td>${r.stage?escHtml(TOUCHPOINT_STAGE_LABELS[r.stage]||r.stage):'—'}</td>
+              <td>${r.end ? r.end.toLocaleDateString() + (r.daysToEnd<0?` (${Math.abs(r.daysToEnd)}d past)`:` (${r.daysToEnd}d)`) : '—'}</td>
+              <td>${r.renewalTouchpoint ? `<span class="badge" style="background:${r.outreachStatus==='noResponse'?'var(--danger)':r.outreachStatus==='reached'?'var(--ok)':r.outreachStatus==='complete'?'#8a7a72':'var(--warn)'};margin:0;">${CONTACT_STATUS_LABELS[r.outreachStatus]}</span>` : `<span class="small">no open call</span>`}</td>
+              <td>${r.renewalDecision ? escHtml(r.renewalDecision==='renewing'?'Renewing':r.renewalDecision==='notRenewing'?'Not renewing':'Undecided') : '—'}</td>
+              <td>${escHtml(renewalsBoardStatusLabel(r))}</td>
+              <td>${r.lastActivity ? r.lastActivity.toLocaleDateString() : '—'}</td>
+            </tr>`).join("")}
+        </tbody>
+      </table></div>
+      `}
+    </div>
+  `;
+}
 // Shared by renderTeamDashboard (an assistant viewing their own dashboard)
 // and the Ops/Docs Lead columns on the Admin Dashboard (Heidi/Tori, who
 // mostly log in with the shared Admin passcode — so there's no
@@ -16333,6 +16727,7 @@ function renderModal(){
     : state.modal.type==="weeklyRecapPrompt" ? renderWeeklyRecapPromptModal()
     : state.modal.type==="weeklyTaskReview" ? renderWeeklyTaskReviewModal()
     : state.modal.type==="suggestVendor" ? renderSuggestVendorModal()
+    : state.modal.type==="renewalDecision" ? renderRenewalDecisionModal()
     : "";
   const NON_DISMISSABLE_MODALS = ["changeCodeGate","waitingOnRateGate","agreementGate","handbookGate","idUploadGate","appGuide","weeklyTaskReview"];
   const dismissable = !NON_DISMISSABLE_MODALS.includes(state.modal.type);
