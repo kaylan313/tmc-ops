@@ -16810,7 +16810,11 @@ function weeklyTaskReviewDue(assistant, now){
 // committing to finish it today (bumps the due date so it surfaces as due
 // today elsewhere too). inprogress = just confirming it's accurately
 // still open and being worked, nothing else changes.
-function resolveWeeklyReviewTask(taskId, choice){
+// Task updates don't redraw an open pop-up on their own (see subscribeAppData),
+// so this updates the list right away — otherwise the buttons saved but
+// looked like they did nothing, and this pop-up can't be closed. Puts the
+// task back if the save fails.
+async function resolveWeeklyReviewTask(taskId, choice){
   const task = state.tasks.find(t=>t.id===taskId);
   if(!task) return;
   const now = new Date().toISOString();
@@ -16818,7 +16822,22 @@ function resolveWeeklyReviewTask(taskId, choice){
   if(choice==="done"){ patch.status = "Done"; patch.completedAt = now; }
   else if(choice==="today"){ patch.status = "In progress"; patch.dueDate = ymd(new Date()); }
   else if(choice==="inprogress"){ patch.status = "In progress"; }
-  upsert("tasks", taskId, patch);
+  const before = {};
+  Object.keys(patch).forEach(k=>{ before[k] = task[k]===undefined ? null : task[k]; });
+  upsertLocal("tasks", taskId, patch);
+  render();
+  const saved = await upsert("tasks", taskId, patch);
+  if(!saved){ upsertLocal("tasks", taskId, before); render(); return; }
+  // Same as marking a repeating task Done in the task window: start the next one.
+  if(choice==="done" && task.repeat && task.status!=="Done" && !task.repeatNextTaskId){
+    try {
+      const next = await createNextRepeatTask({ ...task, ...patch, id: taskId });
+      if(next){ upsertLocal("tasks", taskId, { repeatNextTaskId: next.id }); upsert("tasks", taskId, { repeatNextTaskId: next.id }); }
+    } catch(err){
+      console.warn("Creating the next repeat failed:", err);
+      alert("This task was marked completed, but the next repeat couldn't be created — " + err.message + "\n\nCreate it by hand for now, and tell Kaylan if it keeps happening.");
+    }
+  }
 }
 function renderWeeklyTaskReviewModal(){
   const a = state.currentAssistant || {};
