@@ -4676,6 +4676,14 @@ function toggleNavGroup(label, currentlyOpen){
   state.navGroupsOpen = { ...(state.navGroupsOpen||{}), [label]: !currentlyOpen };
   render();
 }
+// Sidebar items that open another site in a new browser tab instead of a
+// tab inside this app (TMC Hub has its own login, which doesn't work
+// reliably inside an embedded frame, especially on Safari).
+const NAV_LINKS = { tmcHub: "https://tmc-hub.netlify.app/" };
+function navButton(key, label){
+  if(NAV_LINKS[key]) return `<button onclick="window.open(NAV_LINKS['${key}'],'_blank','noopener'); state.mobileNavOpen=false; render();">${label} <span style="font-size:11px;opacity:.7;">↗</span></button>`;
+  return `<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`;
+}
 function renderAppShell(){
   const isContentCreator = state.role==="team" && state.currentAssistant && state.currentAssistant.isContentCreator;
   // Admin's own list grouped into sections — 17 same-level items in one flat
@@ -4683,15 +4691,15 @@ function renderAppShell(){
   // Creator lists stay short enough (5-7 items) that grouping them wouldn't
   // add anything, so they stay as one unlabeled group (no header renders).
   const tabGroups = isContentCreator
-    ? [{ label:null, tabs:[["content","Content Calendar"],["techSupport","Tech Support"]] }]
+    ? [{ label:null, tabs:[["content","Content Calendar"],["tmcHub","TMC Hub"],["techSupport","Tech Support"]] }]
     : state.role==="admin"
     ? [
-        { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"],["touchpoints","Touchpoints"]] },
+        { label:"Work", tabs:[["dashboard","Dashboard"],["tmcHub","TMC Hub"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"],["touchpoints","Touchpoints"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["renewalsBoard","Renewals Board"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["demoPipeline","Demo Pipeline"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Goals"],["techSupport","Tech Support"]] }
       ]
-    : [{ label:null, tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
+    : [{ label:null, tabs:[["dashboard","Dashboard"],["tmcHub","TMC Hub"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
        ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []),
        ...(isDevDirector() ? [["demoPipeline","Demo Pipeline"],["goals","Goals"]] : []), ["techSupport","Tech Support"]] }];
 
@@ -4709,13 +4717,13 @@ function renderAppShell(){
         </div>
         <div class="nav-links">
           ${tabGroups.map(g=>{
-            if(!g.label) return g.tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("");
+            if(!g.label) return g.tabs.map(([key,label])=>navButton(key,label)).join("");
             const open = isNavGroupOpen(g);
             return `
               <div class="nav-group-label" style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onclick="toggleNavGroup('${g.label}',${open})">
                 <span>${g.label}</span><span style="font-size:11px;">${open?'▾':'▸'}</span>
               </div>
-              ${open ? g.tabs.map(([key,label])=>`<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`).join("") : ""}
+              ${open ? g.tabs.map(([key,label])=>navButton(key,label)).join("") : ""}
             `;
           }).join("")}
         </div>
