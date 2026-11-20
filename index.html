@@ -1369,7 +1369,7 @@ const DRIVE_NO_ARRIVE = "Clocked out before tapping I've arrived";
 function driveMinutesOf(e){
   if(!e) return null;
   if(e.driveMinutes!=null) return e.driveMinutes;
-  if(e.driveStart && e.driveEnd && e.driveStart.at && e.driveEnd.at && e.driveEnd.error!==DRIVE_NO_ARRIVE){
+  if(e.driveStart && e.driveEnd && e.driveStart.at && e.driveEnd.at && e.driveEnd.error!==DRIVE_NO_ARRIVE && !e.driveEnd.manual){
     return Math.max(0, Math.round((new Date(e.driveEnd.at) - new Date(e.driveStart.at)) / 60000));
   }
   return null;
@@ -1503,7 +1503,10 @@ async function driveArriveAndClockOut(){
 }
 // Reads the miles/minutes boxes. Returns null (after alerting) if invalid.
 function readDriveInputs(milesId, minutesId, required){
-  const mRaw = (document.getElementById(milesId)||{}).value, nRaw = (document.getElementById(minutesId)||{}).value;
+  const mEl = document.getElementById(milesId), nEl = document.getElementById(minutesId);
+  if(mEl && mEl.validity && mEl.validity.badInput){ alert("Enter the drive miles as a number only, like 12.5"); return null; }
+  if(nEl && nEl.validity && nEl.validity.badInput){ alert("Enter the drive time as a number of minutes only, like 20"); return null; }
+  const mRaw = (mEl||{}).value, nRaw = (nEl||{}).value;
   const miles = mRaw==null || String(mRaw).trim()==="" ? null : parseFloat(mRaw);
   const minutes = nRaw==null || String(nRaw).trim()==="" ? null : parseInt(nRaw,10);
   if(miles!=null && (isNaN(miles) || miles<0)){ alert("Enter the drive miles as a number."); return null; }
@@ -1523,7 +1526,8 @@ function isAutoDriveFlag(note){
 }
 function manualDriveFields(entry, miles, minutes){
   entry = entry || {};
-  const f = { driveMiles: miles, driveMinutes: minutes, driveMilesManual: true };
+  const f = { driveMiles: miles, driveMinutes: minutes,
+    driveMilesManual: miles!==(entry.driveMiles!=null ? entry.driveMiles : null) ? true : !!entry.driveMilesManual };
   const autoFlag = entry.flagged && isAutoDriveFlag(entry.flagNote);
   if(state.role!=="admin"){
     if(!entry.flagged || autoFlag) Object.assign(f, { flagged:true, flagNote: DRIVE_HAND_FLAG });
@@ -1583,9 +1587,9 @@ function renderDrivePromptModal(){
     </div>`;
   return `
     <div class="modal">
-      <h3>🚗 Did you drive for this?</h3>
+      <h3>🚗 ${mine ? "Did you drive for this?" : "Was there a drive for this?"}</h3>
       ${title}
-      <div class="small">No drive was logged on this clock-in. If you drove for this task, add it before you clock out.</div>
+      <div class="small">No drive was logged on this clock-in. ${mine ? "If you drove for this task, add it before you clock out." : "If " + escHtml(assistantName(e.assistantId)) + " drove for this task, add it before clocking them out."}</div>
       ${m.drove ? driveFields : ""}
       <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="secondary" onclick="closeTimeModal()">Cancel</button>
@@ -16684,7 +16688,7 @@ function saveTimeEntryEdit(entryId){
   if(v.miles!==oldMiles || v.minutes!==oldMins){
     const flagNow = { ...cur, ...(state.role==='admin' ? { flagged: payload.flagged, flagNote: payload.flagNote } : {}) };
     if(v.miles==null && v.minutes==null){
-      Object.assign(payload, { driveMiles: null, driveMinutes: null, driveMilesManual: false });
+      Object.assign(payload, { driveMiles: null, driveMinutes: null, driveMilesManual: false, driveStart: null, driveEnd: null });
       if(flagNow.flagged && isAutoDriveFlag(flagNow.flagNote)) Object.assign(payload, { flagged:false, flagNote:"" });
     }
     else Object.assign(payload, manualDriveFields(flagNow, v.miles, v.minutes));
@@ -16782,7 +16786,7 @@ function weeklyTaskReviewItems(assistant, window){
   return state.tasks.filter(t=>
     (t.assignees||[]).includes(assistant.id) &&
     !["Done","Paused","Pending approval","Needs Client Review"].includes(t.status) &&
-    ymd(t.lastWeeklyReviewAt||"")!==todayYMD &&
+    (t.lastWeeklyReviewAt ? ymd(new Date(t.lastWeeklyReviewAt)) : "")!==todayYMD &&
     (runningTaskIds.has(t.id) || t.status==="In progress" || (windowHoursByTask.get(t.id)||0)>0)
   ).map(t=>({ task:t, hoursThisWeek: windowHoursByTask.get(t.id)||0, running: runningTaskIds.has(t.id), client: state.clients.find(c=>c.id===t.clientId) }))
    .sort((a,b)=>(a.client?a.client.name:'').localeCompare(b.client?b.client.name:''));
