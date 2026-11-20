@@ -1051,7 +1051,18 @@ async function boot(){
     // network/listener load directly competing with the collections a
     // login is actually waiting on. See subscribeAppData(), called once
     // from each successful login path.
-    subscribe("clients", items=>{ state.clients = items; state.clientsReady = true; if(!state.modal) render(); });
+    subscribe("clients", items=>{
+      state.clients = items; state.clientsReady = true;
+      // Both migrateAllClientStages and ensureAllClientTouchpoints are
+      // idempotent no-ops once a client's already migrated/generated for
+      // its current stage — safe to just re-run on every clients
+      // snapshot rather than a one-shot flag, since the migration's own
+      // write only lands back here asynchronously (this callback firing
+      // again IS how the follow-up touchpoint generation actually sees
+      // the newly-set currentStage).
+      if(state.role==="admin"){ migrateAllClientStages(); ensureAllClientTouchpoints(true); }
+      if(!state.modal) render();
+    });
     subscribe("vendors", items=>{ state.vendors = items; state.vendorsReady = true; if(!state.modal) render(); });
     watchOrientationSync();
   }
@@ -3151,6 +3162,17 @@ function composeAssistantIds(mainId, secondaryId, previousIds){
   return out;
 }
 function mainAssistantId(client){ return (client.assistantIds||[])[0] || null; }
+// Stamps the main assistant's assignment date whenever it actually
+// changes (first assignment, or swapping to someone else) — the
+// Assistant Check In Call touchpoint counts 7 days from this, at every
+// stage. Existing clients start with no assignment date at all (their
+// real historical assignment date isn't known), so nothing backfills
+// for them until their assistant actually changes going forward.
+function assistantAssignedDatePatch(existingClient, newIds){
+  const newMain = (newIds||[])[0] || null;
+  const oldMain = existingClient ? mainAssistantId(existingClient) : null;
+  return (newMain && newMain!==oldMain) ? { assistantAssignedDate: ymd(new Date()) } : {};
+}
 function assistantRolesSummary(client){
   const ids = client.assistantIds||[];
   if(!ids.length) return "No assistant assigned yet.";
@@ -3634,52 +3656,288 @@ function emailsNeededList(){
   });
   return items.sort((a,b)=>a.days-b.days);
 }
-// Internal-only reminders for Tori/admin to actively check in on a client
-// — NOT emails to the client (that's emailsNeededList()/pilotCheckIn
-// above, which is unchanged). Pilot clients get an early nudge at day 7
-// of their one-time 30-day term. Every other active client gets a
-// recurring nudge at day 21 of their CURRENT 30-day billing period,
-// prompting a look at hours used and whether the assistant needs
-// anything — recurring, not one-time, since usage resets every period.
-const CLIENT_CHECKIN_DAY_PILOT_EARLY = 7;
-const CLIENT_CHECKIN_DAY_ONGOING = 21;
-function clientCheckInsNeeded(){
-  const now = new Date();
-  const items = [];
-  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus || c.clientStatus==="active")).forEach(client=>{
-    const isPilot = !client.termType || client.termType==="pilot";
-    if(isPilot){
-      if(!client.termStartDate) return;
-      const due = new Date(parseYMD(client.termStartDate).getTime() + CLIENT_CHECKIN_DAY_PILOT_EARLY*24*3600000);
-      const days = daysUntil(due, now);
-      const done = client.pilotDay7CheckInDoneForTermStart === client.termStartDate;
-      if(!done && days<=0){
-        items.push({ client, type:"pilotDay7", label:"Day 7 pilot check-in", detail:"Review how the assistant's doing early in the pilot.", days });
-      }
+// ---- Touchpoint schedule (Nov 2026) — replaces the old day-7/day-21
+// client-check-in nudges above with a full lifecycle schedule for Tori.
+// One config object drives everything below: change a day offset or add
+// a touchpoint here, nothing else needs to change.
+//
+// Each client has up to 3 stages (client.currentStage: "pilot"|"3month"|
+// "annual"), each with its own start date (pilotStartDate/
+// threeMonthStartDate/annualStartDate — see TOUCHPOINT_STAGE_FIELD).
+// Touchpoints are generated from whichever stage the client is
+// currently in, counting days from THAT stage's start date — never from
+// when the previous touchpoint was completed, so the schedule can't drift.
+//
+// type is the FILTER category (call/dropin/assistantCall) used by the
+// Touchpoints tab; label is the display text, which can differ (e.g. day
+// 320's Renewal Call still filters as "call").
+const TOUCHPOINT_SCHEDULE = {
+  pilot: [
+    { day:10, type:"dropin", label:"Drop In Visit", note:"See the assistant working and confirm the orientation expectations are being met. Fix anything now, before the day 21 call." },
+    { day:21, type:"call", label:"Check In Call", note:"Follow up on anything from the drop in visit and start the 3 month renewal conversation." }
+  ],
+  "3month": [
+    { day:30, type:"dropin", label:"Drop In Visit", note:"Visit while the assistant is working. Check quality and client satisfaction." },
+    { day:60, type:"call", label:"Check In Call", note:"Midpoint check in with the client." },
+    { day:75, type:"dropin", label:"Drop In Visit and Renewal Call", note:"Final quality check, then present the annual agreement." }
+  ],
+  annual: [
+    { day:90, type:"call", label:"Check In Call", note:"Quarterly check in." },
+    { day:180, type:"dropin", label:"Drop In Visit", note:"Mid year review of assistant performance." },
+    { day:270, type:"call", label:"Check In Call", note:"Quarterly check in." },
+    { day:320, type:"call", label:"Renewal Call", note:"Discuss renewing the annual agreement." }
+  ]
+};
+const TOUCHPOINT_STAGE_LABELS = { pilot:"Pilot", "3month":"3 Month Contract", annual:"Annual Contract" };
+const TOUCHPOINT_STAGE_FIELD = { pilot:"pilotStartDate", "3month":"threeMonthStartDate", annual:"annualStartDate" };
+const TOUCHPOINT_TYPE_LABELS = { call:"Call", dropin:"Drop In", assistantCall:"Assistant Call" };
+// Trigger for the assistant-directed touchpoint: days after the MAIN
+// assistant's assignment date (client.assistantAssignedDate), not from
+// any client stage — applies at every stage, and a reassignment restarts
+// it the same way a renewal restarts the annual schedule.
+const ASSISTANT_CHECKIN_DAY = 7;
+// due date status for display — not stored, recalculated live so
+// "overdue" keeps advancing correctly as time passes.
+function touchpointPhase(dueDateStr){
+  const days = daysUntil(parseYMD(dueDateStr), new Date());
+  if(days>3) return "future";
+  if(days>0) return "upcoming";
+  if(days>=-6) return "due";
+  return "overdue";
+}
+// Generates (or regenerates, on a stage/date change) the open touchpoints
+// for whichever stage a client is currently in. anchorKey is how it knows
+// whether today's config+start-date combo has already been generated —
+// if the stage OR its start date changes (including an annual renewal
+// restarting from a new annualStartDate), the anchor changes and this
+// cancels whatever was still open from the old one and generates fresh.
+// backfill=true is the one-time existing-client migration path: anything
+// that would already be overdue gets marked Skipped (Pre Launch) instead
+// of flooding Tori the moment this goes live.
+function generateStageTouchpoints(client, stage, startDateStr, backfill){
+  const def = TOUCHPOINT_SCHEDULE[stage];
+  if(!def || !startDateStr) return [];
+  const todayStr = ymd(new Date());
+  return def.map(item=>{
+    const dueDate = addDaysYMD(startDateStr, item.day);
+    const preLaunchSkip = !!backfill && dueDate < todayStr;
+    return {
+      id:newId("tp"), stage, type:item.type, label:item.label, note:item.note, dueDate,
+      assistantId:null, assistantName:null, assistantPhone:null,
+      status: preLaunchSkip ? "skipped" : "open",
+      completedAt:null, completedNote: preLaunchSkip ? "Skipped (Pre Launch)" : null,
+      anchorKey: "stage:"+stage+":"+startDateStr
+    };
+  });
+}
+function ensureClientStageTouchpoints(client, backfill){
+  const stage = client.currentStage;
+  if(!stage || !TOUCHPOINT_SCHEDULE[stage]) return null;
+  const startDateStr = client[TOUCHPOINT_STAGE_FIELD[stage]];
+  if(!startDateStr) return null;
+  const anchorKey = "stage:"+stage+":"+startDateStr;
+  const existing = client.touchpoints || [];
+  if(existing.some(t=>t.anchorKey===anchorKey)) return null; // already generated for this exact stage+date
+  const kept = existing.map(t=> (!t.assistantId && t.status==="open" && t.anchorKey!==anchorKey) ? { ...t, status:"cancelled" } : t);
+  return [...kept, ...generateStageTouchpoints(client, stage, startDateStr, backfill)];
+}
+// Assistant check-in is independent of client stage — tracks the MAIN
+// assistant (assistantIds[0]) and their assignment date, so reassigning
+// a client restarts this the same way a stage change restarts the client
+// schedule. Migration rule: only backfill one if the assignment is 7
+// days old or less (anything older just never gets one at all, rather
+// than a Skipped record — we don't know the REAL historical assignment
+// date for existing clients, so assistantAssignedDate starts out blank
+// for all of them and only gets set going forward on an actual change).
+function ensureAssistantTouchpoint(client, backfill){
+  const assistantId = (client.assistantIds||[])[0];
+  const assignedDate = client.assistantAssignedDate;
+  if(!assistantId || !assignedDate) return null;
+  const anchorKey = "assistant:"+assistantId+":"+assignedDate;
+  const existing = client.touchpoints || [];
+  if(existing.some(t=>t.anchorKey===anchorKey)) return null;
+  if(backfill){
+    const daysAgo = (new Date(ymd(new Date())) - new Date(assignedDate)) / 86400000;
+    if(daysAgo > ASSISTANT_CHECKIN_DAY) return null;
+  }
+  const assistant = state.settings.assistants.find(a=>a.id===assistantId);
+  const dueDate = addDaysYMD(assignedDate, ASSISTANT_CHECKIN_DAY);
+  const kept = existing.map(t=> (t.assistantId && t.status==="open" && t.anchorKey!==anchorKey) ? { ...t, status:"cancelled" } : t);
+  const fresh = {
+    id:newId("tp"), stage:null, type:"assistantCall", label:"Assistant Check In Call",
+    note:`Call ${assistant?assistant.name:'the assistant'} about ${client.name}. Ask how things are going, what's been completed, anything unclear about client expectations, and how they're doing personally.`,
+    dueDate, assistantId, assistantName: assistant?assistant.name:null, assistantPhone: assistant?assistant.phone:null,
+    status:"open", completedAt:null, completedNote:null, anchorKey
+  };
+  return [...kept, fresh];
+}
+// One-time migration (Nov 2026): maps each client's existing
+// termType/termStartDate onto the new explicit stage fields, so the
+// touchpoint schedule has something real to generate from immediately
+// for the 30+ existing clients instead of starting blank. No-op once a
+// client already has currentStage set (explicitly, or from a prior run
+// of this). 6-month-term clients don't map cleanly onto the new 3-stage
+// model (Pilot/3 Month/Annual) — treated as 3 Month here since that's
+// the closer fit; worth a manual check per client if that's wrong for
+// any specific one (see currentStage on the Membership tab to fix).
+function migrateClientStageFromTermType(client){
+  if(client.currentStage || !client.termStartDate) return null;
+  const termType = client.termType || "pilot";
+  if(termType==="pilot") return { currentStage:"pilot", pilotStartDate: client.termStartDate };
+  if(termType==="3month" || termType==="6month") return { currentStage:"3month", threeMonthStartDate: client.termStartDate };
+  return { currentStage:"annual", annualStartDate: client.termStartDate };
+}
+function migrateAllClientStages(){
+  state.clients.forEach(client=>{
+    if(client.id===INTERNAL_CLIENT_ID) return;
+    const patch = migrateClientStageFromTermType(client);
+    if(patch) upsert("clients", client.id, patch);
+  });
+}
+// Scans every active client, regenerating/cancelling touchpoints as
+// needed, and only writes the ones that actually changed — idempotent,
+// safe to call on every clients snapshot (see the subscribe("clients")
+// call in boot()). Inactive/cancelled clients are skipped entirely going
+// forward; any of their still-open touchpoints get explicitly cancelled.
+function ensureAllClientTouchpoints(backfill){
+  state.clients.forEach(client=>{
+    if(client.id===INTERNAL_CLIENT_ID) return;
+    const inactive = client.clientStatus==="cancelled" || client.clientStatus==="paused";
+    let touchpoints = null;
+    if(inactive){
+      const openOnes = (client.touchpoints||[]).filter(t=>t.status==="open");
+      if(openOnes.length) touchpoints = client.touchpoints.map(t=> t.status==="open" ? { ...t, status:"cancelled" } : t);
     } else {
-      const period = currentBillingPeriod(client);
-      if(!period) return;
-      const due = new Date(period.start.getTime() + CLIENT_CHECKIN_DAY_ONGOING*24*3600000);
-      const days = daysUntil(due, now);
-      const periodKey = period.start.toISOString().slice(0,10);
-      const done = client.day21CheckInDoneForPeriodStart === periodKey;
-      if(!done && days<=0){
-        items.push({ client, type:"ongoingDay21", label:"Day 21 check-in", detail:"Check hours used this period, whether to suggest more hours, and whether the assistant needs anything from you.", days });
-      }
+      const stagePatch = ensureClientStageTouchpoints({ ...client, touchpoints: touchpoints||client.touchpoints }, backfill);
+      if(stagePatch) touchpoints = stagePatch;
+      const assistantPatch = ensureAssistantTouchpoint({ ...client, touchpoints: touchpoints||client.touchpoints }, backfill);
+      if(assistantPatch) touchpoints = assistantPatch;
     }
+    if(touchpoints) upsert("clients", client.id, { touchpoints });
+  });
+}
+// Every open touchpoint across every active client, for the Dashboard
+// card (future ones excluded — that card is "needs attention now", not a
+// forward calendar) and the full Touchpoints tab (everything, so Tori can
+// see what's coming without it needing to already be urgent).
+function openTouchpoints(includeFuture){
+  const items = [];
+  state.clients.filter(c=>c.id!==INTERNAL_CLIENT_ID && (!c.clientStatus||c.clientStatus==="active")).forEach(client=>{
+    (client.touchpoints||[]).forEach(t=>{
+      if(t.status!=="open") return;
+      const phase = touchpointPhase(t.dueDate);
+      if(!includeFuture && phase==="future") return;
+      items.push({ client, touchpoint:t, phase, days: daysUntil(parseYMD(t.dueDate), new Date()) });
+    });
   });
   return items.sort((a,b)=>a.days-b.days);
 }
-function dismissClientCheckIn(clientId, type){
+function completeTouchpoint(clientId, touchpointId){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
-  if(type==="pilotDay7"){
-    upsert("clients", clientId, { pilotDay7CheckInDoneForTermStart: client.termStartDate });
-  } else {
-    const period = currentBillingPeriod(client);
-    if(!period) return;
-    upsert("clients", clientId, { day21CheckInDoneForPeriodStart: period.start.toISOString().slice(0,10) });
-  }
+  const notes = prompt("Any notes about this touchpoint? (optional)", "");
+  if(notes===null) return; // Cancel — don't mark it complete
+  const touchpoints = (client.touchpoints||[]).map(t=> t.id===touchpointId ? { ...t, status:"completed", completedAt:new Date().toISOString(), completedNote:notes.trim() } : t);
+  upsert("clients", clientId, { touchpoints });
+}
+function updateClientStageField(clientId, field, value){
+  upsert("clients", clientId, { [field]: value });
+}
+function renderClientTouchpointSchedule(client){
+  const stage = client.currentStage || "";
+  const touchpoints = client.touchpoints || [];
+  const open = touchpoints.filter(t=>t.status==="open").sort((a,b)=>a.dueDate<b.dueDate?-1:1);
+  const history = touchpoints.filter(t=>t.status!=="open" && t.status!=="cancelled").sort((a,b)=>b.dueDate<a.dueDate?-1:1);
+  return `
+    <div class="card">
+      <h3>Touchpoint Schedule</h3>
+      <div class="small" style="margin-bottom:10px;">Drives the Call/Drop In/Renewal touchpoints Tori sees on her Dashboard and the Touchpoints tab — set the client's current stage and that stage's start date below. Every touchpoint counts days from the start date, never from when the last one was completed.</div>
+      <div class="row">
+        <div><label class="small">Current stage</label>
+          <select onchange="updateClientStageField('${client.id}','currentStage',this.value||null)">
+            <option value="" ${!stage?'selected':''}>— Not set —</option>
+            ${Object.entries(TOUCHPOINT_STAGE_LABELS).map(([k,l])=>`<option value="${k}" ${stage===k?'selected':''}>${l}</option>`).join("")}
+          </select>
+        </div>
+        <div><label class="small">${stage==='pilot'?'▸ ':''}Pilot start date</label><input type="date" value="${client.pilotStartDate?client.pilotStartDate.slice(0,10):''}" onchange="updateClientStageField('${client.id}','pilotStartDate',this.value)"></div>
+        <div><label class="small">${stage==='3month'?'▸ ':''}3 Month start date</label><input type="date" value="${client.threeMonthStartDate?client.threeMonthStartDate.slice(0,10):''}" onchange="updateClientStageField('${client.id}','threeMonthStartDate',this.value)"></div>
+        <div><label class="small">${stage==='annual'?'▸ ':''}Annual start date</label><input type="date" value="${client.annualStartDate?client.annualStartDate.slice(0,10):''}" onchange="updateClientStageField('${client.id}','annualStartDate',this.value)"></div>
+      </div>
+      <div class="small" style="margin-top:4px;">Renewing into a new annual cycle? Just update the Annual start date above to the new date — the old cycle's open touchpoints cancel and the full schedule regenerates from the new date automatically.</div>
+      <div class="row" style="margin-top:8px;">
+        <div><label class="small">Main assistant assigned on</label><input type="date" value="${client.assistantAssignedDate?client.assistantAssignedDate.slice(0,10):''}" onchange="updateClientStageField('${client.id}','assistantAssignedDate',this.value)"></div>
+      </div>
+      <div class="small" style="margin-top:4px;">Set automatically when the main assistant is assigned or changed — the Assistant Check In Call fires 7 days after this date, at any stage. Correct it here only if it's wrong.</div>
+      ${open.length ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">Upcoming</label>
+        ${open.map(t=>{
+          const phase = touchpointPhase(t.dueDate);
+          return `<div class="list-item">
+            <div><strong>${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}</strong><span class="small" style="${phase==='overdue'?'color:var(--danger);font-weight:600;':''}"> · due ${parseYMD(t.dueDate).toLocaleDateString()}${phase==='overdue'?' — OVERDUE':''}</span><div class="small">${escHtml(t.note)}</div></div>
+            <button class="secondary" onclick="completeTouchpoint('${client.id}','${t.id}')">Complete</button>
+          </div>`;
+        }).join("")}
+      </div>` : ""}
+      ${history.length ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--cream-dark);">
+        <label class="small" style="font-weight:600;">History</label>
+        ${history.map(t=>`
+          <div class="list-item">
+            <div><strong>${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}</strong><span class="small"> · ${t.status==='skipped'?'skipped':'completed'} ${t.completedAt?new Date(t.completedAt).toLocaleDateString():''}${t.status!=='skipped'?' (due '+parseYMD(t.dueDate).toLocaleDateString()+')':''}</span>${t.completedNote?`<div class="small">${escHtml(t.completedNote)}</div>`:''}</div>
+          </div>`).join("")}
+      </div>` : ""}
+    </div>
+  `;
+}
+// Full filterable view (every open touchpoint, not just "due soon" like
+// the Dashboard card) — includeFuture:true so Tori can see what's coming
+// without it needing to already be urgent.
+function renderTouchpointsTab(){
+  const typeFilter = state.touchpointsTypeFilter || "all";
+  const assistantFilter = state.touchpointsAssistantFilter || "all";
+  let items = openTouchpoints(true);
+  if(typeFilter!=="all") items = items.filter(({touchpoint:t})=>t.type===typeFilter);
+  if(assistantFilter!=="all") items = items.filter(({client,touchpoint:t})=> (t.type==="assistantCall" ? t.assistantId : mainAssistantId(client))===assistantFilter);
+  return `
+    <h2>Touchpoints</h2>
+    <div class="small" style="margin-bottom:14px;">Every open Call, Drop In, and Assistant Check In across every active client — soonest due date first. Upcoming (3 days out) and Due show normally; 7+ days past due is flagged Overdue.</div>
+    <div class="row" style="margin-bottom:12px;">
+      <div><label class="small">Type</label>
+        <select onchange="state.touchpointsTypeFilter=this.value;render();">
+          <option value="all" ${typeFilter==='all'?'selected':''}>All types</option>
+          ${Object.entries(TOUCHPOINT_TYPE_LABELS).map(([k,l])=>`<option value="${k}" ${typeFilter===k?'selected':''}>${l}</option>`).join("")}
+        </select>
+      </div>
+      <div><label class="small">Assistant</label>
+        <select onchange="state.touchpointsAssistantFilter=this.value;render();">
+          <option value="all" ${assistantFilter==='all'?'selected':''}>All assistants</option>
+          ${state.settings.assistants.filter(a=>a.active!==false).map(a=>`<option value="${a.id}" ${assistantFilter===a.id?'selected':''}>${escHtml(a.name)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <div class="card">
+      ${items.length ? items.map(({client,touchpoint:t,phase})=>{
+        const mainAssistant = state.settings.assistants.find(a=>a.id===mainAssistantId(client));
+        const phaseLabel = phase==="overdue" ? "OVERDUE" : phase==="due" ? "Due" : "Upcoming";
+        const phaseColor = phase==="overdue" ? 'var(--danger)' : phase==="due" ? 'var(--warn)' : '#8a7a72';
+        return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:6px;">
+          <div class="flex-between" style="align-items:flex-start;">
+            <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+              <strong>${escHtml(client.name)}</strong> — ${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}
+              <div class="small">${escHtml(t.note)}</div>
+              ${t.type==='assistantCall' ? `<div class="small">${escHtml(t.assistantName||'')}${t.assistantPhone?' · '+escHtml(t.assistantPhone):''}</div>` : (mainAssistant?`<div class="small">Assistant: ${escHtml(mainAssistant.name)}</div>`:'')}
+            </div>
+            <span class="badge" style="background:${phaseColor};margin:0;white-space:nowrap;">${phaseLabel}</span>
+          </div>
+          <div class="flex-between">
+            <span class="small">Due ${parseYMD(t.dueDate).toLocaleDateString()}</span>
+            <button class="secondary" onclick="completeTouchpoint('${client.id}','${t.id}')">Complete</button>
+          </div>
+        </div>`;
+      }).join("") : `<div class="small">Nothing open right now.</div>`}
+    </div>
+  `;
 }
 function dismissEmailNeeded(clientId, type){
   const client = state.clients.find(c=>c.id===clientId);
@@ -4150,7 +4408,7 @@ function renderAppShell(){
     ? [{ label:null, tabs:[["content","Content Calendar"],["techSupport","Tech Support"]] }]
     : state.role==="admin"
     ? [
-        { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"]] },
+        { label:"Work", tabs:[["dashboard","Dashboard"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"],["touchpoints","Touchpoints"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["demoPipeline","Demo Pipeline"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Goals"],["techSupport","Tech Support"]] }
@@ -4215,6 +4473,7 @@ function renderMain(){
     case "demoPipeline": return renderDemoPipelineTab();
     case "vendors": return renderVendorsTab();
     case "vendorTickets": return renderVendorTicketsTab();
+    case "touchpoints": return state.role==="admin" ? renderTouchpointsTab() : "";
     case "cardPurchases": return state.role==="admin" ? renderCardPurchasesTab() : "";
     case "builds": return renderBuildsTab();
     case "calendar": return (state.role==="admin" || state.role==="team") ? renderCalendarTab() : "";
@@ -4338,12 +4597,20 @@ function renderOpsLeadColumn(assistant, d){
       </div>`).join("")}
   `);
   if(d.clientCheckIns.length) sections.push(`
-    <div class="small" style="font-weight:600;margin:10px 0 4px;">Client check-ins due</div>
-    ${d.clientCheckIns.map(({client,type,label,detail})=>`
-      <div class="list-item" style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
-        <div><strong>${client.name}</strong> — ${label}<div class="small">${detail}</div></div>
-        <button class="secondary" onclick="event.stopPropagation();dismissClientCheckIn('${client.id}','${type}')">Reviewed</button>
-      </div>`).join("")}
+    <div class="small" style="font-weight:600;margin:10px 0 4px;">Touchpoints due <a href="#" class="small" onclick="setTab('touchpoints');return false;" style="font-weight:400;float:right;">See all &amp; filter →</a></div>
+    ${d.clientCheckIns.map(({client,touchpoint:t,phase})=>{
+      const mainAssistant = state.settings.assistants.find(a=>a.id===(client.assistantIds||[])[0]);
+      const phaseLabel = phase==="overdue" ? "OVERDUE" : phase==="due" ? "Due" : "Upcoming";
+      return `<div class="list-item">
+        <div style="cursor:pointer;" onclick="viewClientMembership('${client.id}')">
+          <strong>${escHtml(client.name)}</strong> — ${escHtml(TOUCHPOINT_TYPE_LABELS[t.type]||t.type)}: ${escHtml(t.label)}
+          <span class="small" style="${phase==='overdue'?'color:var(--danger);font-weight:600;':''}"> · ${phaseLabel} · due ${parseYMD(t.dueDate).toLocaleDateString()}</span>
+          <div class="small">${escHtml(t.note)}</div>
+          ${t.type==='assistantCall' ? `<div class="small">${escHtml(t.assistantName||'')}${t.assistantPhone?' · '+escHtml(t.assistantPhone):''}</div>` : (mainAssistant?`<div class="small">Assistant: ${escHtml(mainAssistant.name)}</div>`:'')}
+        </div>
+        <button class="secondary" onclick="event.stopPropagation();completeTouchpoint('${client.id}','${t.id}')">Complete</button>
+      </div>`;
+    }).join("")}
   `);
   if(d.renewalCheckInEmails.length) sections.push(`
     <div class="small" style="font-weight:600;margin:10px 0 4px;">Check in about renewing</div>
@@ -4673,7 +4940,7 @@ function renderAdminDashboard(){
   const contractsReady = contractsReadyToDownload();
   const paymentsReady = paymentsReadyToProcess();
   const unackedAssignments = unacknowledgedAssignments();
-  const clientCheckIns = clientCheckInsNeeded();
+  const clientCheckIns = openTouchpoints(false);
   const opsLead = state.settings.assistants.find(a=>a.isOpsLead && a.active!==false);
   const docsLead = state.settings.assistants.find(a=>a.isDocsLead && a.active!==false);
   // A client flagged "Managed independently" (Membership tab — e.g. a
@@ -10129,6 +10396,7 @@ function renderClientMembership(client){
         <div><label class="small">Cancellation deadline override (optional)</label><input type="date" value="${client.noticeDeadlineOverride?client.noticeDeadlineOverride.slice(0,10):''}" onchange="updateClientField('${client.id}','noticeDeadlineOverride',this.value)"></div>
       </div>
     </div>
+    ${renderClientTouchpointSchedule(client)}
     <div class="card">
       <div class="flex-between">
         <h3>Assigned assistants</h3>
@@ -10869,7 +11137,7 @@ function confirmReassign(clientId){
   const mainId = document.getElementById("reassign_main").value;
   if(!mainId){ alert("Pick a main assistant."); return; }
   const newIds = composeAssistantIds(mainId, document.getElementById("reassign_secondary").value, client && client.assistantIds);
-  upsert("clients", clientId, { assistantIds: newIds });
+  upsert("clients", clientId, { assistantIds: newIds, ...assistantAssignedDatePatch(client, newIds) });
   state.tasks.filter(t=>t.clientId===clientId && t.status!=="Done").forEach(t=>{
     upsert("tasks", t.id, { assignees: newIds });
   });
@@ -15795,11 +16063,13 @@ function saveClient(existingId){
   const draft = state.modal.client;
   const id = existingId || newId("client");
   const assistantIds = draft.assistantIds || [];
+  const existingClient = existingId ? state.clients.find(c=>c.id===existingId) : null;
   upsert("clients", id, {
     name: (draft.name||"").trim(),
     packageHours: parseFloat(draft.packageHours)||0,
     cycleType: draft.cycleType || "monthly",
     assistantIds,
+    ...assistantAssignedDatePatch(existingClient, assistantIds),
     ...(existingId ? {} : { notes: [], specialDates: [], vendors: [], inspections: [] })
   });
   state.modal = null;
