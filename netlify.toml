@@ -1,7 +1,40 @@
 [build]
-  # Only the app's own files go on the website. Everything else in this repo (CLAUDE.md and handoff
-  # notes, functions/ server code, firestore.rules, firebase.json, scratch/ drafts) stays private.
-  # The pages in public/ (report, calendar/gmail/qb-connected) are served by Firebase Hosting, not here.
-  # If the app ever needs another file on Netlify, add it to this list.
-  command = "rm -rf _site && mkdir _site && cp index.html favicon.png apple-touch-icon.png _site/"
-  publish = "_site"
+  publish = "."
+
+# Only the app's own files are served. Everything else in this repo (CLAUDE.md and handoff notes,
+# functions/ server code, firestore.rules, firebase.json, scratch/ drafts) returns 404.
+# The pages in public/ (report, calendar/gmail/qb-connected) are served by Firebase Hosting, not here.
+# Rules are checked top to bottom; the first match wins. If the app ever needs another file on
+# Netlify, add an "allow" rule for it above the last rule.
+
+# Allow: the app and its icons.
+[[redirects]]
+  from = "/"
+  to = "/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/index.html"
+  to = "/index.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/favicon.png"
+  to = "/favicon.png"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/apple-touch-icon.png"
+  to = "/apple-touch-icon.png"
+  status = 200
+  force = true
+
+# Everything else: not found.
+[[redirects]]
+  from = "/*"
+  to = "/404-not-found"
+  status = 404
+  force = true
