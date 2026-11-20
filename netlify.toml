@@ -1,2 +1,7 @@
 [build]
-  publish = "."
+  # Only the app's own files go on the website. Everything else in this repo (CLAUDE.md and handoff
+  # notes, functions/ server code, firestore.rules, firebase.json, scratch/ drafts) stays private.
+  # The pages in public/ (report, calendar/gmail/qb-connected) are served by Firebase Hosting, not here.
+  # If the app ever needs another file on Netlify, add it to this list.
+  command = "rm -rf _site && mkdir _site && cp index.html favicon.png apple-touch-icon.png _site/"
+  publish = "_site"
