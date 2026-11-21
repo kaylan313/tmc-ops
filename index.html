@@ -10858,11 +10858,29 @@ function renderClientAddOnsSection(client){
         <button class="secondary" onclick="addClientAddOn('${client.id}')">+ Add add-on</button>
       </div>
       <div class="small" style="margin-bottom:10px;">Project-based add-ons (SOPs, custom builds, AI automations, productized software) — separate from this client's hourly package above. Offered to existing recurring clients, not sold standalone.</div>
-      ${addOns.length ? addOns.map(a=>renderAddOnRow(client.id, a)).join("") : `<div class="small">No add-ons yet.</div>`}
+      ${addOns.length ? addOns.map(a=>renderAddOnRow(client.id, a, addOns.length)).join("") : `<div class="small">No add-ons yet.</div>`}
     </div>
   `;
 }
-function renderAddOnRow(clientId, a){
+// One collapsible card per build. The header always shows the build's name
+// and a one-line summary; opening it shows everything for that build grouped
+// into sections — details, build assistant, phases (each phase holds its own
+// fee, Day 1 and payments), monthly maintenance, and to-dos.
+// Open/closed is per browser session (state.openAddOns); by default a
+// client's only build starts open and several builds start closed.
+function toggleAddOnOpen(addOnId, open){
+  state.openAddOns = state.openAddOns || {};
+  state.openAddOns[addOnId] = open;
+  render();
+}
+function addOnSection(title, body, extraHeader){
+  return `
+      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
+        <div class="flex-between"><label class="small" style="font-weight:600;">${title}</label>${extraHeader||""}</div>
+        ${body}
+      </div>`;
+}
+function renderAddOnRow(clientId, a, buildCount){
   // Nathan's build (Nov 2026): no separate maintenance charge to the
   // client at all — instead a fixed amount goes to the assistant each
   // cycle, funded out of his existing membership fee. One-off by design
@@ -10870,9 +10888,33 @@ function renderAddOnRow(clientId, a){
   // top of the normal maintenance fields rather than a new system —
   // maintActive covers both "normal $X/mo billed to client" and this.
   const maintActive = a.monthlyMaintenance>0 || a.noChargeMaintenanceStipend;
-  return `
-    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+  state.openAddOns = state.openAddOns || {};
+  const open = state.openAddOns[a.id]!=null ? state.openAddOns[a.id] : (buildCount||1)<=1;
+  const pays = a.payments||[];
+  const phases = addOnPhases(a);
+  const totalFee = phases.reduce((s,ph)=>s+phaseFee(a,ph),0);
+  const todos = a.buildTodos||[];
+  const summary = [
+    a.status||"—",
+    `$${totalFee.toFixed(0)}${phases.length>1?' · '+phases.length+' phases':''}`,
+    pays.length ? `${pays.filter(p=>p.paid).length}/${pays.length} paid` : "no payment schedule",
+    maintActive ? (a.noChargeMaintenanceStipend ? "stipend" : `$${a.monthlyMaintenance}/mo`)+(a.maintenanceActive===false?' (paused)':'') : "",
+    a.buildAssistantId ? assistantName(a.buildAssistantId) : "",
+    todos.length ? `${todos.filter(t=>t.done).length}/${todos.length} to-dos` : ""
+  ].filter(Boolean).join(" · ");
+  const header = `
+      <div class="flex-between" style="cursor:pointer;gap:10px;" onclick="toggleAddOnOpen('${a.id}', ${open?'false':'true'})">
+        <div>
+          <strong>${escHtml(a.label||'Build')}</strong>
+          <div class="small">${escHtml(summary)}</div>
+        </div>
+        <span class="small" style="white-space:nowrap;">${open?'Hide ▲':'Show ▼'}</span>
+      </div>`;
+  if(!open) return `<div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">${header}</div>`;
+
+  const details = `
       <div class="row">
+        <div><label class="small">Build name</label><input value="${escHtml(a.label||'')}" onchange="renameAddOn('${clientId}','${a.id}',this.value)"></div>
         <div><label class="small">Category</label>
           <select onchange="updateAddOnCatalog('${clientId}','${a.id}',this.value)">
             ${ADDON_CATALOG.map(c=>`<option value="${c.key}" ${a.catalogKey===c.key?'selected':''}>${c.category} — ${c.label}</option>`).join("")}
@@ -10883,32 +10925,20 @@ function renderAddOnRow(clientId, a){
             ${ADDON_STATUSES.map(s=>`<option value="${s}" ${a.status===s?'selected':''}>${s}</option>`).join("")}
           </select>
         </div>
+      </div>
+      <div class="row">
         <div><label class="small">Counts toward goals as</label>
           <select onchange="updateAddOnField('${clientId}','${a.id}','buildType',this.value||null)">
             ${[["","— Pick one —"],["website","Website build"],["software","Software build"],["none","Not a build"]].map(([v,l])=>`<option value="${v}" ${addOnBuildType(a)===v||(!addOnBuildType(a)&&!v)?'selected':''}>${l}</option>`).join("")}
           </select>
         </div>
+        <div><label class="small">Date added</label><input type="date" value="${a.addedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','addedDate',this.value)"></div>
         ${a.status==="Completed" ? `<div><label class="small">Completed on</label><input type="date" value="${a.completedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','completedDate',this.value)"></div>` : ""}
       </div>
-      <div class="row">
-        <div><label class="small">Flat fee ($)</label><input id="addon_fee_${a.id}" type="number" step="1" value="${a.flatFee||0}" onchange="updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)"></div>
-        <div><label class="small">Monthly maintenance ($)</label><input id="addon_maint_${a.id}" type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
-        ${maintActive ? `<div><label class="small">First ${a.noChargeMaintenanceStipend?'stipend':'maintenance fee'} due</label><input type="date" value="${a.maintenanceStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceStartDate',this.value)" title="Due on this date, then every 30 days after"></div>` : ""}
-        <div><label class="small">Date added</label><input type="date" value="${a.addedDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','addedDate',this.value)"></div>
-      </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Rare — only for a build like Nathan's where maintenance is funded out of an existing membership fee instead of billed separately.">
-        <input type="checkbox" ${a.noChargeMaintenanceStipend?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','noChargeMaintenanceStipend',this.checked)">
-        No charge to the client — pay the assistant a fixed amount instead (funded from an existing fee)
-      </label>
-      ${maintActive ? `
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
-        <input type="checkbox" ${a.maintenanceActive!==false?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','maintenanceActive',this.checked)">
-        ${a.noChargeMaintenanceStipend?'Stipend':'Monthly maintenance'} currently active/billing
-      </label>` : ""}
-      <div><label class="small">Notes</label><textarea id="addon_notes_${a.id}" onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>
-      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
-        <label class="small" style="font-weight:600;">Flat-Fee Build — Assistant Pay (optional)</label>
-        <div class="small" style="margin-bottom:6px;">For a flat-fee build an assistant does instead of hourly work — her cut is a % of the build cost below, paid out as each payment milestone is actually received. Leave blank if this add-on isn't assistant-built work.</div>
+      <div><label class="small">Notes</label><textarea id="addon_notes_${a.id}" onchange="updateAddOnField('${clientId}','${a.id}','notes',this.value)" placeholder="Scope details, custom quote basis, etc.">${a.notes||''}</textarea></div>`;
+
+  const team = `
+        <div class="small" style="margin-bottom:6px;">For a flat-fee build an assistant does instead of hourly work — her cut is a % of each phase's build cost, paid out as each payment is actually received. Leave blank if this add-on isn't assistant-built work.</div>
         <div class="row">
           <div><label class="small">Assigned assistant</label>
             <select onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantId',this.value||null)">
@@ -10917,17 +10947,23 @@ function renderAddOnRow(clientId, a){
             </select>
           </div>
           <div><label class="small">Her %</label><input id="addon_buildpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.buildAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>
-          <div><label class="small">Build cost her % is based on ($)</label><input id="addon_buildbasis_${a.id}" type="number" step="1" value="${a.buildAssistantBasisAmount!=null?a.buildAssistantBasisAmount:(a.flatFee||0)}" onchange="updateAddOnField('${clientId}','${a.id}','buildAssistantBasisAmount',parseFloat(this.value)||0)" placeholder="${a.flatFee||0}"></div>
-          <div><label class="small">Day 1 (deposit received)</label><input type="date" value="${a.buildStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','buildStartDate',this.value)"></div>
+        </div>`;
+
+  const maintenance = `
+        <div class="row">
+          <div><label class="small">Monthly maintenance ($)</label><input id="addon_maint_${a.id}" type="number" step="1" value="${a.monthlyMaintenance||0}" onchange="updateAddOnField('${clientId}','${a.id}','monthlyMaintenance',parseFloat(this.value)||0)"></div>
+          ${maintActive ? `<div><label class="small">First ${a.noChargeMaintenanceStipend?'stipend':'maintenance fee'} due</label><input type="date" value="${a.maintenanceStartDate||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceStartDate',this.value)" title="Due on this date, then every 30 days after"></div>` : ""}
         </div>
-        <div class="small" style="margin-top:4px;">Defaults to the flat fee above — only change this if the client is charged more than the actual build cost (the markup is TMC's own margin, not part of her %).</div>
-      </div>
-      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
-        <label class="small" style="font-weight:600;">Payment Schedule</label>
-        ${(a.payments&&a.payments.length) ? renderAddOnPhases(clientId, a) : `
-          <div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>
-        `}
-        ${maintActive ? (()=>{
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Rare — only for a build like Nathan's where maintenance is funded out of an existing membership fee instead of billed separately.">
+          <input type="checkbox" ${a.noChargeMaintenanceStipend?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','noChargeMaintenanceStipend',this.checked)">
+          No charge to the client — pay the assistant a fixed amount instead (funded from an existing fee)
+        </label>
+        ${maintActive ? `
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;">
+          <input type="checkbox" ${a.maintenanceActive!==false?'checked':''} onchange="updateAddOnField('${clientId}','${a.id}','maintenanceActive',this.checked)">
+          ${a.noChargeMaintenanceStipend?'Stipend':'Monthly maintenance'} currently active/billing
+        </label>
+        ${(()=>{
           const due = maintenanceFeesDue().find(r=>r.addOn.id===a.id);
           const label = a.noChargeMaintenanceStipend ? `No charge to client — $${a.maintenanceAssistantFixedAmount||0} to ${assistantName(a.maintenanceAssistantId)||'(pick an assistant below)'}` : `$${a.monthlyMaintenance}`;
           return `<div class="list-item" style="margin-top:8px;">
@@ -10937,16 +10973,10 @@ function renderAddOnRow(clientId, a){
             </div>
             ${due ? `<button class="secondary" onclick="markMaintenanceFeePaid('${clientId}','${a.id}','${due.key}')">Mark paid</button>` : ""}
           </div>`;
-        })() : ""}
-      </div>
-      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
-        <label class="small" style="font-weight:600;">Recurring ${a.noChargeMaintenanceStipend?'Stipend':'Monthly Maintenance'} — Assistant Split</label>
-        <div class="small" style="margin-bottom:6px;">${maintActive
-          ? (a.noChargeMaintenanceStipend
-            ? `No charge to the client — the assigned assistant gets the fixed amount below once each cycle is marked paid, added to their next regular paycheck, listed separately from build pay.`
-            : `$${a.monthlyMaintenance}/mo${a.maintenanceActive===false?' (paused)':''}. The assigned assistant gets their % of each month's fee once that month is marked paid — it's added to their next regular paycheck automatically, listed separately from build pay.`)
-          : `Set a monthly maintenance amount above (or check "No charge to the client") to track recurring payments and the assistant's split.`}</div>
-        ${maintActive ? `
+        })()}
+        <div class="small" style="margin:8px 0 6px;">${a.noChargeMaintenanceStipend
+            ? `The maintaining assistant gets the fixed amount below once each cycle is marked paid, added to their next regular paycheck, listed separately from build pay.`
+            : `The maintaining assistant gets their % of each fee once it's marked paid — added to their next regular paycheck automatically, listed separately from build pay.`}</div>
         <div class="row">
           <div><label class="small">Maintaining assistant</label>
             <select onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantId',this.value||null)">
@@ -10959,21 +10989,31 @@ function renderAddOnRow(clientId, a){
             : `<div><label class="small">Their %</label><input id="addon_maintpct_${a.id}" type="number" step="1" min="0" max="100" value="${a.maintenanceAssistantPercent||''}" onchange="updateAddOnField('${clientId}','${a.id}','maintenanceAssistantPercent',parseFloat(this.value)||0)" style="max-width:90px;"></div>`}
         </div>
         ${(a.maintenancePayments||[]).slice().sort((x,y)=> (y.dueDate||y.month||'') < (x.dueDate||x.month||'') ? -1 : 1).map(p=>renderMaintenancePaymentRow(clientId,a,p)).join("")}
-        <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add ${a.maintenanceStartDate?'payment':'month'}</button></div>` : ""}
-      </div>
-      ${a.buildAssistantId ? `
-      <div style="padding-top:8px;border-top:1px solid var(--cream-dark);">
-        <div class="flex-between">
-          <label class="small" style="font-weight:600;">Build To-Dos &amp; Deadlines</label>
-          <button class="secondary" style="padding:2px 8px;" onclick="addBuildTodo('${clientId}','${a.id}')">+ Add to-do</button>
-        </div>
-        ${(a.buildTodos&&a.buildTodos.length) ? renderBuildTodoList(clientId, a, true) : `
-          <div class="small" style="margin-top:6px;">No to-dos yet. <a href="#" onclick="seedDefaultBuildTodos('${clientId}','${a.id}');return false;">Start from the standard build checklist</a>, or add your own.</div>
-        `}
-      </div>` : ""}
+        <div style="margin-top:6px;"><button class="secondary" onclick="addMaintenancePayment('${clientId}','${a.id}')">+ Add ${a.maintenanceStartDate?'payment':'month'}</button></div>` : `
+        <div class="small" style="margin-top:4px;">Set a monthly amount (or tick "No charge to the client") to track recurring payments and the assistant's split.</div>`}`;
+
+  const todoSection = a.buildAssistantId ? addOnSection("To-Dos &amp; Deadlines", (a.buildTodos&&a.buildTodos.length) ? renderBuildTodoList(clientId, a, true) : `
+          <div class="small" style="margin-top:6px;">No to-dos yet. <a href="#" onclick="seedDefaultBuildTodos('${clientId}','${a.id}');return false;">Start from the standard build checklist</a>, or add your own.</div>`,
+      `<button class="secondary" style="padding:2px 8px;" onclick="addBuildTodo('${clientId}','${a.id}')">+ Add to-do</button>`) : "";
+
+  return `
+    <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
+      ${header}
+      ${addOnSection("Details", details)}
+      ${addOnSection("Build Assistant &amp; Pay (optional)", team)}
+      ${addOnSection("Phases &amp; Payments", renderAddOnPhases(clientId, a))}
+      ${addOnSection("Monthly Maintenance", maintenance)}
+      ${todoSection}
       <div><button class="danger" onclick="removeClientAddOn('${clientId}','${a.id}')">Delete</button></div>
     </div>
   `;
+}
+// Renaming a build sticks: picking a different Category afterwards no
+// longer overwrites a name someone typed (labelCustom).
+function renameAddOn(clientId, addOnId, value){
+  const name = (value||"").trim();
+  if(!name){ render(); return; }
+  updateAddOnById(clientId, addOnId, a=>({ ...a, label:name, labelCustom:true }));
 }
 // Membership / Software switches for one client (top of Software Build).
 function renderClientCategoryCard(client){
@@ -11019,9 +11059,17 @@ function phaseName(a, p){
   if(phases.length<2) return "";
   return (phases.find(ph=>ph.id===paymentPhaseId(a,p))||{}).name || "";
 }
+// Each phase is one box holding everything for that phase: its name, fee,
+// Day 1, the build cost the assistant's % is based on, and its payments.
+// Phase 1's fee / Day 1 / basis are still stored on the build itself
+// (flatFee / buildStartDate / buildAssistantBasisAmount), so payroll,
+// alerts and goals read them exactly as before — only where they're edited
+// moved. Renaming Phase 1 saves a phases list, which is harmless: payments
+// without a phaseId still belong to the first phase.
 function renderAddOnPhases(clientId, a){
   const phases = addOnPhases(a);
   const multi = phases.length > 1;
+  const hasPayments = (a.payments||[]).length > 0;
   state.openAddOnPhases = state.openAddOnPhases || {};
   return phases.map((ph, i)=>{
     const pays = (a.payments||[]).filter(p=>paymentPhaseId(a,p)===ph.id);
@@ -11032,26 +11080,43 @@ function renderAddOnPhases(clientId, a){
     const firstUnpaidIdx = phases.findIndex(x=>(a.payments||[]).some(p=>paymentPhaseId(a,p)===x.id && !p.paid));
     const open = state.openAddOnPhases[key]!=null ? state.openAddOnPhases[key] : (!multi || i===firstUnpaidIdx || (firstUnpaidIdx<0 && i===phases.length-1));
     const first = i===0;
+    const fee = phaseFee(a, ph);
+    const startDate = first ? (a.buildStartDate||'') : (ph.startDate||'');
+    const basis = first
+      ? (a.buildAssistantBasisAmount!=null ? a.buildAssistantBasisAmount : (a.flatFee||0))
+      : (ph.basisAmount!=null ? ph.basisAmount : (ph.fee||0));
+    const feeChange = first
+      ? `updateAddOnField('${clientId}','${a.id}','flatFee',parseFloat(this.value)||0)`
+      : `updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','fee',parseFloat(this.value)||0)`;
+    const dayChange = first
+      ? `updateAddOnField('${clientId}','${a.id}','buildStartDate',this.value)`
+      : `updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','startDate',this.value)`;
+    const basisChange = first
+      ? `updateAddOnField('${clientId}','${a.id}','buildAssistantBasisAmount',parseFloat(this.value)||0)`
+      : `updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','basisAmount',parseFloat(this.value)||0)`;
     return `
       <div style="margin-top:8px;border:1px solid var(--cream-dark);border-radius:8px;padding:6px 10px;">
         <div class="flex-between" style="cursor:pointer;" onclick="state.openAddOnPhases['${key}']=${open?'false':'true'};render();">
           <strong>${escHtml(ph.name||('Phase '+(i+1)))}</strong>
-          <span class="small">$${total.toFixed(0)} · ${paidCount}/${pays.length} paid ${open?'▲':'▼'}</span>
+          <span class="small">$${fee.toFixed(0)}${pays.length?' · '+paidCount+'/'+pays.length+' paid':''}${startDate?' · Day 1 '+parseYMD(startDate).toLocaleDateString():''} ${open?'▲':'▼'}</span>
         </div>
         ${open ? `
-          ${!first ? `
           <div class="row" style="margin-top:6px;">
-            <div><label class="small">Phase name</label><input value="${escHtml(ph.name||'')}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','name',this.value)"></div>
-            <div><label class="small">Phase fee ($)</label><input type="number" step="1" value="${ph.fee||0}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','fee',parseFloat(this.value)||0)" style="max-width:120px;"></div>
-            <div><label class="small">Phase Day 1</label><input type="date" value="${ph.startDate||''}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','startDate',this.value)"></div>
-            ${a.buildAssistantId ? `<div><label class="small">Build cost her % is based on ($)</label><input type="number" step="1" value="${ph.basisAmount!=null?ph.basisAmount:(ph.fee||0)}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','basisAmount',parseFloat(this.value)||0)" style="max-width:120px;"></div>` : ""}
+            <div><label class="small">Phase name</label><input value="${escHtml(ph.name||('Phase '+(i+1)))}" onchange="updateAddOnPhaseField('${clientId}','${a.id}','${ph.id}','name',this.value.trim()||'Phase ${i+1}')"></div>
+            <div><label class="small">${first?'Flat fee':'Phase fee'} ($)</label><input ${first?`id="addon_fee_${a.id}"`:''} type="number" step="1" value="${fee}" onchange="${feeChange}" style="max-width:120px;"></div>
+            <div><label class="small">Day 1 (deposit received)</label><input type="date" value="${startDate}" onchange="${dayChange}"></div>
+            ${a.buildAssistantId ? `<div><label class="small">Build cost her % is based on ($)</label><input ${first?`id="addon_buildbasis_${a.id}"`:''} type="number" step="1" value="${basis}" onchange="${basisChange}" style="max-width:120px;"></div>` : ""}
           </div>
-          <div class="small">Changing the phase fee re-splits its unpaid payments 50/25/25; Day 1 sets their due dates (Day 1 / 15 / 30), same as Phase 1.</div>` : (multi ? `<div class="small" style="margin-top:4px;">Phase 1 uses the build's flat fee and Day 1 above.</div>` : "")}
-          ${pays.map(p=>renderAddOnPaymentRow(clientId,a,p)).join("") || `<div class="small">No payments in this phase.</div>`}
+          <div class="small">${first
+            ? `Day 1 sets the due dates of this phase's unpaid payments.${a.buildAssistantId?' Only change the build cost if the client is charged more than the real build cost (the markup is TMC’s margin, not part of her %).':''}`
+            : `Changing the phase fee re-splits its unpaid payments 50/25/25; Day 1 sets their due dates (Day 1 / 15 / 30).`}</div>
+          ${first && !hasPayments
+            ? `<div style="margin-top:6px;"><button class="secondary" onclick="generateAddOnPayments('${clientId}','${a.id}')">+ Generate 50/25/25 payment schedule</button></div>`
+            : (pays.map(p=>renderAddOnPaymentRow(clientId,a,p)).join("") || `<div class="small">No payments in this phase.</div>`)}
           ${!first && paidCount===0 ? `<div style="margin-top:6px;"><button class="danger" style="padding:2px 8px;" onclick="removeAddOnPhase('${clientId}','${a.id}','${ph.id}')">Remove phase</button></div>` : ""}
         ` : ""}
       </div>`;
-  }).join("") + `<div style="margin-top:8px;"><button class="secondary" onclick="addAddOnPhase('${clientId}','${a.id}')">+ Add phase</button></div>`;
+  }).join("") + (hasPayments ? `<div style="margin-top:8px;"><button class="secondary" onclick="addAddOnPhase('${clientId}','${a.id}')">+ Add phase</button></div>` : "");
 }
 function updateAddOnById(clientId, addOnId, fn){
   const client = state.clients.find(c=>c.id===clientId);
@@ -11369,7 +11434,7 @@ function updateAddOnCatalog(clientId, addOnId, catalogKey){
     ...a,
     catalogKey: catalogItem.key,
     category: catalogItem.category,
-    label: catalogItem.label,
+    label: a.labelCustom ? a.label : catalogItem.label,
     flatFee: catalogItem.flatFee || catalogItem.noteDefault || 0,
     monthlyMaintenance: catalogItem.maintenance || 0,
     notes: catalogItem.note || a.notes
