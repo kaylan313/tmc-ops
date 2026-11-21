@@ -8928,14 +8928,24 @@ function renderSoftwareClientList(clients){
   return `<div class="card">${rows}</div>`;
 }
 function renderClientsList(){
-  const isCancelled = c => c.clientStatus === "cancelled";
+  const showSoftware = canViewSoftware();
+  const category = showSoftware && state.clientsCategory==="software" ? "software" : "membership";
+  // clientStatus is the MEMBERSHIP status. In the Software view a client
+  // with a live (Proposed/Active) build stays in the active list even if
+  // their hourly membership was cancelled — otherwise an active build
+  // vanished into "Past clients".
+  const hasLiveBuild = c => (c.addOns||[]).some(a=>a.status==="Proposed" || a.status==="Active");
+  const isCancelled = c => c.clientStatus === "cancelled" && !(category==="software" && hasLiveBuild(c));
   const marketFilter = state.clientMarketFilter;
   const matchesMarket = c => marketFilter==="all" || (c.market||"Lafayette")===marketFilter;
   const showToggle = state.role==="team" && !!state.currentAssistant;
   const mineOnly = onlyMyClients();
-  const matchesMine = c => !mineOnly || (c.assistantIds||[]).includes(state.currentAssistant.id);
-  const showSoftware = canViewSoftware();
-  const category = showSoftware && state.clientsCategory==="software" ? "software" : "membership";
+  // "Mine" in the Software view also means "I'm the build or maintenance
+  // assistant on one of their builds" — assistantIds is only the hourly
+  // membership roster, so build-only clients never showed up there.
+  const myId = state.currentAssistant && state.currentAssistant.id;
+  const onMyBuild = c => (c.addOns||[]).some(a=>a.status!=="Cancelled" && (a.buildAssistantId===myId || a.maintenanceAssistantId===myId));
+  const matchesMine = c => !mineOnly || (c.assistantIds||[]).includes(myId) || (category==="software" && onMyBuild(c));
   // Software-only clients (Membership switched off) stay out of the
   // Membership view, so people without Software access never see them.
   const inView = c => category==="software" ? isSoftwareClient(c) : (isMembershipClient(c) || c.id===INTERNAL_CLIENT_ID);
