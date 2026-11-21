@@ -9649,7 +9649,7 @@ function renderClientProfile(client){
         </select>
       </div>
       <div><label class="small">Orientation date</label><input type="date" value="${p.orientationDate||''}" onchange="updateProfileField('${client.id}','orientationDate',this.value)"></div>
-      <div><label class="small">Assistant(s) present</label>
+      <div><label class="small">Assistant at orientation visit</label>
         <select onchange="updateProfileField('${client.id}','orientationAssistantId',this.value)">
           <option value="">—</option>
           ${state.settings.assistants.map(a=>`<option value="${a.id}" ${p.orientationAssistantId===a.id?'selected':''}>${a.name}</option>`).join("")}
@@ -9895,6 +9895,7 @@ function renderClientProfile(client){
     // their space, their recurring services. The natural first stop, so the
     // onboarding checklist (overall intake progress) lives here too.
     details: `
+      ${renderClientAssignedAssistantsCard(client)}
       ${renderClientOnboardingChecklist(client)}
       ${renderProfileSection("visit", "1. Client & Visit Details", visitBody)}
       ${showHome ? renderProfileSection("home", "2. Home Onboarding", homeBody) : ""}
@@ -10264,6 +10265,32 @@ function renderReferralStatus(client){
       <div class="small" style="margin-top:6px;">${status.paid} of 12 payouts recorded so far.</div>
     </div>
   `;
+}
+// Who's actually assigned to this client, at the top of Details. The
+// Friday recap is sent from the MAIN assistant (assistantIds[0]) — that
+// used to only be visible/editable under Membership → Reassign (admin only),
+// while Details just had the orientation-visit assistant, which people took
+// for the assignment. Clients with several assistants from before main/
+// secondary existed kept their old, arbitrary order, so the "main" (and the
+// recap sender) could be the wrong person without anyone seeing it.
+function renderClientAssignedAssistantsCard(client){
+  if(client.id===INTERNAL_CLIENT_ID) return "";
+  const ids = client.assistantIds||[];
+  const recapLine = isMembershipClient(client)
+    ? (ids[0]
+        ? `Friday recap emails go out from <strong>${escHtml(assistantName(ids[0]))}</strong> (the Main assistant) — from their own Gmail if they've connected it on the Team tab, otherwise from support@.${client.autoWeeklyReport===false?' Automatic recaps are turned off for this client.':''}`
+        : `<span style="color:var(--danger);">No Main assistant set — Friday recap emails go out from support@, signed "The Modern Concierge Team", until one is picked.</span>`)
+    : "";
+  return `
+    <div class="card">
+      <div class="flex-between">
+        <h3 style="margin:0;">Assigned assistants</h3>
+        ${state.role==="admin" ? `<button class="secondary" onclick="openReassignModal('${client.id}')">Change</button>` : ""}
+      </div>
+      <div style="margin-top:6px;">${escHtml(assistantRolesSummary(client))}</div>
+      ${recapLine ? `<div class="small" style="margin-top:4px;">${recapLine}</div>` : ""}
+      ${state.role!=="admin" ? `<div class="small" style="margin-top:4px;">Wrong person? Ask Kaylan to change it.</div>` : ""}
+    </div>`;
 }
 function updateProfileField(clientId, field, value){
   const client = state.clients.find(c=>c.id===clientId);
