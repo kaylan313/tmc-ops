@@ -4677,9 +4677,9 @@ function toggleNavGroup(label, currentlyOpen){
   render();
 }
 // Sidebar items that open another site in a new browser tab instead of a
-// tab inside this app (TMC Hub has its own login, which doesn't work
+// tab inside this app (TMC Brain has its own login, which doesn't work
 // reliably inside an embedded frame, especially on Safari).
-const NAV_LINKS = { tmcHub: "https://tmc-hub.netlify.app/" };
+const NAV_LINKS = { tmcBrain: "https://tmc-brain.netlify.app/" };
 function navButton(key, label){
   if(NAV_LINKS[key]) return `<button onclick="window.open(NAV_LINKS['${key}'],'_blank','noopener'); state.mobileNavOpen=false; render();">${label} <span style="font-size:11px;opacity:.7;">↗</span></button>`;
   return `<button class="${state.activeTab===key?'active':''}" onclick="setTab('${key}')">${label}</button>`;
@@ -4691,15 +4691,15 @@ function renderAppShell(){
   // Creator lists stay short enough (5-7 items) that grouping them wouldn't
   // add anything, so they stay as one unlabeled group (no header renders).
   const tabGroups = isContentCreator
-    ? [{ label:null, tabs:[["content","Content Calendar"],["tmcHub","TMC Hub"],["techSupport","Tech Support"]] }]
+    ? [{ label:null, tabs:[["content","Content Calendar"],["tmcBrain","TMC Brain"],["techSupport","Tech Support"]] }]
     : state.role==="admin"
     ? [
-        { label:"Work", tabs:[["dashboard","Dashboard"],["tmcHub","TMC Hub"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"],["touchpoints","Touchpoints"]] },
+        { label:"Work", tabs:[["dashboard","Dashboard"],["tmcBrain","TMC Brain"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["builds","Builds"],["time","Time Tracking"],["vendorTickets","Vendor Requests"],["touchpoints","Touchpoints"]] },
         { label:"Money", tabs:[["payroll","Payroll"],["reports","Reports"],["renewals","Renewals"],["renewalsBoard","Renewals Board"],["addons","Add-Ons"],["cardPurchases","Card Purchases"]] },
         { label:"Growth", tabs:[["leads","Lead Organizer"],["demoPipeline","Demo Pipeline"],["vendors","Vendors"],["scorecard","Scorecard"],["content","Content Calendar"]] },
         { label:"Team", tabs:[["onboarding","Onboarding"],["team","Team"],["orgchart","Org Chart"],["goals","Goals"],["techSupport","Tech Support"]] }
       ]
-    : [{ label:null, tabs:[["dashboard","Dashboard"],["tmcHub","TMC Hub"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
+    : [{ label:null, tabs:[["dashboard","Dashboard"],["tmcBrain","TMC Brain"],["clients","Clients"],["kanban","Task Board"],["calendar","Calendar"],["time","Time Tracking"],["vendors","Vendors"],["vendorTickets","Vendor Requests"],["team","Team"],["onboarding","Onboarding"],
        ...(isDevDirector() || (state.currentAssistant && allAssignedBuilds().some(({addOn})=>addOn.buildAssistantId===state.currentAssistant.id)) ? [["builds","Builds"]] : []),
        ...(isDevDirector() ? [["demoPipeline","Demo Pipeline"],["goals","Goals"]] : []), ["techSupport","Tech Support"]] }];
 
