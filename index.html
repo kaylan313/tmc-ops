@@ -11181,19 +11181,27 @@ function addBuildTodo(clientId, addOnId){
   } : a);
   upsert("clients", clientId, { addOns });
 }
-function updateBuildTodoField(clientId, addOnId, todoId, field, value){
+// Applies every field change to a to-do in ONE write. Two back-to-back
+// writes (e.g. "done" then "doneAt") don't work with Firestore: the second
+// one rebuilds addOns from state.clients before the first write's snapshot
+// has landed, so it writes the OLD done value straight back — the checkbox
+// just un-ticks itself. (Preview mode saves locally and instantly, so it
+// never showed there.)
+function updateBuildTodoFields(clientId, addOnId, todoId, patch){
   const client = state.clients.find(c=>c.id===clientId);
   if(!client) return;
   const addOns = (client.addOns||[]).map(a=>{
     if(a.id!==addOnId) return a;
-    const buildTodos = (a.buildTodos||[]).map(t=> t.id===todoId ? { ...t, [field]:value } : t);
+    const buildTodos = (a.buildTodos||[]).map(t=> t.id===todoId ? { ...t, ...patch } : t);
     return { ...a, buildTodos };
   });
   upsert("clients", clientId, { addOns });
 }
+function updateBuildTodoField(clientId, addOnId, todoId, field, value){
+  updateBuildTodoFields(clientId, addOnId, todoId, { [field]:value });
+}
 function toggleBuildTodo(clientId, addOnId, todoId, done){
-  updateBuildTodoField(clientId, addOnId, todoId, "done", done);
-  updateBuildTodoField(clientId, addOnId, todoId, "doneAt", done ? new Date().toISOString() : "");
+  updateBuildTodoFields(clientId, addOnId, todoId, { done, doneAt: done ? new Date().toISOString() : "" });
 }
 function removeBuildTodo(clientId, addOnId, todoId){
   const client = state.clients.find(c=>c.id===clientId);
