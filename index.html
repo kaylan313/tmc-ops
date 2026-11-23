@@ -12303,21 +12303,30 @@ function renderPayrollTool(){
         <h3>Assistants — hours ${pf.adminOnly?'(admin/internal only) ':''}for ${periodLabel.toLowerCase()}</h3>
         <button class="secondary" onclick="exportPayrollCsv()">Export CSV</button>
       </div>
-      <div class="small" style="margin-bottom:8px;">${pf.assistantId==='all' ? 'Every assistant, including any former employee still owed hours from this range.' : 'Filtered to one assistant.'} Rates are editable on the Team tab.</div>
+      <div class="small" style="margin-bottom:8px;">${pf.assistantId==='all' ? 'Every assistant, including any former employee still owed hours from this range.' : 'Filtered to one assistant.'} Rates are editable on the Team tab. Drive time shown below is already included in Hours and already paid/billed as part of it — it's broken out here just so you can see it at a glance, not something to add on top.</div>
       <div class="table-scroll"><table class="data-table">
-        <thead><tr><th>Assistant</th><th>Hours worked</th><th>Rate</th><th>$ owed</th><th>Status</th></tr></thead>
+        <thead><tr><th>Assistant</th><th>Drive time</th><th>Hours</th><th>Rate</th><th>Hourly pay</th><th>Bonus</th><th>Builds</th><th>Total $ owed</th><th>Status</th></tr></thead>
         <tbody>
           ${shownAssistants.map(a=>{
             const hrs = payrollHoursForAssistant(a.id, period, pf.adminOnly);
             const buildPay = buildPayForAssistantInPeriod(a.id, period);
             const maintPay = maintenancePayForAssistantInPeriod(a.id, period);
+            const builds = buildPay + maintPay;
+            const bonus = assistantBonusAmount(a, period);
+            const hourlyPay = payrollAmountForAssistant(a,hrs);
             const active = activeEntryFor(a.id);
             const driveMins = state.timeEntries.filter(e=>e.assistantId===a.id && (!pf.adminOnly || e.clientId===INTERNAL_CLIENT_ID) && (!period || (new Date(e.clockIn) >= period.start && new Date(e.clockIn) < period.end))).reduce((s,e)=>s+(driveMinutesOf(e)||0),0);
             return `<tr>
               <td>${a.name}${a.active===false?' <span class="small">(former)</span>':''}</td>
-              <td>${hrs.toFixed(1)}${driveMins ? `<div class="small">incl. ${formatDriveMinutes(driveMins)} driving</div>` : ""}</td>
+              <td>${driveMins ? formatDriveMinutes(driveMins) : "—"}</td>
+              <td>${hrs.toFixed(1)}</td>
               <td>${payrollRateLabel(a)}</td>
-              <td>$${(payrollAmountForAssistant(a,hrs)+buildPay+maintPay).toFixed(2)}${buildPay>0?`<div class="small">incl. $${buildPay.toFixed(2)} build pay</div>`:''}${maintPay>0?`<div class="small">incl. $${maintPay.toFixed(2)} maintenance pay</div>`:''}</td>
+              <td>$${hourlyPay.toFixed(2)}</td>
+              <td>${isPayrollPeriodPreset
+                ? `<input id="bonus_tbl_${a.id}" type="number" step="1" min="0" placeholder="0" value="${bonus||''}" onchange="setAssistantBonus('${a.id}', payrollFilterPeriod(), parseFloat(this.value)||0)" style="width:80px;">`
+                : (bonus>0 ? '$'+bonus.toFixed(2) : "—")}</td>
+              <td>${builds>0 ? '$'+builds.toFixed(2)+(buildPay>0&&maintPay>0?`<div class="small">$${buildPay.toFixed(2)} build + $${maintPay.toFixed(2)} maint.</div>`:'') : "—"}</td>
+              <td style="font-weight:600;">$${(hourlyPay+bonus+builds).toFixed(2)}</td>
               <td>${active
                 ? `<span class="dot-live ${isStale(active)?'stale':''}"></span>clocked in ${entryDurationHours(active).toFixed(1)}h`
                 : `<span class="small">off the clock</span>`}</td>
@@ -12325,9 +12334,13 @@ function renderPayrollTool(){
           }).join("")}
           <tr style="font-weight:600;">
             <td>Total</td>
+            <td></td>
             <td>${shownAssistants.reduce((s,a)=>s+payrollHoursForAssistant(a.id, period, pf.adminOnly),0).toFixed(1)}</td>
             <td></td>
-            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly))+buildPayForAssistantInPeriod(a.id, period)+maintenancePayForAssistantInPeriod(a.id, period),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly)),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+assistantBonusAmount(a, period),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+buildPayForAssistantInPeriod(a.id, period)+maintenancePayForAssistantInPeriod(a.id, period),0).toFixed(2)}</td>
+            <td>$${shownAssistants.reduce((s,a)=>s+payrollAmountForAssistant(a, payrollHoursForAssistant(a.id, period, pf.adminOnly))+assistantBonusAmount(a, period)+buildPayForAssistantInPeriod(a.id, period)+maintenancePayForAssistantInPeriod(a.id, period),0).toFixed(2)}</td>
             <td></td>
           </tr>
         </tbody>
