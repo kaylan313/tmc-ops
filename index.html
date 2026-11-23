@@ -13780,6 +13780,21 @@ function renderOnboarding(){
 // w9UploadSubmittedAt itself (just a timestamp, nothing sensitive) stays on
 // the assistant record since that's what clears the dashboard nag.
 const MAX_W9_UPLOAD_BYTES = 900000;
+const MAX_ID_UPLOAD_BYTES = 900000;
+// Tries progressively harder compression until the result fits under
+// maxBytes, instead of one fixed pass that can still come out too big for
+// a busy/detailed photo (an ID held under bright light, lots of fine
+// text) — the caller still does a final hard-cap check as a safety net,
+// but this means most photos never hit it.
+async function compressImageUnderLimit(file, maxBytes){
+  const attempts = [[1800,0.8],[1800,0.6],[1200,0.6],[1000,0.5],[800,0.4]];
+  let dataUrl = null;
+  for(const [dim,q] of attempts){
+    dataUrl = await readAndCompressImage(file, dim, q);
+    if(dataUrl.length <= maxBytes) return dataUrl;
+  }
+  return dataUrl;
+}
 function renderW9UploadCard(assistant){
   const submitted = !!assistant.w9UploadSubmittedAt;
   const dueDate = !submitted && assistant.agreementSignedAt
@@ -13812,7 +13827,7 @@ async function submitW9Upload(assistantId){
   const isImage = (file.type||"").startsWith("image/");
   let dataUrl;
   try{
-    dataUrl = isImage ? await readAndCompressImage(file, 1800, 0.8) : await readFileAsDataURL(file);
+    dataUrl = isImage ? await compressImageUnderLimit(file, MAX_W9_UPLOAD_BYTES) : await readFileAsDataURL(file);
   }catch(e){
     alert("Couldn't read that file — try again.");
     if(btn){ btn.disabled = false; btn.textContent = "Upload W9"; }
@@ -13858,9 +13873,14 @@ async function submitIdUpload(assistantId){
   if(btn){ btn.disabled = true; btn.textContent = "Uploading..."; }
   let dataUrl;
   try{
-    dataUrl = await readAndCompressImage(file, 1800, 0.8);
+    dataUrl = await compressImageUnderLimit(file, MAX_ID_UPLOAD_BYTES);
   }catch(e){
     alert("Couldn't read that photo — try again or take a new one.");
+    if(btn){ btn.disabled = false; btn.textContent = "Upload & continue"; }
+    return;
+  }
+  if(dataUrl.length > MAX_ID_UPLOAD_BYTES){
+    alert("That photo is too large (" + Math.round(dataUrl.length/1024) + "KB) even after compressing — try taking it in better lighting, or crop in tighter on just the ID.");
     if(btn){ btn.disabled = false; btn.textContent = "Upload & continue"; }
     return;
   }
