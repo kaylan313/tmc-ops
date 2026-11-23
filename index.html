@@ -1403,8 +1403,17 @@ async function routeMiles(start, end){
 function driveFlagFields(entry, reason){
   return { flagged:true, flagNote: entry.flagged && entry.flagNote ? entry.flagNote : reason };
 }
-function driveMilesSplit(miles){
+// An errand task (Target run, pickup/dropoff — the drive itself IS the
+// task, done entirely on the client's behalf) bills 100% of its miles to
+// the client, no TMC split. The 10-mile split only makes sense for a
+// drive TO a client's location (an ordinary commute to go do other work).
+function driveMilesSplit(miles, isErrand){
+  if(isErrand) return { client: miles, tmc: 0 };
   return { client: Math.min(miles, DRIVE_CLIENT_MILES), tmc: Math.max(0, Math.round((miles - DRIVE_CLIENT_MILES)*10)/10) };
+}
+function taskIsErrand(taskId){
+  const t = state.tasks.find(x=>x.id===taskId);
+  return !!(t && t.isErrand);
 }
 async function startDrive(entryId){
   state.driveBusy = entryId; render();
@@ -1607,7 +1616,7 @@ function renderDrivePromptModal(){
 function driveBadge(e){
   const finishedDrive = e.driveStart && e.driveEnd;
   if(!finishedDrive && e.driveMiles==null) return "";
-  const tmc = e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : null;
+  const tmc = e.driveMiles!=null ? driveMilesSplit(e.driveMiles, taskIsErrand(e.taskId)).tmc : null;
   const clientOnly = tmc===0;
   const mins = driveMinutesOf(e);
   const label = (tmc==null ? "miles?" : clientOnly ? e.driveMiles+" mi" : tmc+" mi TMC") + (mins!=null ? " · "+formatDriveMinutes(mins) : "");
@@ -1625,7 +1634,7 @@ function renderDriveMapModal(){
   const task = state.tasks.find(t=>t.id===e.taskId);
   const s = e.driveStart || {}, d = e.driveEnd || {};
   const hasPoints = s.lat!=null && d.lat!=null;
-  const split = e.driveMiles!=null ? driveMilesSplit(e.driveMiles) : null;
+  const split = e.driveMiles!=null ? driveMilesSplit(e.driveMiles, !!(task && task.isErrand)) : null;
   const time = iso => iso ? new Date(iso).toLocaleString([], {month:'short', day:'numeric', hour:'numeric', minute:'2-digit'}) : "—";
   return `
     <div class="modal">
@@ -1636,7 +1645,7 @@ function renderDriveMapModal(){
         : e.driveMiles!=null ? `<div class="small" style="margin-bottom:6px;">No map for this drive — the miles were entered by hand.</div>`
         : `<div class="alert warn">No map — ${s.error || d.error || (!e.driveStart ? "this drive wasn't logged with Start drive / I've arrived" : e.driveEnd ? "location missing" : "drive still in progress")}.</div>`}
       <div class="stat-row" style="margin:10px 0;">
-        <div class="stat-tile"><div class="stat-label">TMC miles</div><div class="stat-value">${split ? split.tmc : "—"}</div><div class="stat-sub">over the first ${DRIVE_CLIENT_MILES}</div></div>
+        <div class="stat-tile"><div class="stat-label">TMC miles</div><div class="stat-value">${split ? split.tmc : "—"}</div><div class="stat-sub">${task && task.isErrand ? "errand — full miles billed to client" : "over the first "+DRIVE_CLIENT_MILES}</div></div>
         <div class="stat-tile"><div class="stat-label">Trip miles</div><div class="stat-value">${e.driveMiles!=null ? e.driveMiles : "—"}</div><div class="stat-sub">${e.driveMilesManual ? "entered by hand" : "road distance"}</div></div>
         <div class="stat-tile"><div class="stat-label">Drive time</div><div class="stat-value">${driveMinutesOf(e)!=null ? formatDriveMinutes(driveMinutesOf(e)) : "—"}</div><div class="stat-sub">part of the clocked hours</div></div>
       </div>
@@ -2761,7 +2770,7 @@ function exportTimeEntriesCsv(){
       e.clockOut ? entryDurationHours(e).toFixed(2) : "",
       e.clockOutManual ? "yes" : "no",
       e.clientId===INTERNAL_CLIENT_ID ? "yes" : "no",
-      e.driveMiles!=null && driveMilesSplit(e.driveMiles).tmc>0 ? driveMilesSplit(e.driveMiles).tmc : "",
+      e.driveMiles!=null && driveMilesSplit(e.driveMiles, !!(task && task.isErrand)).tmc>0 ? driveMilesSplit(e.driveMiles, !!(task && task.isErrand)).tmc : "",
       e.driveMiles!=null ? e.driveMiles : "",
       driveMinutesOf(e)!=null ? driveMinutesOf(e) : ""
     ]);
@@ -11981,7 +11990,7 @@ function renderTimeTracking(){
       const total = own_.reduce((s,e)=>s+entryDurationHours(e),0);
       const admin = own_.filter(e=>e.clientId===INTERNAL_CLIENT_ID).reduce((s,e)=>s+entryDurationHours(e),0);
       const manual = own_.filter(e=>e.clockOutManual).length;
-      const miles = own_.reduce((s,e)=>s+(e.driveMiles!=null ? driveMilesSplit(e.driveMiles).tmc : 0),0);
+      const miles = own_.reduce((s,e)=>s+(e.driveMiles!=null ? driveMilesSplit(e.driveMiles, taskIsErrand(e.taskId)).tmc : 0),0);
       const driveMins = own_.reduce((s,e)=>s+(driveMinutesOf(e)||0),0);
       return { assistant:a, total, admin, manual, miles, driveMins };
     }).filter(r=>r.total>0 || r.assistant.active!==false).sort((a,b)=>b.total-a.total) : [];
@@ -15954,6 +15963,12 @@ function renderTaskEditorModal(task){
         <label class="small">What would make this good content? <span style="font-weight:400;">(helps the Content Creator decide what to film)</span></label>
         <textarea id="tf_content_note" oninput="state.modal.task.goodForContentNote=this.value">${task.goodForContentNote||''}</textarea>
       </div>
+      ${task.clientId && task.clientId!==INTERNAL_CLIENT_ID ? `
+      <label style="display:inline-flex;align-items:center;gap:6px;font-size:13px;margin-top:8px;">
+        <input type="checkbox" id="tf_is_errand" ${task.isErrand?'checked':''} onchange="state.modal.task.isErrand=this.checked"> This is an errand — the drive itself is the task (pickup, drop-off, shopping run). Bills the full drive to the client, no TMC split.
+      </label>
+      <div class="small" style="margin-top:2px;">Leave unchecked for a normal visit to the client's home — that drive still splits at the first ${DRIVE_CLIENT_MILES} miles (client) / anything over (TMC).</div>
+      ` : ""}
       <div class="modal-section-label">Assignment &amp; Status</div>
       <div class="row">
         <div><label class="small">Client</label>
@@ -16495,6 +16510,7 @@ async function saveTask(taskId, then){
     privateNotes: (task.privateNotes||"").trim(),
     dueDate: task.dueDate||"",
     priority: !!task.priority,
+    isErrand: !!task.isErrand,
     goodForContent: !!task.goodForContent,
     goodForContentNote: (task.goodForContentNote||"").trim(),
     taskNumber,
