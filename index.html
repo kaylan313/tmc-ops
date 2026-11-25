@@ -14238,11 +14238,31 @@ function renderTeamDirectory(){
     </div>
   `;
 }
+// Collapsed by default — the checkbox list was taking up a lot of room on
+// a tab that's otherwise just a scan-and-click list of employees. Per
+// assistant, not global, since admin usually only needs to open one at a
+// time (e.g. to check a new hire's roles) rather than all of them at once.
+function toggleAssistantRolesOpen(id){
+  state.rolesOpenFor = state.rolesOpenFor || {};
+  state.rolesOpenFor[id] = !state.rolesOpenFor[id];
+  render();
+}
+function activeRoleLabels(a){
+  const labels = [];
+  if(a.isContentCreator) labels.push("Content Creator");
+  if(a.isLeadership) labels.push("Leadership");
+  if(a.isOpsLead) labels.push("Operations Lead");
+  if(a.isDocsLead) labels.push("Documentation & Billing Lead");
+  if(a.isDevDirector) labels.push("Director of Development");
+  if(a.claudeConnectorEnabled) labels.push("Claude connector");
+  return labels.length ? labels : ["none set"];
+}
 function renderAssistantRow(a){
   const onboarding = a.onboarding || [];
   const doneCount = onboarding.filter(i=>i.done).length;
   const stillOnFile = a.agreementSigned && a.agreementHtml;
   const purged = a.agreementSigned && !a.agreementHtml;
+  const rolesOpen = !!(state.rolesOpenFor && state.rolesOpenFor[a.id]);
   return `
     <div class="list-item" style="flex-direction:column;align-items:stretch;gap:8px;">
       <div class="flex-between">
@@ -14299,7 +14319,11 @@ function renderAssistantRow(a){
       </div>` : "")}
       <div><label class="small">Document upload folder — their private Google Drive folder link, for License &amp; W9 uploads (Onboarding tab shows them a button that opens this)</label><input id="asst_drivefolder_${a.id}" value="${a.driveUploadFolderUrl||''}" placeholder="https://drive.google.com/drive/folders/..." onchange="updateAssistantField('${a.id}','driveUploadFolderUrl',this.value.trim())"></div>
       <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--cream-dark);">
-        <label class="small" style="font-weight:600;">Roles</label>
+        <div class="flex-between" style="cursor:pointer;" onclick="toggleAssistantRolesOpen('${a.id}')">
+          <label class="small" style="font-weight:600;cursor:pointer;">Roles${rolesOpen ? "" : " — "+activeRoleLabels(a).join(", ")}</label>
+          <span class="small">${rolesOpen ? "Hide ▲" : "Show ▼"}</span>
+        </div>
+        ${rolesOpen ? `
         <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;">
           <label style="display:flex;align-items:center;gap:8px;font-size:13px;" title="Logs in to a restricted view showing only the Content Calendar">
             <input type="checkbox" ${a.isContentCreator?'checked':''} onchange="updateAssistantField('${a.id}','isContentCreator',this.checked)">
@@ -14328,6 +14352,7 @@ function renderAssistantRow(a){
           ${a.claudeConnectorEnabled ? `<button class="secondary" style="padding:2px 10px;font-size:12px;" onclick="toggleConnectorActivity('${a.id}')">${state.connectorActivityOpen===a.id ? "Hide Claude activity" : "Claude activity"}</button>` : ""}
         </div>
         ${state.connectorActivityOpen===a.id ? renderConnectorActivity(a.id) : ""}
+        ` : ""}
       </div>
       ${onboarding.length ? `
         <div>
